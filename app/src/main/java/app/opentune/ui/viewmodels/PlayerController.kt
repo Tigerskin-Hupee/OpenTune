@@ -3,11 +3,14 @@ package app.opentune.ui.viewmodels
 import android.content.ComponentName
 import android.content.Context
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import app.opentune.db.entities.Song
 import app.opentune.playback.MusicService
+import app.opentune.playback.StreamingDataSource
 import com.google.common.util.concurrent.MoreExecutors
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,6 +19,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import javax.inject.Inject
 import javax.inject.Singleton
 
+@UnstableApi
 @Singleton
 class PlayerController @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -43,16 +47,40 @@ class PlayerController @Inject constructor(
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
                     _isPlaying.value = isPlaying
                 }
+
+                override fun onEvents(player: Player, events: Player.Events) {
+                    if (events.containsAny(
+                            Player.EVENT_PLAYBACK_STATE_CHANGED,
+                            Player.EVENT_POSITION_DISCONTINUITY,
+                        )
+                    ) {
+                        _position.value = player.currentPosition
+                        _duration.value = player.duration.coerceAtLeast(0L)
+                    }
+                }
             })
         }, MoreExecutors.directExecutor())
     }
 
+    /**
+     * Build a [MediaItem] whose URI is `opentune://stream/<videoId>`.
+     * [StreamingDataSource] intercepts this URI and resolves it to a real stream URL
+     * at playback time — the UI layer never sees the actual YouTube URL.
+     */
+    private fun Song.toMediaItem(): MediaItem =
+        MediaItem.Builder()
+            .setMediaId(id)
+            .setUri(StreamingDataSource.streamUri(id))
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle(title)
+                    .setArtworkUri(thumbnailUrl?.let { android.net.Uri.parse(it) })
+                    .build()
+            )
+            .build()
+
     fun play(songs: List<Song>, startIndex: Int) {
-        val items = songs.map { song ->
-            MediaItem.Builder()
-                .setMediaId(song.id)
-                .build()
-        }
+        val items = songs.map { it.toMediaItem() }
         controller?.apply {
             setMediaItems(items, startIndex, 0L)
             prepare()
