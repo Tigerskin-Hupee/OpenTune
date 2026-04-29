@@ -29,13 +29,13 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Setup Gradle Wrapper
+      - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: "8.9"
 
       - name: Build Debug APK
-        run: ./gradlew assembleDebug
+        run: gradle assembleDebug
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
@@ -45,7 +45,7 @@ jobs:
           retention-days: 7
 
       - name: Build Release APK (unsigned)
-        run: ./gradlew assembleRelease
+        run: gradle assembleRelease
 
       - name: Upload Release APK (unsigned)
         uses: actions/upload-artifact@v4
@@ -71,13 +71,13 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Setup Gradle Wrapper
+      - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: "8.9"
 
       - name: Build Release APK
-        run: ./gradlew assembleRelease
+        run: gradle assembleRelease
 
       - name: Sign APK
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
