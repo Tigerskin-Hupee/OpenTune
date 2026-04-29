@@ -13,9 +13,14 @@ import app.opentune.playback.MusicService
 import app.opentune.playback.StreamingDataSource
 import com.google.common.util.concurrent.MoreExecutors
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -24,7 +29,10 @@ import javax.inject.Singleton
 class PlayerController @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
-    private var controller: MediaController? = null
+    // Completes when the MediaController finishes connecting to MusicService.
+    // All player operations await this deferred so they never fire against a null controller.
+    private val controllerDeferred = CompletableDeferred<MediaController>()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private val _currentSong = MutableStateFlow<Song?>(null)
     val currentSong: StateFlow<Song?> = _currentSong.asStateFlow()
@@ -42,8 +50,9 @@ class PlayerController @Inject constructor(
         val token = SessionToken(context, ComponentName(context, MusicService::class.java))
         val future = MediaController.Builder(context, token).buildAsync()
         future.addListener({
-            controller = future.get()
-            controller?.addListener(object : Player.Listener {
+            val mc = future.get()
+            controllerDeferred.complete(mc)
+            mc.addListener(object : Player.Listener {
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
                     _isPlaying.value = isPlaying
                 }
@@ -52,6 +61,7 @@ class PlayerController @Inject constructor(
                     if (events.containsAny(
                             Player.EVENT_PLAYBACK_STATE_CHANGED,
                             Player.EVENT_POSITION_DISCONTINUITY,
+                            Player.EVENT_MEDIA_ITEM_TRANSITION,
                         )
                     ) {
                         _position.value = player.currentPosition
@@ -62,11 +72,6 @@ class PlayerController @Inject constructor(
         }, MoreExecutors.directExecutor())
     }
 
-    /**
-     * Build a [MediaItem] whose URI is `opentune://stream/<videoId>`.
-     * [StreamingDataSource] intercepts this URI and resolves it to a real stream URL
-     * at playback time — the UI layer never sees the actual YouTube URL.
-     */
     private fun Song.toMediaItem(): MediaItem =
         MediaItem.Builder()
             .setMediaId(id)
@@ -80,20 +85,31 @@ class PlayerController @Inject constructor(
             .build()
 
     fun play(songs: List<Song>, startIndex: Int) {
-        val items = songs.map { it.toMediaItem() }
-        controller?.apply {
-            setMediaItems(items, startIndex, 0L)
-            prepare()
-            play()
-        }
         _currentSong.value = songs.getOrNull(startIndex)
+        scope.launch {
+            val mc = controllerDeferred.await()
+            mc.setMediaItems(songs.map { it.toMediaItem() }, startIndex, 0L)
+            mc.prepare()
+            mc.play()
+        }
     }
 
     fun togglePlayPause() {
-        controller?.let { if (it.isPlaying) it.pause() else it.play() }
+        scope.launch {
+            val mc = controllerDeferred.await()
+            if (mc.isPlaying) mc.pause() else mc.play()
+        }
     }
 
-    fun skipNext() { controller?.seekToNextMediaItem() }
-    fun skipPrevious() { controller?.seekToPreviousMediaItem() }
-    fun seekTo(ms: Long) { controller?.seekTo(ms) }
+    fun skipNext() {
+        scope.launch { controllerDeferred.await().seekToNextMediaItem() }
+    }
+
+    fun skipPrevious() {
+        scope.launch { controllerDeferred.await().seekToPreviousMediaItem() }
+    }
+
+    fun seekTo(ms: Long) {
+        scope.launch { controllerDeferred.await().seekTo(ms) }
+    }
 }

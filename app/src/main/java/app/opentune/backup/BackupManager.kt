@@ -23,10 +23,12 @@ class BackupManager @Inject constructor(
     private val database: MusicDatabase,
 ) {
     private val dbFile get() = context.getDatabasePath(MusicDatabase.DB_NAME)
+    private val dbWalFile get() = File("${dbFile.path}-wal")
+    private val dbShmFile get() = File("${dbFile.path}-shm")
     private val settingsFile get() = File(context.filesDir, "datastore/settings.preferences_pb")
 
     fun exportBackup(outputUri: Uri) {
-        // Truncate WAL so the main DB file is self-contained before copying
+        // Flush WAL into the main DB file so the snapshot is self-contained.
         database.openHelper.writableDatabase
             .execSQL("PRAGMA wal_checkpoint(TRUNCATE)")
 
@@ -36,6 +38,9 @@ class BackupManager @Inject constructor(
         out.use {
             ZipOutputStream(it.buffered()).use { zip ->
                 if (dbFile.exists()) addToZip(zip, dbFile, "song.db")
+                // Include any residual WAL so the recipient can open the DB correctly.
+                if (dbWalFile.exists() && dbWalFile.length() > 0) addToZip(zip, dbWalFile, "song.db-wal")
+                if (dbShmFile.exists() && dbShmFile.length() > 0) addToZip(zip, dbShmFile, "song.db-shm")
                 if (settingsFile.exists()) addToZip(zip, settingsFile, "settings.preferences_pb")
             }
         }
@@ -43,9 +48,10 @@ class BackupManager @Inject constructor(
 
     fun importBackup(inputUri: Uri) {
         val tmpDb = File(context.cacheDir, "import_song.db")
+        val tmpWal = File(context.cacheDir, "import_song.db-wal")
+        val tmpShm = File(context.cacheDir, "import_song.db-shm")
         val tmpSettings = File(context.cacheDir, "import_settings.preferences_pb")
-        tmpDb.delete()
-        tmpSettings.delete()
+        listOf(tmpDb, tmpWal, tmpShm, tmpSettings).forEach { it.delete() }
 
         var hasSongDb = false
 
@@ -58,6 +64,8 @@ class BackupManager @Inject constructor(
                 while (entry != null) {
                     when (entry.name) {
                         "song.db" -> { tmpDb.outputStream().use(zip::copyTo); hasSongDb = true }
+                        "song.db-wal" -> tmpWal.outputStream().use(zip::copyTo)
+                        "song.db-shm" -> tmpShm.outputStream().use(zip::copyTo)
                         "settings.preferences_pb" -> tmpSettings.outputStream().use(zip::copyTo)
                     }
                     zip.closeEntry()
@@ -68,27 +76,27 @@ class BackupManager @Inject constructor(
 
         if (!hasSongDb) throw IOException("Invalid backup: song.db not found")
 
-        // Close Room so WAL is flushed and file handles are released
+        // Close Room so WAL is flushed and all file handles are released.
         database.close()
 
         dbFile.parentFile?.mkdirs()
-        if (!tmpDb.renameTo(dbFile)) {
-            tmpDb.copyTo(dbFile, overwrite = true)
-            tmpDb.delete()
-        }
-        // Remove stale WAL files so Room opens cleanly
-        File("${dbFile.path}-wal").delete()
-        File("${dbFile.path}-shm").delete()
+
+        // Always copy rather than rename — source and destination may be on different filesystems.
+        tmpDb.copyTo(dbFile, overwrite = true); tmpDb.delete()
+
+        // Remove stale WAL/SHM, then restore bundled ones if present.
+        dbWalFile.delete()
+        dbShmFile.delete()
+        if (tmpWal.exists()) { tmpWal.copyTo(dbWalFile, overwrite = true); tmpWal.delete() }
+        if (tmpShm.exists()) { tmpShm.copyTo(dbShmFile, overwrite = true); tmpShm.delete() }
 
         if (tmpSettings.exists()) {
             settingsFile.parentFile?.mkdirs()
-            if (!tmpSettings.renameTo(settingsFile)) {
-                tmpSettings.copyTo(settingsFile, overwrite = true)
-                tmpSettings.delete()
-            }
+            tmpSettings.copyTo(settingsFile, overwrite = true)
+            tmpSettings.delete()
         }
 
-        // Restart the app
+        // Restart the app to let Room re-open the fresh database from scratch.
         val intent = context.packageManager
             .getLaunchIntentForPackage(context.packageName)!!
             .apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK) }

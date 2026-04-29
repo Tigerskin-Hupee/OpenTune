@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -12,21 +13,35 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import app.opentune.prefs.AppPreferences
 import app.opentune.ui.navigation.OpenTuneNavGraph
 import app.opentune.ui.navigation.Screen
 import app.opentune.ui.theme.OpenTuneTheme
 import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+
+    @Inject lateinit var dataStore: DataStore<Preferences>
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            OpenTuneTheme {
+            val prefs by dataStore.data.collectAsState(initial = null)
+            val dynamicColor = prefs?.get(AppPreferences.DYNAMIC_COLOR) ?: true
+            val themePref    = prefs?.get(AppPreferences.THEME) ?: "System"
+            val isDark = when (themePref) {
+                "Dark"  -> true
+                "Light" -> false
+                else    -> isSystemInDarkTheme()
+            }
+            OpenTuneTheme(darkTheme = isDark, dynamicColor = dynamicColor) {
                 OpenTuneApp()
             }
         }
