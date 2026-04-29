@@ -2,6 +2,9 @@ package app.opentune.ui.viewmodels
 
 import android.content.ComponentName
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
@@ -11,12 +14,12 @@ import androidx.media3.session.SessionToken
 import app.opentune.db.entities.Song
 import app.opentune.playback.MusicService
 import app.opentune.playback.StreamingDataSource
-import com.google.common.util.concurrent.MoreExecutors
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -29,10 +32,11 @@ import javax.inject.Singleton
 class PlayerController @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
-    // Completes when the MediaController finishes connecting to MusicService.
-    // All player operations await this deferred so they never fire against a null controller.
+    // Completes when MediaController has successfully connected to MusicService.
+    // All player operations await this so they never execute against a disconnected controller.
     private val controllerDeferred = CompletableDeferred<MediaController>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var connectAttempts = 0
 
     private val _currentSong = MutableStateFlow<Song?>(null)
     val currentSong: StateFlow<Song?> = _currentSong.asStateFlow()
@@ -47,29 +51,48 @@ class PlayerController @Inject constructor(
     val duration: StateFlow<Long> = _duration.asStateFlow()
 
     init {
+        // Post to the main looper so MediaController.Builder.buildAsync() is always called on
+        // the main thread, regardless of which thread Hilt creates this singleton on.
+        Handler(Looper.getMainLooper()).post { connectController() }
+    }
+
+    private fun connectController() {
+        connectAttempts++
         val token = SessionToken(context, ComponentName(context, MusicService::class.java))
         val future = MediaController.Builder(context, token).buildAsync()
+        // ContextCompat.getMainExecutor ensures the listener runs on the main thread so all
+        // MediaController accesses happen on the correct thread (as required by Media3).
         future.addListener({
-            val mc = future.get()
-            controllerDeferred.complete(mc)
-            mc.addListener(object : Player.Listener {
-                override fun onIsPlayingChanged(isPlaying: Boolean) {
-                    _isPlaying.value = isPlaying
-                }
+            try {
+                val mc = future.get()
+                controllerDeferred.complete(mc)
+                mc.addListener(object : Player.Listener {
+                    override fun onIsPlayingChanged(isPlaying: Boolean) {
+                        _isPlaying.value = isPlaying
+                    }
 
-                override fun onEvents(player: Player, events: Player.Events) {
-                    if (events.containsAny(
-                            Player.EVENT_PLAYBACK_STATE_CHANGED,
-                            Player.EVENT_POSITION_DISCONTINUITY,
-                            Player.EVENT_MEDIA_ITEM_TRANSITION,
-                        )
-                    ) {
-                        _position.value = player.currentPosition
-                        _duration.value = player.duration.coerceAtLeast(0L)
+                    override fun onEvents(player: Player, events: Player.Events) {
+                        if (events.containsAny(
+                                Player.EVENT_PLAYBACK_STATE_CHANGED,
+                                Player.EVENT_POSITION_DISCONTINUITY,
+                                Player.EVENT_MEDIA_ITEM_TRANSITION,
+                            )
+                        ) {
+                            _position.value = player.currentPosition
+                            _duration.value = player.duration.coerceAtLeast(0L)
+                        }
+                    }
+                })
+            } catch (e: Exception) {
+                // Service may not be ready yet; retry with exponential back-off (max 10 tries).
+                if (connectAttempts < 10 && !controllerDeferred.isCompleted) {
+                    scope.launch {
+                        delay(500L * connectAttempts)
+                        connectController()
                     }
                 }
-            })
-        }, MoreExecutors.directExecutor())
+            }
+        }, ContextCompat.getMainExecutor(context))
     }
 
     private fun Song.toMediaItem(): MediaItem =
@@ -113,3 +136,4 @@ class PlayerController @Inject constructor(
         scope.launch { controllerDeferred.await().seekTo(ms) }
     }
 }
+
