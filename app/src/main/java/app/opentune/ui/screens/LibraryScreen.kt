@@ -1,5 +1,6 @@
 package app.opentune.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -49,8 +50,9 @@ fun LibraryScreen(
                 ListItem(
                     headlineContent = { Text(playlist.name) },
                     supportingContent = { Text("${playlist.songCount} songs") },
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = { navController.navigate(Screen.Playlist.route(playlist.id)) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { navController.navigate(Screen.Playlist.route(playlist.id)) },
                 )
             }
         }
