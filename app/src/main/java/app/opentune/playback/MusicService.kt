@@ -2,13 +2,16 @@ package app.opentune.playback
 
 import android.app.PendingIntent
 import android.content.Intent
+import android.os.Binder as AndroidBinder
 import android.os.Bundle
+import android.os.IBinder
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
@@ -47,6 +50,20 @@ class MusicService : MediaLibraryService() {
     private lateinit var player: ExoPlayer
     private lateinit var mediaSession: MediaLibrarySession
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    private val binder = Binder()
+
+    // Expose the ExoPlayer directly for UI binding (ViTune pattern).
+    // UI components bind with action BINDER_ACTION; Media3 browsing uses super.onBind().
+    override fun onBind(intent: Intent?): IBinder? {
+        if (intent?.action == BINDER_ACTION) return binder
+        return super.onBind(intent)
+    }
+
+    inner class Binder : AndroidBinder() {
+        // Typed as Player (stable API) so callers don't need @OptIn(UnstableApi::class)
+        val player: Player get() = this@MusicService.player
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -201,6 +218,10 @@ class MusicService : MediaLibraryService() {
                     .build(),
             )
             .build()
+
+    companion object {
+        const val BINDER_ACTION = "app.opentune.PLAYER_BINDER"
+    }
 
     private fun app.opentune.db.entities.Song.toAutoMediaItem(): MediaItem =
         MediaItem.Builder()
