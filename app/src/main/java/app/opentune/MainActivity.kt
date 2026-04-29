@@ -1,6 +1,11 @@
 package app.opentune
 
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
 import android.os.Bundle
+import android.os.IBinder
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -17,21 +22,43 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.media3.common.util.UnstableApi
+import app.opentune.playback.MusicService
 import app.opentune.prefs.AppPreferences
 import app.opentune.ui.navigation.OpenTuneNavGraph
 import app.opentune.ui.navigation.Screen
 import app.opentune.ui.theme.OpenTuneTheme
+import app.opentune.ui.viewmodels.PlayerController
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
+@OptIn(UnstableApi::class)
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
     @Inject lateinit var dataStore: DataStore<Preferences>
+    @Inject lateinit var playerController: PlayerController
+
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            playerController.setBinder(service as? MusicService.Binder)
+        }
+        override fun onServiceDisconnected(name: ComponentName?) {
+            playerController.setBinder(null)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // Start MusicService and bind for direct ExoPlayer access (ViTune pattern).
+        val bindIntent = Intent(this, MusicService::class.java).apply {
+            action = MusicService.BINDER_ACTION
+        }
+        startService(bindIntent)
+        bindService(bindIntent, serviceConnection, Context.BIND_AUTO_CREATE)
+
         setContent {
             val prefs by dataStore.data.collectAsState(initial = null)
             val dynamicColor = prefs?.get(AppPreferences.DYNAMIC_COLOR) ?: true
@@ -45,6 +72,11 @@ class MainActivity : ComponentActivity() {
                 OpenTuneApp()
             }
         }
+    }
+
+    override fun onDestroy() {
+        unbindService(serviceConnection)
+        super.onDestroy()
     }
 }
 
