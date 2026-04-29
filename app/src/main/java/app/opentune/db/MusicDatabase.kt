@@ -31,5 +31,6 @@ abstract class MusicDatabase : RoomDatabase() {
 
     companion object {
         const val DB_NAME = "music.db"
+        const val SCHEMA_VERSION = 1  // must match @Database(version = ...)
     }
 }
