@@ -1,22 +1,29 @@
 package app.opentune.db.entities
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
-import androidx.room.Index
 import androidx.room.PrimaryKey
-import java.util.UUID
 
 @Entity(
     tableName = "playlist_song_map",
     foreignKeys = [
-        ForeignKey(entity = Playlist::class, parentColumns = ["id"], childColumns = ["playlistId"], onDelete = ForeignKey.CASCADE),
-        ForeignKey(entity = Song::class, parentColumns = ["id"], childColumns = ["songId"], onDelete = ForeignKey.CASCADE),
-    ],
-    indices = [Index("playlistId"), Index("songId")],
+        ForeignKey(
+            entity = PlaylistEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["playlistId"],
+            onDelete = ForeignKey.CASCADE
+        ),
+        ForeignKey(
+            entity = SongEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["songId"],
+            onDelete = ForeignKey.CASCADE)
+    ]
 )
 data class PlaylistSongMap(
-    @PrimaryKey val id: String = UUID.randomUUID().toString(),
-    val playlistId: String,
-    val songId: String,
-    val position: Int,
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    @ColumnInfo(index = true) val playlistId: String,
+    @ColumnInfo(index = true) val songId: String,
+    val position: Int = 0,
 )

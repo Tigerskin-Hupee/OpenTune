@@ -1,20 +1,28 @@
 package app.opentune.db.entities
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
-import androidx.room.Index
 
 @Entity(
     tableName = "song_album_map",
-    primaryKeys = ["songId"],
+    primaryKeys = ["songId", "albumId"],
     foreignKeys = [
-        ForeignKey(entity = Song::class, parentColumns = ["id"], childColumns = ["songId"], onDelete = ForeignKey.CASCADE),
-        ForeignKey(entity = Album::class, parentColumns = ["id"], childColumns = ["albumId"], onDelete = ForeignKey.CASCADE),
-    ],
-    indices = [Index("albumId")],
+        ForeignKey(
+            entity = SongEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["songId"],
+            onDelete = ForeignKey.CASCADE),
+        ForeignKey(
+            entity = AlbumEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["albumId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ]
 )
 data class SongAlbumMap(
-    val songId: String,
-    val albumId: String,
+    @ColumnInfo(index = true) val songId: String,
+    @ColumnInfo(index = true) val albumId: String,
     val index: Int,
 )
