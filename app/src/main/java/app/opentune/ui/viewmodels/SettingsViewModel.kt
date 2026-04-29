@@ -3,14 +3,13 @@ package app.opentune.ui.viewmodels
 import android.net.Uri
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
-import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.opentune.backup.BackupManager
 import app.opentune.playback.YtDlpManager
 import app.opentune.playback.YtDlpStatus
+import app.opentune.prefs.AppPreferences
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
@@ -25,11 +24,11 @@ class SettingsViewModel @Inject constructor(
 ) : ViewModel() {
 
     val dynamicColor: StateFlow<Boolean> = dataStore.data
-        .map { it[KEY_DYNAMIC_COLOR] ?: true }
+        .map { it[AppPreferences.DYNAMIC_COLOR] ?: true }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
 
     val audioQuality: StateFlow<String> = dataStore.data
-        .map { it[KEY_AUDIO_QUALITY] ?: "Best" }
+        .map { it[AppPreferences.AUDIO_QUALITY] ?: "Best" }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "Best")
 
     val ytDlpStatus: StateFlow<YtDlpStatus> = ytDlpManager.statusFlow
@@ -41,12 +40,14 @@ class SettingsViewModel @Inject constructor(
     private val _backupInProgress = MutableStateFlow(false)
     val backupInProgress: StateFlow<Boolean> = _backupInProgress.asStateFlow()
 
+    val audioQualityOptions: List<String> = listOf("Auto", "Low", "Medium", "High", "Best")
+
     fun setDynamicColor(enabled: Boolean) {
-        viewModelScope.launch { dataStore.edit { it[KEY_DYNAMIC_COLOR] = enabled } }
+        viewModelScope.launch { dataStore.edit { it[AppPreferences.DYNAMIC_COLOR] = enabled } }
     }
 
     fun setAudioQuality(quality: String) {
-        viewModelScope.launch { dataStore.edit { it[KEY_AUDIO_QUALITY] = quality } }
+        viewModelScope.launch { dataStore.edit { it[AppPreferences.AUDIO_QUALITY] = quality } }
     }
 
     fun retryYtDlpDownload() = ytDlpManager.enqueueUpdate()
@@ -70,12 +71,12 @@ class SettingsViewModel @Inject constructor(
                     _backupInProgress.value = false
                     _backupMessage.send("Import failed: ${it.message}")
                 }
-            // On success the process is killed, so no cleanup needed here
         }
     }
 
+    // Keep for backward compat (StreamResolver previously referenced these)
     companion object {
-        val KEY_DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
-        val KEY_AUDIO_QUALITY = stringPreferencesKey("audio_quality")
+        val KEY_DYNAMIC_COLOR = AppPreferences.DYNAMIC_COLOR
+        val KEY_AUDIO_QUALITY = AppPreferences.AUDIO_QUALITY
     }
 }

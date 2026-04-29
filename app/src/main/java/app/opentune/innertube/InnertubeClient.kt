@@ -13,6 +13,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.abs
 
 /**
  * Minimal Innertube client targeting the ANDROID_MUSIC context.
@@ -119,9 +120,19 @@ class InnertubeClient @Inject constructor() {
     }
 
     fun selectBestAudioFormat(response: PlayerResponse): PlayerResponse.AdaptiveFormat? =
-        response.streamingData?.adaptiveFormats
+        selectAudioFormat(response, AudioQuality.BEST)
+
+    fun selectAudioFormat(response: PlayerResponse, quality: AudioQuality): PlayerResponse.AdaptiveFormat? {
+        val audio = response.streamingData?.adaptiveFormats
             ?.filter { it.isAudio && it.url != null }
-            ?.maxByOrNull { it.bitrate }
+            ?.takeIf { it.isNotEmpty() } ?: return null
+        return when (quality) {
+            AudioQuality.LOW   -> audio.minByOrNull { it.bitrate }
+            AudioQuality.MEDIUM -> audio.closestBitrate(128_000L) { it.bitrate }
+            AudioQuality.HIGH   -> audio.closestBitrate(256_000L) { it.bitrate }
+            AudioQuality.BEST, AudioQuality.AUTO -> audio.maxByOrNull { it.bitrate }
+        }
+    }
 
     companion object {
         private const val PLAYER_ENDPOINT = "https://www.youtube.com/youtubei/v1/player"

@@ -102,6 +102,9 @@
 -keep class app.opentune.playback.YtDlpUpdateChecker { *; }
 -keep class app.opentune.backup.BackupManager { *; }
 -keep class app.opentune.lyrics.LrcLine { *; }
+-keep class app.opentune.innertube.models.** { *; }
+-keep class app.opentune.innertube.InnertubeApi { *; }
+-keep class app.opentune.innertube.AudioQuality { *; }
 
 # ── Enum classes ──────────────────────────────────────────────
 -keepclassmembers enum * {
