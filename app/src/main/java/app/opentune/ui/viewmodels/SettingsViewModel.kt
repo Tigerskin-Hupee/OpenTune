@@ -7,6 +7,8 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.opentune.playback.YtDlpManager
+import app.opentune.playback.YtDlpStatus
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -15,6 +17,7 @@ import javax.inject.Inject
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val dataStore: DataStore<Preferences>,
+    private val ytDlpManager: YtDlpManager,
 ) : ViewModel() {
 
     val dynamicColor: StateFlow<Boolean> = dataStore.data
@@ -25,12 +28,23 @@ class SettingsViewModel @Inject constructor(
         .map { it[KEY_AUDIO_QUALITY] ?: "Best" }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "Best")
 
+    val ytDlpStatus: StateFlow<YtDlpStatus> = ytDlpManager.statusFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), YtDlpStatus())
+
     fun setDynamicColor(enabled: Boolean) {
         viewModelScope.launch { dataStore.edit { it[KEY_DYNAMIC_COLOR] = enabled } }
     }
 
     fun setAudioQuality(quality: String) {
         viewModelScope.launch { dataStore.edit { it[KEY_AUDIO_QUALITY] = quality } }
+    }
+
+    fun retryYtDlpDownload() {
+        ytDlpManager.enqueueUpdate()
+    }
+
+    fun checkYtDlpUpdate() {
+        ytDlpManager.enqueueUpdate(version = null)
     }
 
     companion object {
