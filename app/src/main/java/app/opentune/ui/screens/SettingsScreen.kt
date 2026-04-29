@@ -1,5 +1,7 @@
 package app.opentune.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
@@ -15,6 +17,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import app.opentune.R
+import app.opentune.backup.BackupManager
 import app.opentune.playback.YtDlpState
 import app.opentune.ui.viewmodels.SettingsViewModel
 
@@ -24,11 +27,29 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
     val dynamicColor by viewModel.dynamicColor.collectAsState()
     val audioQuality by viewModel.audioQuality.collectAsState()
     val ytDlpStatus by viewModel.ytDlpStatus.collectAsState()
+    val backupInProgress by viewModel.backupInProgress.collectAsState()
+
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(Unit) {
+        viewModel.backupMessage.collect { msg -> snackbarHostState.showSnackbar(msg) }
+    }
+
+    // Export: create a new .backup file
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/octet-stream")
+    ) { uri -> uri?.let { viewModel.exportBackup(it) } }
+
+    // Import: open an existing .backup file
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri -> uri?.let { viewModel.importBackup(it) } }
 
     Scaffold(
         topBar = {
             TopAppBar(title = { Text(stringResource(R.string.settings)) })
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { padding ->
         LazyColumn(
             modifier = Modifier
@@ -71,7 +92,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                             supportingContent = {
                                 val version = ytDlpStatus.installedVersion ?: "unknown"
                                 val latest  = ytDlpStatus.latestVersion
-                                val suffix  = if (ytDlpStatus.updateAvailable) " · update available (${latest})" else ""
+                                val suffix  = if (ytDlpStatus.updateAvailable) " · update available ($latest)" else ""
                                 Text("Installed: $version$suffix")
                             },
                             leadingContent = {
@@ -146,14 +167,40 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                 }
             }
 
-            // ── Data ──────────────────────────────────────────────────────
+            // ── Data / Backup ─────────────────────────────────────────────
             item {
                 HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                 SectionHeader("Data")
                 ListItem(
                     headlineContent = { Text(stringResource(R.string.backup_restore)) },
-                    supportingContent = { Text("Export or import your library data") },
+                    supportingContent = { Text("Export or import your library data (OuterTune-compatible)") },
                 )
+                if (backupInProgress) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp))
+                    Spacer(Modifier.height(8.dp))
+                } else {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        OutlinedButton(
+                            onClick = { exportLauncher.launch(BackupManager.buildFileName()) },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Export Backup")
+                        }
+                        Button(
+                            onClick = { importLauncher.launch(arrayOf("application/octet-stream", "*/*")) },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Import Backup")
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
             }
         }
     }

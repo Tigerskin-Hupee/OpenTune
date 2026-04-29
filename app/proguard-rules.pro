@@ -100,6 +100,8 @@
 -keep class app.opentune.playback.YtDlpManager { *; }
 -keep class app.opentune.playback.YtDlpDownloadWorker { *; }
 -keep class app.opentune.playback.YtDlpUpdateChecker { *; }
+-keep class app.opentune.backup.BackupManager { *; }
+-keep class app.opentune.lyrics.LrcLine { *; }
 
 # ── Enum classes ──────────────────────────────────────────────
 -keepclassmembers enum * {
