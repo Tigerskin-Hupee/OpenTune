@@ -1,6 +1,11 @@
 package app.opentune.ui.screens
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -8,11 +13,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
+import app.opentune.lyrics.LrcLine
 import app.opentune.ui.viewmodels.PlayerViewModel
 import coil.compose.AsyncImage
 
@@ -27,6 +35,8 @@ fun PlayerScreen(
     val position by viewModel.position.collectAsState()
     val duration by viewModel.duration.collectAsState()
     val lyrics by viewModel.lyrics.collectAsState()
+    val lrcLines by viewModel.lrcLines.collectAsState()
+    val currentLyricIndex by viewModel.currentLyricIndex.collectAsState()
     val showLyrics by viewModel.showLyrics.collectAsState()
 
     Scaffold(
@@ -73,7 +83,6 @@ fun PlayerScreen(
 
             Spacer(Modifier.height(16.dp))
 
-            // Seek bar
             Slider(
                 value = if (duration > 0) position / duration.toFloat() else 0f,
                 onValueChange = { viewModel.seekTo((it * duration).toLong()) },
@@ -86,7 +95,6 @@ fun PlayerScreen(
 
             Spacer(Modifier.height(8.dp))
 
-            // Controls
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly,
@@ -107,30 +115,85 @@ fun PlayerScreen(
                 }
             }
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(8.dp))
 
-            // Lyrics toggle
             TextButton(onClick = viewModel::toggleLyrics) {
                 Icon(Icons.Default.Lyrics, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
                 Text(if (showLyrics) "Hide Lyrics" else "Show Lyrics")
             }
 
-            if (showLyrics && lyrics != null) {
-                Text(
-                    text = lyrics!!,
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(top = 8.dp),
-                    textAlign = TextAlign.Center,
-                )
+            if (showLyrics) {
+                when {
+                    lrcLines != null -> LrcView(
+                        lines = lrcLines!!,
+                        currentIndex = currentLyricIndex,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                    )
+                    lyrics != null -> Text(
+                        text = lyrics!!,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(top = 4.dp),
+                        textAlign = TextAlign.Center,
+                    )
+                    else -> {
+                        Spacer(Modifier.weight(1f))
+                    }
+                }
             }
+        }
+    }
+}
+
+@Composable
+private fun LrcView(
+    lines: List<LrcLine>,
+    currentIndex: Int,
+    modifier: Modifier = Modifier,
+) {
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(currentIndex) {
+        if (currentIndex >= 0 && lines.isNotEmpty()) {
+            // Scroll so the active line appears roughly centred in the view
+            listState.animateScrollToItem(maxOf(0, currentIndex - 2))
+        }
+    }
+
+    LazyColumn(
+        state = listState,
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        contentPadding = PaddingValues(vertical = 12.dp),
+    ) {
+        itemsIndexed(lines) { index, line ->
+            val active = index == currentIndex
+            val color by animateColorAsState(
+                targetValue = if (active) MaterialTheme.colorScheme.primary
+                              else MaterialTheme.colorScheme.onSurfaceVariant,
+                animationSpec = tween(300),
+                label = "lrc-color",
+            )
+            Text(
+                text = line.text,
+                style = if (active) MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold)
+                        else MaterialTheme.typography.bodyMedium,
+                color = color,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 5.dp)
+                    .alpha(if (active) 1f else 0.55f),
+            )
         }
     }
 }
 
 private fun formatDuration(ms: Long): String {
     val totalSeconds = ms / 1000
-    val minutes = totalSeconds / 60
-    val seconds = totalSeconds % 60
-    return "%d:%02d".format(minutes, seconds)
+    return "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
 }
