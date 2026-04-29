@@ -1,0 +1,4 @@
+-keep class app.opentune.db.entities.** { *; }
+-keep class app.opentune.models.** { *; }
+-keepattributes Signature
+-keepattributes *Annotation*
