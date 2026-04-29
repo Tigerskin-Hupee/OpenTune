@@ -8,7 +8,7 @@ media3 = "1.8.0"
 room = "2.8.4"
 ktor = "2.3.12"
 coroutines = "1.10.2"
-coil = "3.4.0"
+coil = "3.0.4"
 lifecycle = "2.10.0"
 adaptive = "1.2.0"
 material3 = "1.4.0"
@@ -55,7 +55,7 @@ palette = { group = "androidx.palette", name = "palette", version = "1.0.0" }
 
 # UI extras
 lazycolumnscrollbar = { group = "com.github.nanihadesuka", name = "LazyColumnScrollbar", version.ref = "lazycolumnscrollbar" }
-shimmer = { group = "com.valentinilk.shimmer", name = "compose-shimmer", version = "1.4.0" }
+shimmer = { group = "com.valentinilk.shimmer", name = "compose-shimmer", version = "1.3.1" }
 
 # ViewModel
 viewmodel = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-ktx", version.ref = "lifecycle" }
