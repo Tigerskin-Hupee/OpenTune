@@ -23,3 +23,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "OpenTune"
 include(":app")
+include(":material-color-utilities")

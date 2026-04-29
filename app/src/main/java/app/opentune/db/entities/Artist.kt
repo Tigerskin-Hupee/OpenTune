@@ -1,13 +1,19 @@
 package app.opentune.db.entities
 
-import androidx.room.Entity
-import androidx.room.PrimaryKey
+import androidx.compose.runtime.Immutable
+import androidx.room.Embedded
 
-@Entity(tableName = "artist")
+@Immutable
 data class Artist(
-    @PrimaryKey val id: String,
-    val name: String,
-    val thumbnailUrl: String? = null,
-    val isLocal: Boolean = false,
-    val bookmarkedAt: Long? = null,
-)
+    @Embedded
+    val artist: ArtistEntity,
+    val songCount: Int,
+    val downloadCount: Int
+) : LocalItem() {
+    override val id: String
+        get() = artist.id
+    override val title: String
+        get() = artist.name
+    override val thumbnailUrl: String?
+        get() = artist.thumbnailUrl
+}

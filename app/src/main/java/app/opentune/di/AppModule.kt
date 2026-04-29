@@ -3,22 +3,76 @@ package app.opentune.di
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
-import androidx.datastore.preferences.preferencesDataStore
+import androidx.media3.database.DatabaseProvider
+import androidx.media3.database.StandaloneDatabaseProvider
+import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
+import androidx.media3.datasource.cache.NoOpCacheEvictor
+import androidx.media3.datasource.cache.SimpleCache
+import app.opentune.constants.MaxSongCacheSizeKey
+import app.opentune.db.InternalDatabase
+import app.opentune.db.MusicDatabase
+import app.opentune.utils.dataStore
+import app.opentune.utils.get
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import javax.inject.Qualifier
 import javax.inject.Singleton
 
-private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class DownloadCache
 
 @Module
 @InstallIn(SingletonComponent::class)
 object AppModule {
-
-    @Provides
     @Singleton
+    @Provides
     fun provideDataStore(@ApplicationContext context: Context): DataStore<Preferences> =
         context.dataStore
+
+    @Singleton
+    @Provides
+    fun provideDatabase(@ApplicationContext context: Context): MusicDatabase =
+        InternalDatabase.newInstance(context)
+
+    @Singleton
+    @Provides
+    fun provideDatabaseProvider(@ApplicationContext context: Context): DatabaseProvider =
+        StandaloneDatabaseProvider(context)
+
+    @Qualifier
+    @Retention(AnnotationRetention.BINARY)
+    annotation class PlayerCache
+
+    @Singleton
+    @Provides
+    @PlayerCache
+    fun providePlayerCache(@ApplicationContext context: Context, databaseProvider: DatabaseProvider): SimpleCache {
+        val constructor = {
+            SimpleCache(
+                context.filesDir.resolve("exoplayer"),
+                when (val cacheSize = context.dataStore[MaxSongCacheSizeKey] ?: 0) {
+                    -1 -> NoOpCacheEvictor()
+                    else -> LeastRecentlyUsedCacheEvictor(cacheSize * 1024 * 1024L)
+                },
+                databaseProvider
+            )
+        }
+        constructor().release()
+        return constructor()
+    }
+
+    @Singleton
+    @Provides
+    @DownloadCache
+    fun provideDownloadCache(@ApplicationContext context: Context, databaseProvider: DatabaseProvider): SimpleCache {
+        val constructor = {
+            SimpleCache(context.filesDir.resolve("download"), NoOpCacheEvictor(), databaseProvider)
+        }
+        constructor().release()
+        return constructor()
+    }
 }

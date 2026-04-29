@@ -1,15 +1,31 @@
 package app.opentune.db.entities
 
-import androidx.room.Entity
-import androidx.room.PrimaryKey
+import androidx.compose.runtime.Immutable
+import androidx.room.Embedded
+import androidx.room.Junction
+import androidx.room.Relation
 
-@Entity(tableName = "album")
+@Immutable
 data class Album(
-    @PrimaryKey val id: String,
-    val title: String,
-    val year: Int? = null,
-    val thumbnailUrl: String? = null,
-    val songCount: Int = 0,
-    val duration: Int = 0,
-    val bookmarkedAt: Long? = null,
-)
+    @Embedded
+    val album: AlbumEntity,
+    val downloadCount: Int,
+    @Relation(
+        entity = ArtistEntity::class,
+        entityColumn = "id",
+        parentColumn = "id",
+        associateBy = Junction(
+            value = AlbumArtistMap::class,
+            parentColumn = "albumId",
+            entityColumn = "artistId"
+        )
+    )
+    val artists: List<ArtistEntity>,
+) : LocalItem() {
+    override val id: String
+        get() = album.id
+    override val title: String
+        get() = album.title
+    override val thumbnailUrl: String?
+        get() = album.thumbnailUrl
+}

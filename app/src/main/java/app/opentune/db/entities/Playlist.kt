@@ -1,14 +1,40 @@
 package app.opentune.db.entities
 
-import androidx.room.Entity
-import androidx.room.PrimaryKey
+import androidx.compose.runtime.Immutable
+import androidx.room.Embedded
+import androidx.room.Junction
+import androidx.room.Relation
 
-@Entity(tableName = "playlist")
+@Immutable
 data class Playlist(
-    @PrimaryKey val id: String,
-    val name: String,
-    val browseId: String? = null,
-    val thumbnailUrl: String? = null,
-    val songCount: Int = 0,
-    val createdAt: Long = System.currentTimeMillis(),
-)
+    @Embedded
+    val playlist: PlaylistEntity,
+    val songCount: Int,
+    val downloadCount: Int,
+    @Relation(
+        entity = SongEntity::class,
+        entityColumn = "id",
+        parentColumn = "id",
+        projection = ["thumbnailUrl"],
+        associateBy = Junction(
+            value = PlaylistSongMapPreview::class,
+            parentColumn = "playlistId",
+            entityColumn = "songId"
+        )
+    )
+    val songThumbnails: List<String?>, //  TODO: Remove during next db update
+) : LocalItem() {
+    override val id: String
+        get() = playlist.id
+    override val title: String
+        get() = playlist.name
+    override val thumbnailUrl: String?
+        get() = null
+
+    val thumbnails: List<String>
+        get() {
+            return if (playlist.thumbnailUrl != null)
+                listOf(playlist.thumbnailUrl)
+            else songThumbnails.filterNotNull()
+        }
+}

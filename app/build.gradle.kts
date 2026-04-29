@@ -28,7 +28,6 @@ android {
             isDebuggable = true
         }
         release {
-            // R8 ConcurrentModificationException bug in AGP 8.5.x — re-enable after AGP upgrade
             isMinifyEnabled = false
             isShrinkResources = false
             proguardFiles(
@@ -39,6 +38,7 @@ android {
     }
 
     compileOptions {
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -69,26 +69,51 @@ android {
 }
 
 dependencies {
+    coreLibraryDesugaring(libs.desugaring)
+
+    // AndroidX core
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
-    implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.activity.compose)
-    implementation(libs.androidx.navigation.compose)
-    implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.work.runtime.ktx)
+    implementation(libs.datastore)
+    implementation(libs.hilt.navigation)
 
-    // Compose
+    // Async / concurrency
+    implementation(libs.guava)
+    implementation(libs.coroutines.guava)
+    implementation(libs.concurrent.futures)
+    implementation(libs.kotlinx.coroutines.android)
+
+    // Compose BOM + UI
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
     implementation(libs.compose.ui.graphics)
     implementation(libs.compose.ui.tooling.preview)
-    implementation(libs.compose.material3)
-    implementation(libs.compose.material.icons.extended)
+    implementation(libs.compose.ui.util)
+    implementation(libs.compose.foundation)
+    implementation(libs.compose.runtime)
+    implementation(libs.compose.animation)
+    implementation(libs.compose.reorderable)
+    implementation(libs.compose.icons.extended)
+
+    // Material
+    implementation(libs.material3)
+    implementation(libs.adaptive)
+    implementation(libs.palette)
+
+    // UI extras
+    implementation(libs.lazycolumnscrollbar)
+    implementation(libs.shimmer)
+    implementation(libs.coil)
+
+    // ViewModel
+    implementation(libs.viewmodel)
+    implementation(libs.viewmodel.compose)
 
     // Media3
-    implementation(libs.media3.exoplayer)
+    implementation(libs.media3)
     implementation(libs.media3.session)
-    implementation(libs.media3.ui)
     implementation(libs.media3.datasource.okhttp)
 
     // Room
@@ -99,21 +124,22 @@ dependencies {
     // Hilt
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
-    implementation(libs.hilt.navigation.compose)
     implementation(libs.hilt.work)
     ksp(libs.hilt.work.compiler)
 
-    // Ktor
+    // Ktor (for InnertubeClient)
     implementation(libs.ktor.client.okhttp)
     implementation(libs.ktor.client.content.negotiation)
     implementation(libs.ktor.serialization.json)
 
     // Kotlinx
-    implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
 
-    // Coil
-    implementation(libs.coil.compose)
+    // Apache Commons
+    implementation(libs.apache.lang3)
+
+    // Local modules
+    implementation(project(":material-color-utilities"))
 
     // Test
     testImplementation(libs.junit)
