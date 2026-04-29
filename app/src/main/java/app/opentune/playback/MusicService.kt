@@ -3,6 +3,8 @@ package app.opentune.playback
 import android.app.PendingIntent
 import android.content.Intent
 import android.os.Bundle
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -17,6 +19,7 @@ import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaSession
 import app.opentune.MainActivity
 import app.opentune.db.MusicRepository
+import app.opentune.prefs.AppPreferences
 import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
@@ -26,8 +29,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import javax.inject.Inject
 
@@ -37,6 +42,7 @@ class MusicService : MediaLibraryService() {
 
     @Inject lateinit var repository: MusicRepository
     @Inject lateinit var streamingDataSource: StreamingDataSource
+    @Inject lateinit var dataStore: DataStore<Preferences>
 
     private lateinit var player: ExoPlayer
     private lateinit var mediaSession: MediaLibrarySession
@@ -60,6 +66,14 @@ class MusicService : MediaLibraryService() {
             .setHandleAudioBecomingNoisy(true)
             .setMediaSourceFactory(DefaultMediaSourceFactory(resolvingFactory))
             .build()
+
+        // Reactively apply skip-silence preference changes.
+        serviceScope.launch {
+            dataStore.data.collectLatest { prefs ->
+                val skip = prefs[AppPreferences.SKIP_SILENCE] ?: false
+                withContext(Dispatchers.Main) { player.skipSilenceEnabled = skip }
+            }
+        }
 
         val activityIntent = PendingIntent.getActivity(
             this, 0,
@@ -95,10 +109,7 @@ class MusicService : MediaLibraryService() {
             browser: MediaSession.ControllerInfo,
             params: LibraryParams?,
         ): ListenableFuture<LibraryResult<MediaItem>> = Futures.immediateFuture(
-            LibraryResult.ofItem(
-                browsableItem(id = "root", title = "OpenTune"),
-                params,
-            )
+            LibraryResult.ofItem(browsableItem(id = "root", title = "OpenTune"), params)
         )
 
         override fun onGetChildren(
@@ -126,6 +137,53 @@ class MusicService : MediaLibraryService() {
                     else -> emptyList()
                 }
                 future.set(LibraryResult.ofItemList(ImmutableList.copyOf(items), params))
+            }
+            return future
+        }
+
+        override fun onGetItem(
+            session: MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            mediaId: String,
+        ): ListenableFuture<LibraryResult<MediaItem>> {
+            val future = SettableFuture.create<LibraryResult<MediaItem>>()
+            serviceScope.launch {
+                val song = repository.getSong(mediaId)
+                future.set(
+                    if (song != null) LibraryResult.ofItem(song.toAutoMediaItem(), null)
+                    else LibraryResult.ofError(LibraryResult.RESULT_ERROR_BAD_VALUE)
+                )
+            }
+            return future
+        }
+
+        // Called by Android Auto / Media3 when it wants to play items from the browse tree.
+        // Ensures every MediaItem has a playable URI before ExoPlayer receives it.
+        override fun onAddMediaItems(
+            mediaSession: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            mediaItems: List<MediaItem>,
+        ): ListenableFuture<List<MediaItem>> = Futures.immediateFuture(
+            mediaItems.map { item ->
+                if (item.localConfiguration?.uri == null && item.mediaId.isNotEmpty()) {
+                    item.buildUpon().setUri("opentune://stream/${item.mediaId}").build()
+                } else item
+            }
+        )
+
+        // Allows Android Auto to resume the last session (e.g. on car start).
+        override fun onPlaybackResumption(
+            mediaSession: MediaSession,
+            controller: MediaSession.ControllerInfo,
+        ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
+            val future = SettableFuture.create<MediaSession.MediaItemsWithStartPosition>()
+            serviceScope.launch {
+                val songs = repository.getAllSongs().first().take(30)
+                future.set(
+                    MediaSession.MediaItemsWithStartPosition(
+                        songs.map { it.toAutoMediaItem() }, 0, 0L,
+                    )
+                )
             }
             return future
         }
