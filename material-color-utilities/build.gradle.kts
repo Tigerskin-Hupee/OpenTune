@@ -8,6 +8,5 @@ java {
 }
 
 dependencies {
-    compileOnly(libs.error.prone.core)
     implementation(libs.annotation)
 }
