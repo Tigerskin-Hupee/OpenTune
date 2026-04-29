@@ -47,9 +47,19 @@ jobs:
       - name: Build Release APK (unsigned)
         run: gradle assembleRelease
 
-      - name: Upload Release APK (unsigned)
+      - name: Sign Release APK
+        run: |
+          $ANDROID_HOME/build-tools/35.0.0/apksigner sign \
+            --ks ~/.android/debug.keystore \
+            --ks-key-alias androiddebugkey \
+            --ks-pass pass:android \
+            --key-pass pass:android \
+            --out app/build/outputs/apk/release/app-release-signed.apk \
+            app/build/outputs/apk/release/app-release-unsigned.apk
+
+      - name: Upload Release APK
         uses: actions/upload-artifact@v4
         with:
-          name: opentune-release-unsigned
-          path: app/build/outputs/apk/release/*.apk
+          name: opentune-release
+          path: app/build/outputs/apk/release/app-release-signed.apk
           retention-days: 30
