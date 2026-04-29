@@ -1,8 +1,13 @@
 package app.opentune.playback
 
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
 import app.opentune.db.MusicRepository
 import app.opentune.db.entities.FormatEntity
+import app.opentune.innertube.AudioQuality
 import app.opentune.innertube.InnertubeClient
+import app.opentune.prefs.AppPreferences
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
@@ -25,6 +30,7 @@ class StreamResolver @Inject constructor(
     private val ytDlpHelper: YtDlpHelper,
     private val innertubeClient: InnertubeClient,
     private val repository: MusicRepository,
+    private val dataStore: DataStore<Preferences>,
 ) {
     // Per-video mutex prevents stampede when multiple coroutines request the same ID
     private val locks = HashMap<String, Mutex>()
@@ -77,14 +83,16 @@ class StreamResolver @Inject constructor(
         )
     }
 
-    private suspend fun resolveViaInnertube(videoId: String): Result<String> =
-        innertubeClient.getPlayerResponse(videoId).mapCatching { response ->
+    private suspend fun resolveViaInnertube(videoId: String): Result<String> {
+        val qualityLabel = dataStore.data.first()[AppPreferences.AUDIO_QUALITY] ?: "Best"
+        val quality = AudioQuality.fromLabel(qualityLabel)
+        return innertubeClient.getPlayerResponse(videoId).mapCatching { response ->
             val status = response.playabilityStatus?.status
             check(status == "OK") {
                 "Innertube playability: $status — ${response.playabilityStatus?.reason}"
             }
 
-            val format = innertubeClient.selectBestAudioFormat(response)
+            val format = innertubeClient.selectAudioFormat(response, quality)
                 ?: error("No audio format available in Innertube response for $videoId")
 
             val url = format.url ?: error("Format itag=${format.itag} has no pre-signed URL")
@@ -108,6 +116,7 @@ class StreamResolver @Inject constructor(
             )
             url
         }
+    }
 
     private suspend fun cacheUrl(
         videoId: String,

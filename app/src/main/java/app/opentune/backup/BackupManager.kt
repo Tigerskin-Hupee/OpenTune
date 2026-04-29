@@ -28,8 +28,7 @@ class BackupManager @Inject constructor(
     fun exportBackup(outputUri: Uri) {
         // Truncate WAL so the main DB file is self-contained before copying
         database.openHelper.writableDatabase
-            .rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null)
-            .close()
+            .execSQL("PRAGMA wal_checkpoint(TRUNCATE)")
 
         val out = context.contentResolver.openOutputStream(outputUri)
             ?: throw IOException("Cannot open output stream for $outputUri")

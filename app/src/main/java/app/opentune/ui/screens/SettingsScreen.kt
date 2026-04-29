@@ -74,9 +74,10 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
             item {
                 HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                 SectionHeader("Playback")
-                ListItem(
-                    headlineContent = { Text("Audio Quality") },
-                    supportingContent = { Text(audioQuality) },
+                AudioQualityItem(
+                    selected = audioQuality,
+                    options = viewModel.audioQualityOptions,
+                    onSelect = viewModel::setAudioQuality,
                 )
             }
 
@@ -204,6 +205,41 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
             }
         }
     }
+}
+
+@Composable
+private fun AudioQualityItem(
+    selected: String,
+    options: List<String>,
+    onSelect: (String) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    ListItem(
+        headlineContent = { Text("Audio Quality") },
+        supportingContent = { Text(selected) },
+        trailingContent = {
+            Box {
+                TextButton(onClick = { expanded = true }) { Text(selected) }
+                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                    options.forEach { option ->
+                        DropdownMenuItem(
+                            text = { Text(option) },
+                            onClick = { onSelect(option); expanded = false },
+                            leadingIcon = {
+                                if (option == selected) {
+                                    Icon(
+                                        androidx.compose.material.icons.Icons.Default.CheckCircle,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
+                            },
+                        )
+                    }
+                }
+            }
+        },
+    )
 }
 
 @Composable
