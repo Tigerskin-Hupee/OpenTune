@@ -134,7 +134,13 @@ fun SearchScreen(
 
                 else -> {
                     items(results) { item ->
-                        SearchResultItem(item, onSongClick = { viewModel.playSong(it) })
+                        SearchResultItem(
+                            item,
+                            onSongClick = { viewModel.playSong(it) },
+                            onAlbumClick = { navController.navigate(app.opentune.ui.navigation.Screen.Album.route(it.browseId)) },
+                            onArtistClick = { navController.navigate(app.opentune.ui.navigation.Screen.Artist.route(it.browseId)) },
+                            onPlaylistClick = { navController.navigate(app.opentune.ui.navigation.Screen.Playlist.route(it.browseId)) },
+                        )
                     }
                 }
             }
@@ -143,7 +149,13 @@ fun SearchScreen(
 }
 
 @Composable
-private fun SearchResultItem(item: MusicItem, onSongClick: (MusicItem.Song) -> Unit) {
+private fun SearchResultItem(
+    item: MusicItem,
+    onSongClick: (MusicItem.Song) -> Unit,
+    onAlbumClick: (MusicItem.Album) -> Unit,
+    onArtistClick: (MusicItem.Artist) -> Unit,
+    onPlaylistClick: (MusicItem.Playlist) -> Unit,
+) {
     when (item) {
         is MusicItem.Song -> SongListItem(
             title = item.title,
@@ -171,6 +183,9 @@ private fun SearchResultItem(item: MusicItem, onSongClick: (MusicItem.Song) -> U
                 Text("Album", style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             },
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onAlbumClick(item) },
         )
 
         is MusicItem.Artist -> ListItem(
@@ -185,6 +200,9 @@ private fun SearchResultItem(item: MusicItem, onSongClick: (MusicItem.Song) -> U
                 Text("Artist", style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             },
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onArtistClick(item) },
         )
 
         is MusicItem.Playlist -> ListItem(
@@ -200,6 +218,9 @@ private fun SearchResultItem(item: MusicItem, onSongClick: (MusicItem.Song) -> U
                 Text("Playlist", style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             },
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onPlaylistClick(item) },
         )
     }
 }
