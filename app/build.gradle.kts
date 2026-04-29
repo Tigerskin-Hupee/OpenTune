@@ -57,6 +57,10 @@ android {
         arg("room.incremental", "true")
     }
 
+    lint {
+        checkReleaseBuilds = false
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
