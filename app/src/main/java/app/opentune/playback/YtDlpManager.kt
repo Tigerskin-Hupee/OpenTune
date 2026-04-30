@@ -106,14 +106,19 @@ class YtDlpManager @Inject constructor(
         }
     }
 
-    /** Called from Application.onCreate — triggers download if not installed. */
+    /**
+     * Called from Application.onCreate.
+     * 1. Always enqueues a one-time check (worker no-ops if already on latest version).
+     * 2. Schedules a periodic 24h background check so updates land even if the app
+     *    isn't actively opened — keeps stream resolution working after upstream
+     *    YouTube changes without requiring a new APK release.
+     */
     fun initialize() {
-        if (!isReady) {
-            YtDlpDownloadWorker.enqueue(context, targetVersion = null)
-        }
+        YtDlpDownloadWorker.enqueue(context, targetVersion = null)
+        YtDlpDownloadWorker.enqueuePeriodic(context)
     }
 
-    /** Enqueue an update to a specific version (null = latest). */
+    /** Manually trigger an update (e.g. from Settings "Check for updates" button). */
     fun enqueueUpdate(version: String? = null) {
         YtDlpDownloadWorker.enqueue(context, targetVersion = version)
     }
