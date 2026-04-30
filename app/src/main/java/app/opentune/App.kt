@@ -59,8 +59,11 @@ class App : Application(), SingletonImageLoader.Factory, Configuration.Provider 
         GlobalScope.launch(Dispatchers.IO) {
             try {
                 YoutubeDL.getInstance().init(this@App)
+                val ver = runCatching { YoutubeDL.getInstance().version(this@App) }.getOrElse { "?" }
+                Log.i(TAG, "yt-dlp library ready, version=$ver")
                 ytDlpManager.onLibraryReady()
             } catch (t: Throwable) {
+                Log.e(TAG, "yt-dlp library init failed [${t.javaClass.name}]: ${t.message}", t)
                 ytDlpManager.onLibraryError(t)
             }
         }

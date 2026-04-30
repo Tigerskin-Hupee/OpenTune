@@ -10,6 +10,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -27,28 +28,32 @@ data class YtMusicTrack(
 class InnertubeApi @Inject constructor() {
     private val tag = "InnertubeApi"
 
+    // Public YouTube Music API key (same for all clients, has been stable for years).
+    private val YTM_KEY = "AIzaSyC9XL3ZjWddXya6X74dJoCTL-NKNELL6TV"
+
     private val http = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
         .build()
 
     // WEB_REMIX client — for search and home feed
     private val webRemixContext = JSONObject().apply {
         put("client", JSONObject().apply {
             put("clientName", "WEB_REMIX")
-            put("clientVersion", "1.20260415.01.00")
+            put("clientVersion", "1.20250131.01.00")
             put("hl", "en")
+            put("gl", "US")
         })
     }
 
     private fun postYtMusic(endpoint: String, body: JSONObject): JSONObject? {
-        val url = "https://music.youtube.com/youtubei/v1/$endpoint?prettyPrint=false"
+        val url = "https://music.youtube.com/youtubei/v1/$endpoint?key=$YTM_KEY&prettyPrint=false"
         val req = Request.Builder()
             .url(url)
             .addHeader("Content-Type", "application/json")
-            .addHeader("User-Agent", "Mozilla/5.0 (compatible; OpenTune/1.0)")
+            .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
             .addHeader("X-YouTube-Client-Name", "67")
-            .addHeader("X-YouTube-Client-Version", "1.20260415.01.00")
+            .addHeader("X-YouTube-Client-Version", "1.20250131.01.00")
             .addHeader("Origin", "https://music.youtube.com")
             .addHeader("Referer", "https://music.youtube.com/")
             .post(body.toString().toRequestBody("application/json".toMediaType()))
@@ -59,7 +64,9 @@ class InnertubeApi @Inject constructor() {
                     Log.w(tag, "postYtMusic $endpoint HTTP ${resp.code}")
                     return null
                 }
-                resp.body?.string()?.let { JSONObject(it) }
+                val text = resp.body?.string() ?: return null
+                Log.v(tag, "postYtMusic $endpoint response (${text.length}B): ${text.take(200)}")
+                JSONObject(text)
             }
         } catch (e: Exception) {
             Log.w(tag, "postYtMusic $endpoint failed: ${e.message}")
@@ -73,6 +80,7 @@ class InnertubeApi @Inject constructor() {
         val clientId: String,
         val userAgent: String,
         val extraContext: (JSONObject) -> Unit = {},
+        val extraBody: (JSONObject) -> Unit = {},
     )
 
     // Clients tried in order. iOS and ANDROID_VR currently bypass PoToken
@@ -104,10 +112,28 @@ class InnertubeApi @Inject constructor() {
             },
         ),
         PlayerClient(
+            clientName = "ANDROID_MUSIC",
+            clientVersion = "6.42.52",
+            clientId = "21",
+            userAgent = "com.google.android.apps.youtube.music/6.42.52 (Linux; U; Android 11) gzip",
+            extraContext = { c ->
+                c.put("deviceMake", "Google")
+                c.put("deviceModel", "Pixel 5")
+                c.put("osName", "Android")
+                c.put("osVersion", "11")
+                c.put("androidSdkVersion", 30)
+            },
+        ),
+        PlayerClient(
             clientName = "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
             clientVersion = "2.0",
             clientId = "85",
             userAgent = "Mozilla/5.0 (PlayStation; PlayStation 4/12.00) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Safari/605.1.15",
+            extraBody = { b ->
+                b.put("thirdParty", JSONObject().apply {
+                    put("embedUrl", "https://www.youtube.com/")
+                })
+            },
         ),
         PlayerClient(
             clientName = "ANDROID",
@@ -116,13 +142,17 @@ class InnertubeApi @Inject constructor() {
             userAgent = "com.google.android.youtube/19.44.38 (Linux; U; Android 11) gzip",
             extraContext = { c -> c.put("androidSdkVersion", 30) },
         ),
+        PlayerClient(
+            clientName = "MWEB",
+            clientVersion = "2.20241126.01.00",
+            clientId = "2",
+            userAgent = "Mozilla/5.0 (Linux; Android 10; Pixel 3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.77 Mobile Safari/537.36",
+        ),
     )
 
     /**
      * Resolves a video ID to a direct audio CDN URL by trying multiple
-     * YouTube innertube clients. iOS / ANDROID_VR currently bypass PoToken
-     * enforcement and return pre-signed adaptive stream URLs that
-     * ExoPlayer plays without cipher processing.
+     * YouTube innertube clients.
      */
     fun getAudioStreamUrl(videoId: String): String {
         val errors = mutableListOf<String>()
@@ -140,19 +170,19 @@ class InnertubeApi @Inject constructor() {
     }
 
     private fun tryClient(videoId: String, client: PlayerClient): String {
+        val clientObj = JSONObject().apply {
+            put("clientName", client.clientName)
+            put("clientVersion", client.clientVersion)
+            put("hl", "en")
+            put("gl", "US")
+            client.extraContext(this)
+        }
         val body = JSONObject().apply {
             put("videoId", videoId)
-            put("context", JSONObject().apply {
-                put("client", JSONObject().apply {
-                    put("clientName", client.clientName)
-                    put("clientVersion", client.clientVersion)
-                    put("hl", "en")
-                    put("gl", "US")
-                    client.extraContext(this)
-                })
-            })
+            put("context", JSONObject().apply { put("client", clientObj) })
             put("contentCheckOk", true)
             put("racyCheckOk", true)
+            client.extraBody(this)
         }
         val req = Request.Builder()
             .url("https://www.youtube.com/youtubei/v1/player?prettyPrint=false")
@@ -168,41 +198,63 @@ class InnertubeApi @Inject constructor() {
             resp.body?.string()?.let { JSONObject(it) }
         } ?: error("null response")
 
-        val status = root.optJSONObject("playabilityStatus")?.optString("status") ?: ""
+        val playabilityStatus = root.optJSONObject("playabilityStatus")
+        val status = playabilityStatus?.optString("status") ?: ""
         if (status == "ERROR" || status == "UNPLAYABLE" || status == "LOGIN_REQUIRED") {
-            val reason = root.optJSONObject("playabilityStatus")?.optString("reason") ?: status
+            val reason = playabilityStatus?.optString("reason") ?: status
             error("not playable: $reason")
         }
 
-        val adaptiveFormats = root.optJSONObject("streamingData")
-            ?.optJSONArray("adaptiveFormats")
-            ?: error("no streamingData (status='$status')")
+        val streamingData = root.optJSONObject("streamingData")
+            ?: error("no streamingData (playabilityStatus='$status')")
+
+        val adaptiveFormats = streamingData.optJSONArray("adaptiveFormats")
+            ?: error("no adaptiveFormats")
 
         data class Fmt(val url: String, val bitrate: Int)
         val candidates = mutableListOf<Fmt>()
         for (i in 0 until adaptiveFormats.length()) {
             val fmt = adaptiveFormats.getJSONObject(i)
             if (!fmt.optString("mimeType").startsWith("audio/")) continue
-            // Skip ciphered formats (signatureCipher present means we'd need decryption)
+            // Skip ciphered formats — we can't decode them without a JS engine
             if (fmt.has("signatureCipher")) continue
             val url = fmt.optString("url").takeIf { it.startsWith("http") } ?: continue
             candidates.add(Fmt(url, fmt.optInt("bitrate", 0)))
         }
 
         return candidates.maxByOrNull { it.bitrate }?.url
-            ?: error("no direct audio stream")
+            ?: error("no direct audio stream (${adaptiveFormats.length()} formats, all ciphered or non-audio)")
     }
 
     fun search(query: String): List<YtMusicTrack> {
-        val body = JSONObject().apply {
+        // Try with songs filter first, then without filter as fallback
+        val withFilter = JSONObject().apply {
             put("context", webRemixContext)
             put("query", query)
-            put("params", "EgWKAQIIAWoKEAoQAxAEEAkQBQ==") // songs filter
+            put("params", "EgWKAQIIAWoKEAoQAxAEEAkQBQ==") // songs only
         }
-        val root = postYtMusic("search", body) ?: return emptyList()
-        return try {
-            val results = mutableListOf<YtMusicTrack>()
-            val contents = root
+        val withoutFilter = JSONObject().apply {
+            put("context", webRemixContext)
+            put("query", query)
+        }
+
+        for (body in listOf(withFilter, withoutFilter)) {
+            val root = postYtMusic("search", body) ?: continue
+            val results = parseSearchResponse(root)
+            if (results.isNotEmpty()) {
+                Log.d(tag, "search('$query') → ${results.size} results")
+                return results
+            }
+        }
+        Log.w(tag, "search('$query') returned no results from either filter")
+        return emptyList()
+    }
+
+    private fun parseSearchResponse(root: JSONObject): List<YtMusicTrack> {
+        val results = mutableListOf<YtMusicTrack>()
+        try {
+            // Path 1: tabbedSearchResultsRenderer (standard WEB_REMIX response)
+            val tabContents = root
                 .optJSONObject("contents")
                 ?.optJSONObject("tabbedSearchResultsRenderer")
                 ?.optJSONArray("tabs")
@@ -211,21 +263,32 @@ class InnertubeApi @Inject constructor() {
                 ?.optJSONObject("content")
                 ?.optJSONObject("sectionListRenderer")
                 ?.optJSONArray("contents")
-                ?: return emptyList()
 
-            for (i in 0 until contents.length()) {
-                val shelf = contents.getJSONObject(i)
-                    .optJSONObject("musicShelfRenderer") ?: continue
+            // Path 2: sectionListRenderer directly under contents
+            val directContents = root
+                .optJSONObject("contents")
+                ?.optJSONObject("sectionListRenderer")
+                ?.optJSONArray("contents")
+
+            val sections: JSONArray = tabContents ?: directContents ?: run {
+                Log.w(tag, "parseSearchResponse: no known structure found, keys=${root.optJSONObject("contents")?.keys()?.asSequence()?.toList()}")
+                return emptyList()
+            }
+
+            for (i in 0 until sections.length()) {
+                val sectionObj = sections.getJSONObject(i)
+                val shelf = sectionObj.optJSONObject("musicShelfRenderer")
+                    ?: sectionObj.optJSONObject("musicCardShelfRenderer")
+                    ?: continue
                 val items = shelf.optJSONArray("contents") ?: continue
                 for (j in 0 until items.length()) {
                     parseTrack(items.getJSONObject(j))?.let { results.add(it) }
                 }
             }
-            results
         } catch (e: Exception) {
-            Log.w(tag, "search parse failed: ${e.message}")
-            emptyList()
+            Log.w(tag, "parseSearchResponse failed: ${e.message}")
         }
+        return results
     }
 
     fun getRecommendations(): List<YtMusicTrack> {
