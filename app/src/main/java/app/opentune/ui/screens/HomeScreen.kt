@@ -483,30 +483,51 @@ fun HomeScreen(
                     )
                 }
                 item {
-                    val songs = section.items.filterIsInstance<MusicItem.Song>()
+                    val sectionSongs = section.items.filterIsInstance<MusicItem.Song>()
                     LazyRow(
                         contentPadding = WindowInsets.systemBars
                             .only(WindowInsetsSides.Horizontal)
                             .asPaddingValues(),
                         modifier = Modifier.fillMaxWidth().animateItem()
                     ) {
-                        items(songs) { song ->
+                        items(section.items) { musicItem ->
+                            val thumbnailUrl = when (musicItem) {
+                                is MusicItem.Song -> musicItem.thumbnailUrl
+                                is MusicItem.Album -> musicItem.thumbnailUrl
+                                is MusicItem.Artist -> musicItem.thumbnailUrl
+                                is MusicItem.Playlist -> musicItem.thumbnailUrl
+                            }
+                            val title = when (musicItem) {
+                                is MusicItem.Song -> musicItem.title
+                                is MusicItem.Album -> musicItem.title
+                                is MusicItem.Artist -> musicItem.name
+                                is MusicItem.Playlist -> musicItem.title
+                            }
+                            val subtitle = when (musicItem) {
+                                is MusicItem.Song -> musicItem.artists
+                                is MusicItem.Album -> musicItem.artists.orEmpty()
+                                is MusicItem.Artist -> ""
+                                is MusicItem.Playlist -> musicItem.author.orEmpty()
+                            }
                             Column(
                                 modifier = Modifier
                                     .padding(horizontal = 6.dp)
                                     .width(GridThumbnailHeight)
                                     .clickable {
-                                        playerConnection.playQueue(
-                                            ListQueue(
-                                                title = section.title,
-                                                items = songs.map { it.asMediaMetadata() },
-                                                startIndex = songs.indexOfFirst { it.id == song.id }.coerceAtLeast(0)
+                                        when (musicItem) {
+                                            is MusicItem.Song -> playerConnection.playQueue(
+                                                ListQueue(
+                                                    title = section.title,
+                                                    items = sectionSongs.map { it.asMediaMetadata() },
+                                                    startIndex = sectionSongs.indexOfFirst { it.id == musicItem.id }.coerceAtLeast(0)
+                                                )
                                             )
-                                        )
+                                            else -> {} // TODO: browse album/artist/playlist
+                                        }
                                     }
                             ) {
                                 AsyncImage(
-                                    model = song.thumbnailUrl,
+                                    model = thumbnailUrl,
                                     contentDescription = null,
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -514,19 +535,21 @@ fun HomeScreen(
                                         .clip(RoundedCornerShape(ThumbnailCornerRadius))
                                 )
                                 Text(
-                                    text = song.title,
+                                    text = title,
                                     style = MaterialTheme.typography.bodyMedium,
                                     maxLines = 2,
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.padding(top = 4.dp)
                                 )
-                                Text(
-                                    text = song.artists,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
+                                if (subtitle.isNotEmpty()) {
+                                    Text(
+                                        text = subtitle,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
                             }
                         }
                     }
