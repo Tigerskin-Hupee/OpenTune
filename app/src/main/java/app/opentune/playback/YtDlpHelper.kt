@@ -1,3 +1,8 @@
+/*
+ * Copyright (C) 2025 OpenTune
+ *
+ * SPDX-License-Identifier: GPL-3.0
+ */
 package app.opentune.playback
 
 import android.util.Log
@@ -9,16 +14,14 @@ import javax.inject.Singleton
 
 /**
  * Thin wrapper around the yt-dlp binary managed by [YtDlpManager].
- *
- * If the binary is not yet installed (still downloading) the functions return
- * a descriptive [Result.failure] so [StreamResolver] can fall back to Innertube
- * without any special-casing at the call site.
+ * Returns [Result.failure] when the binary is not yet installed so callers
+ * can fall back to other resolvers without special-casing.
  */
 @Singleton
 class YtDlpHelper @Inject constructor(
     private val manager: YtDlpManager,
 ) {
-    private val TAG = "YtDlpHelper"
+    private val tag = "YtDlpHelper"
     private val bin: File get() = manager.binFile
 
     val isInstalled: Boolean get() = manager.isReady
@@ -26,47 +29,22 @@ class YtDlpHelper @Inject constructor(
     suspend fun getStreamUrl(videoId: String): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             check(isInstalled) { "yt-dlp not ready (still downloading or not installed)" }
-            Log.d(TAG, "getStreamUrl($videoId) — binary: ${bin.absolutePath}")
+            Log.d(tag, "getStreamUrl($videoId) — bin=${bin.absolutePath}")
             val process = ProcessBuilder(
                 bin.absolutePath,
                 "--no-playlist",
                 "-f", "bestaudio[ext=webm]/bestaudio",
                 "--get-url",
                 "https://www.youtube.com/watch?v=$videoId",
-            )
-                .redirectErrorStream(true)
-                .start()
+            ).redirectErrorStream(true).start()
 
             val output = process.inputStream.bufferedReader().readText().trim()
-            val exitCode = process.waitFor()
-            check(exitCode == 0) { "yt-dlp exited $exitCode: ${output.take(200)}" }
+            val exit = process.waitFor()
+            check(exit == 0) { "yt-dlp exit=$exit out=${output.take(200)}" }
             val url = output.lines().lastOrNull { it.startsWith("http") }
                 ?: error("No HTTP URL in yt-dlp output for $videoId:\n${output.take(500)}")
-            Log.d(TAG, "getStreamUrl($videoId) success: ${url.take(80)}…")
+            Log.d(tag, "getStreamUrl($videoId) ok ${url.take(80)}…")
             url
-        }.onFailure { err ->
-            Log.e(TAG, "getStreamUrl($videoId) failed: ${err.message}")
-        }
-    }
-
-    suspend fun downloadAudio(videoId: String, outputFile: File): Result<File> = withContext(Dispatchers.IO) {
-        runCatching {
-            check(isInstalled) { "yt-dlp not ready" }
-            outputFile.parentFile?.mkdirs()
-            val process = ProcessBuilder(
-                bin.absolutePath,
-                "--no-playlist",
-                "-f", "bestaudio[ext=webm]/bestaudio",
-                "-o", outputFile.absolutePath,
-                "https://www.youtube.com/watch?v=$videoId",
-            )
-                .redirectErrorStream(true)
-                .start()
-
-            process.inputStream.bufferedReader().readText()
-            val exitCode = process.waitFor()
-            check(exitCode == 0) { "yt-dlp download failed with exit code $exitCode" }
-            outputFile
-        }
+        }.onFailure { Log.w(tag, "getStreamUrl($videoId) fail: ${it.message}") }
     }
 }

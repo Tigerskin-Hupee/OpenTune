@@ -1,3 +1,8 @@
+/*
+ * Copyright (C) 2025 OpenTune
+ *
+ * SPDX-License-Identifier: GPL-3.0
+ */
 package app.opentune.viewmodels
 
 import androidx.lifecycle.ViewModel
