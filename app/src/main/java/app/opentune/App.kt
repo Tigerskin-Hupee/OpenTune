@@ -23,8 +23,12 @@ import coil3.request.crossfade
 import app.opentune.playback.YtDlpManager
 import app.opentune.utils.CoilBitmapLoader
 import app.opentune.utils.LocalArtworkPathKeyer
+import com.yausername.youtubedl_android.YoutubeDL
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltAndroidApp
@@ -50,9 +54,20 @@ class App : Application(), SingletonImageLoader.Factory, Configuration.Provider 
             System.setProperty("kotlinx.coroutines.debug", "on")
         }
 
-        // Auto-update yt-dlp binary so playback keeps working after upstream
-        // YouTube changes — no APK release needed.
-        ytDlpManager.initialize()
+        // Initialise yt-dlp (embedded Python in nativeLibraryDir — works under
+        // SELinux on Android 10+). Heavy: extracts .so on first launch.
+        GlobalScope.launch(Dispatchers.IO) {
+            try {
+                YoutubeDL.getInstance().init(this@App)
+                ytDlpManager.onLibraryReady()
+            } catch (t: Throwable) {
+                ytDlpManager.onLibraryError(t)
+            }
+        }
+
+        // Schedule the periodic update worker — runs the library's
+        // updateYoutubeDL() so yt-dlp stays current without an APK release.
+        ytDlpManager.scheduleUpdates()
 
         instance = this
     }

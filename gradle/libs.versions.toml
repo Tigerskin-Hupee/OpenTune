@@ -32,6 +32,9 @@ hilt-work = { group = "androidx.hilt", name = "hilt-work", version = "1.3.0" }
 hilt-work-compiler = { group = "androidx.hilt", name = "hilt-compiler", version = "1.3.0" }
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version = "4.12.0" }
 
+# yt-dlp via embedded Python (executable from nativeLibraryDir under SELinux)
+youtubedl-android = { group = "io.github.junkfood02.youtubedl-android", name = "library", version = "0.17.2" }
+
 # compose
 compose-runtime = { group = "androidx.compose.runtime", name = "runtime", version.ref = "compose" }
 compose-foundation = { group = "androidx.compose.foundation", name = "foundation", version.ref = "compose" }

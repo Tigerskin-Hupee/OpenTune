@@ -6,105 +6,78 @@
 package app.opentune.playback
 
 import android.content.Context
-import android.os.Build
-import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
-import app.opentune.utils.dataStore
+import com.yausername.youtubedl_android.YoutubeDL
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
-import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
 enum class YtDlpState {
-    UNKNOWN, NOT_INSTALLED, DOWNLOADING, READY, ERROR,
+    UNKNOWN, INITIALISING, READY, UPDATING, ERROR,
 }
 
 data class YtDlpStatus(
     val state: YtDlpState = YtDlpState.UNKNOWN,
     val installedVersion: String? = null,
-    val latestVersion: String? = null,
-    val downloadProgress: Float = 0f,
     val error: String? = null,
-) {
-    val updateAvailable: Boolean
-        get() = state == YtDlpState.READY &&
-                latestVersion != null &&
-                latestVersion != installedVersion
-}
+)
 
-internal fun ytDlpAssetName(): String {
-    val abi = Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a"
-    return when {
-        abi.contains("arm64") || abi.contains("aarch64") -> "yt-dlp_linux_aarch64"
-        abi.contains("armeabi")                          -> "yt-dlp_linux_armv7l"
-        abi.contains("x86_64")                           -> "yt-dlp_linux"
-        abi.contains("x86")                              -> "yt-dlp_linux_x86"
-        else                                             -> "yt-dlp_linux_aarch64"
-    }
-}
-
+/**
+ * Tracks the lifecycle of the yt-dlp library bundled via youtubedl-android.
+ *
+ * The library ships yt-dlp inside a Python interpreter compiled as a native
+ * library (.so), which Android's SELinux policy permits to execute from
+ * `nativeLibraryDir` even on API 30+. On first launch [com.yausername.youtubedl_android.YoutubeDL.init]
+ * extracts those binaries; subsequent launches are fast.
+ */
 @Singleton
 class YtDlpManager @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
-    val binFile: File get() = File(context.filesDir, "yt-dlp")
+    private val ready = MutableStateFlow(false)
+    private val initError = MutableStateFlow<String?>(null)
 
-    val isReady: Boolean get() = binFile.exists() && binFile.canExecute()
+    val isReady: Boolean get() = ready.value
 
-    val installedVersionFlow: Flow<String?> = context.dataStore.data
-        .map { it[KEY_VERSION] }
+    fun onLibraryReady() {
+        ready.value = true
+        initError.value = null
+    }
+
+    fun onLibraryError(t: Throwable) {
+        ready.value = false
+        initError.value = t.message ?: t.javaClass.simpleName
+    }
+
+    val installedVersionFlow: Flow<String?> = ready.map { isReady ->
+        if (isReady) runCatching { YoutubeDL.getInstance().version(context) }.getOrNull() else null
+    }
 
     val statusFlow: Flow<YtDlpStatus> = combine(
-        context.dataStore.data,
+        ready,
+        initError,
         WorkManager.getInstance(context).getWorkInfosByTagFlow(YtDlpDownloadWorker.TAG),
-    ) { prefs, workInfos ->
-        val stored = prefs[KEY_VERSION]
-        val latest = prefs[KEY_LATEST_VERSION]
+    ) { ready, err, workInfos ->
         val workInfo = workInfos.firstOrNull()
-
+        val version = if (ready) runCatching { YoutubeDL.getInstance().version(context) }.getOrNull() else null
         when {
-            workInfo?.state == WorkInfo.State.RUNNING ||
-            workInfo?.state == WorkInfo.State.ENQUEUED -> {
-                val progress = workInfo.progress.getFloat(YtDlpDownloadWorker.KEY_PROGRESS, 0f)
-                YtDlpStatus(YtDlpState.DOWNLOADING, stored, latest, progress)
-            }
-            workInfo?.state == WorkInfo.State.FAILED -> YtDlpStatus(
-                YtDlpState.ERROR, stored, latest,
-                error = workInfo.outputData.getString(YtDlpDownloadWorker.KEY_ERROR),
-            )
-            isReady -> YtDlpStatus(YtDlpState.READY, stored, latest)
-            else    -> YtDlpStatus(YtDlpState.NOT_INSTALLED, stored, latest)
+            err != null -> YtDlpStatus(YtDlpState.ERROR, version, err)
+            workInfo?.state == WorkInfo.State.RUNNING -> YtDlpStatus(YtDlpState.UPDATING, version)
+            ready -> YtDlpStatus(YtDlpState.READY, version)
+            else -> YtDlpStatus(YtDlpState.INITIALISING, version)
         }
     }
 
-    /**
-     * Trigger update check on every launch + schedule 24h periodic background check.
-     * The worker no-ops if installed version already matches latest.
-     */
-    fun initialize() {
-        YtDlpDownloadWorker.enqueue(context, targetVersion = null)
+    fun scheduleUpdates() {
         YtDlpDownloadWorker.enqueuePeriodic(context)
     }
 
-    fun enqueueUpdate(version: String? = null) {
-        YtDlpDownloadWorker.enqueue(context, targetVersion = version)
-    }
-
-    suspend fun saveInstalledVersion(version: String) {
-        context.dataStore.edit { it[KEY_VERSION] = version }
-    }
-
-    suspend fun saveLatestVersion(version: String) {
-        context.dataStore.edit { it[KEY_LATEST_VERSION] = version }
-    }
-
-    companion object {
-        val KEY_VERSION        = stringPreferencesKey("ytdlp_version")
-        val KEY_LATEST_VERSION = stringPreferencesKey("ytdlp_latest_version")
+    fun enqueueUpdate() {
+        YtDlpDownloadWorker.enqueueOneShot(context)
     }
 }

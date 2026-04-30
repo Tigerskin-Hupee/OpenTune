@@ -18,11 +18,11 @@ import javax.inject.Singleton
  * Resolves a YouTube video ID to a playable audio URL.
  *
  * Strategy (in order):
- *   1. In-memory cache (5 hour TTL).
- *   2. YouTube ANDROID_MUSIC player API — reliable, no binary needed, works
- *      on all Android versions. Returns pre-signed CDN URLs.
- *   3. yt-dlp binary (fallback) — auto-updated by [YtDlpManager]. Used if the
- *      player API fails (geo-block, login-required, etc.).
+ *   1. In-memory cache (4h TTL).
+ *   2. yt-dlp via embedded Python — handles PoToken, signature ciphers, and
+ *      whatever else YouTube introduces; updated daily by [YtDlpDownloadWorker].
+ *   3. Innertube player API (IOS / ANDROID_VR / TVHTML5 / ANDROID) — fallback
+ *      while yt-dlp is still initialising on first launch.
  *
  * Per-video [Mutex] prevents stampede when multiple coroutines request the
  * same ID concurrently (e.g. on queue setup).
@@ -61,20 +61,9 @@ class StreamResolver @Inject constructor(
             }
         }
 
-        // 2. YouTube ANDROID_MUSIC player API (primary — no binary needed)
-        Log.d(tag, "resolve($videoId) trying YouTube player API")
-        try {
-            val url = withContext(Dispatchers.IO) { innertube.getAudioStreamUrl(videoId) }
-            cacheUrl(videoId, url)
-            Log.d(tag, "resolve($videoId) player API ok")
-            return Result.success(url)
-        } catch (e: Exception) {
-            Log.w(tag, "resolve($videoId) player API failed: ${e.message}")
-        }
-
-        // 3. yt-dlp fallback (handles geo-restrictions & login-required cases)
+        // 2. yt-dlp (primary — handles PoToken & signature ciphers).
         if (ytDlpHelper.isInstalled) {
-            Log.d(tag, "resolve($videoId) trying yt-dlp fallback")
+            Log.d(tag, "resolve($videoId) trying yt-dlp")
             val result = ytDlpHelper.getStreamUrl(videoId)
             if (result.isSuccess) {
                 cacheUrl(videoId, result.getOrThrow())
@@ -82,6 +71,19 @@ class StreamResolver @Inject constructor(
                 return result
             }
             Log.w(tag, "resolve($videoId) yt-dlp failed: ${result.exceptionOrNull()?.message}")
+        } else {
+            Log.d(tag, "resolve($videoId) yt-dlp not yet initialised — using innertube fallback")
+        }
+
+        // 3. Innertube player API fallback (multi-client).
+        Log.d(tag, "resolve($videoId) trying innertube player API")
+        try {
+            val url = withContext(Dispatchers.IO) { innertube.getAudioStreamUrl(videoId) }
+            cacheUrl(videoId, url)
+            Log.d(tag, "resolve($videoId) innertube ok")
+            return Result.success(url)
+        } catch (e: Exception) {
+            Log.w(tag, "resolve($videoId) innertube failed: ${e.message}")
         }
 
         return Result.failure(StreamResolutionException(videoId))
