@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+@OptIn(FlowPreview::class)
 @HiltViewModel
 class YouTubeSearchViewModel @Inject constructor(
     private val api: InnertubeApi,
@@ -34,7 +35,6 @@ class YouTubeSearchViewModel @Inject constructor(
     private val _isLoading = MutableStateFlow(false)
     private val _error = MutableStateFlow<String?>(null)
 
-    @OptIn(FlowPreview::class)
     init {
         viewModelScope.launch {
             query
