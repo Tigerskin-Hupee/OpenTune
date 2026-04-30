@@ -1,5 +1,6 @@
 package app.opentune.playback
 
+import android.util.Log
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import app.opentune.constants.AudioQualityKey
@@ -26,6 +27,7 @@ class StreamResolver @Inject constructor(
     private val innertubeClient: InnertubeClient,
     private val dataStore: DataStore<Preferences>,
 ) {
+    private val TAG = "StreamResolver"
     // videoId → (url, expireAtMs)
     private val urlCache = HashMap<String, Pair<String, Long>>()
     private val cacheMutex = Mutex()
@@ -43,22 +45,33 @@ class StreamResolver @Inject constructor(
         // 1. In-memory cache hit
         cacheMutex.withLock {
             urlCache[videoId]?.let { (url, expireAt) ->
-                if (expireAt > System.currentTimeMillis()) return Result.success(url)
-                else urlCache.remove(videoId)
+                if (expireAt > System.currentTimeMillis()) {
+                    Log.d(TAG, "resolve($videoId) — cache hit")
+                    return Result.success(url)
+                } else {
+                    urlCache.remove(videoId)
+                }
             }
         }
 
         // 2. yt-dlp (primary)
+        Log.d(TAG, "resolve($videoId) — trying yt-dlp (isInstalled=${ytDlpHelper.isInstalled})")
         val ytDlpResult = ytDlpHelper.getStreamUrl(videoId)
         if (ytDlpResult.isSuccess) {
             val url = ytDlpResult.getOrThrow()
+            Log.d(TAG, "resolve($videoId) — yt-dlp success")
             cacheMutex.withLock { urlCache[videoId] = url to (System.currentTimeMillis() + URL_TTL_MS) }
             return ytDlpResult
         }
+        Log.w(TAG, "resolve($videoId) — yt-dlp failed: ${ytDlpResult.exceptionOrNull()?.message}; trying Innertube fallback")
 
         // 3. Innertube ANDROID_MUSIC fallback
         val innertubeResult = resolveViaInnertube(videoId)
-        if (innertubeResult.isSuccess) return innertubeResult
+        if (innertubeResult.isSuccess) {
+            Log.d(TAG, "resolve($videoId) — Innertube fallback success")
+            return innertubeResult
+        }
+        Log.e(TAG, "resolve($videoId) — Innertube fallback also failed: ${innertubeResult.exceptionOrNull()?.message}")
 
         // 4. Both failed — compose a single error message
         val ytDlpErr = ytDlpResult.exceptionOrNull()?.message ?: "unknown"

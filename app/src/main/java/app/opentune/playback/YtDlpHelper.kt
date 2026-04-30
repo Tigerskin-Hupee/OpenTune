@@ -1,5 +1,6 @@
 package app.opentune.playback
 
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -17,6 +18,7 @@ import javax.inject.Singleton
 class YtDlpHelper @Inject constructor(
     private val manager: YtDlpManager,
 ) {
+    private val TAG = "YtDlpHelper"
     private val bin: File get() = manager.binFile
 
     val isInstalled: Boolean get() = manager.isReady
@@ -24,6 +26,7 @@ class YtDlpHelper @Inject constructor(
     suspend fun getStreamUrl(videoId: String): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             check(isInstalled) { "yt-dlp not ready (still downloading or not installed)" }
+            Log.d(TAG, "getStreamUrl($videoId) — binary: ${bin.absolutePath}")
             val process = ProcessBuilder(
                 bin.absolutePath,
                 "--no-playlist",
@@ -37,7 +40,12 @@ class YtDlpHelper @Inject constructor(
             val output = process.inputStream.bufferedReader().readText().trim()
             val exitCode = process.waitFor()
             check(exitCode == 0) { "yt-dlp exited $exitCode: ${output.take(200)}" }
-            output.lines().last { it.startsWith("http") }
+            val url = output.lines().lastOrNull { it.startsWith("http") }
+                ?: error("No HTTP URL in yt-dlp output for $videoId:\n${output.take(500)}")
+            Log.d(TAG, "getStreamUrl($videoId) success: ${url.take(80)}…")
+            url
+        }.onFailure { err ->
+            Log.e(TAG, "getStreamUrl($videoId) failed: ${err.message}")
         }
     }
 
