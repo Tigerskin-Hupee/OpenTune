@@ -71,6 +71,33 @@ class InnertubeApi @Inject constructor() {
         }
     }
 
+    // ── Browse (album / artist / playlist) ───────────────────────────────────
+
+    suspend fun browseItems(browseId: String): Result<List<MusicItem>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val response = http.post(BROWSE_URL) {
+                applyWebRemixHeaders()
+                setBody(BrowseBody(context = InnertubeContext.WEB_REMIX, browseId = browseId))
+            }.body<BrowseResponse>()
+
+            val sectionList = response.sectionListRenderer() ?: return@runCatching emptyList()
+
+            sectionList.contents.orEmpty().flatMap { section ->
+                when {
+                    section.musicShelfRenderer != null ->
+                        section.musicShelfRenderer.contents.orEmpty()
+                            .mapNotNull { it.musicResponsiveListItemRenderer?.toMusicItem() }
+                    section.carousel != null ->
+                        section.carousel!!.contents.orEmpty().mapNotNull { content ->
+                            content.musicTwoRowItemRenderer?.toMusicItem()
+                                ?: content.musicResponsiveListItemRenderer?.toMusicItem()
+                        }
+                    else -> emptyList()
+                }
+            }
+        }
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private fun HttpRequestBuilder.applyWebRemixHeaders() {

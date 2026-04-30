@@ -37,7 +37,9 @@ data class Thumbnail(
     @Serializable
     data class ThumbnailItem(val url: String = "", val width: Int? = null, val height: Int? = null)
 
-    val bestUrl: String? get() = thumbnails?.lastOrNull()?.url
+    val bestUrl: String? get() = thumbnails?.lastOrNull()?.url?.let {
+        if (it.startsWith("//")) "https:$it" else it
+    }
 }
 
 @Serializable
