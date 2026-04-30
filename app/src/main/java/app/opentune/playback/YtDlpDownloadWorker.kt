@@ -1,8 +1,23 @@
+/*
+ * Copyright (C) 2025 OpenTune
+ *
+ * SPDX-License-Identifier: GPL-3.0
+ */
 package app.opentune.playback
 
 import android.content.Context
 import androidx.hilt.work.HiltWorker
-import androidx.work.*
+import androidx.work.BackoffPolicy
+import androidx.work.Constraints
+import androidx.work.CoroutineWorker
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.Dispatchers
@@ -16,6 +31,12 @@ import okhttp3.Request
 import java.io.File
 import java.util.concurrent.TimeUnit
 
+/**
+ * Downloads (and updates) the yt-dlp binary from the official GitHub releases.
+ *
+ * Skips work when the installed version already matches the requested release —
+ * so it is safe to enqueue on every cold start and on a periodic 24h schedule.
+ */
 @HiltWorker
 class YtDlpDownloadWorker @AssistedInject constructor(
     @Assisted appContext: Context,
@@ -31,8 +52,6 @@ class YtDlpDownloadWorker @AssistedInject constructor(
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    // ── GitHub release models ──────────────────────────────────────────────
-
     @Serializable
     data class Release(
         @SerialName("tag_name") val tagName: String,
@@ -46,47 +65,38 @@ class YtDlpDownloadWorker @AssistedInject constructor(
         val size: Long,
     )
 
-    // ── Worker entry point ─────────────────────────────────────────────────
-
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         try {
             setProgress(workDataOf(KEY_PROGRESS to 0f))
 
-            // 1. Fetch release metadata from GitHub
             val targetVersion = inputData.getString(KEY_TARGET_VERSION)
             val release = fetchRelease(targetVersion)
             val assetName = ytDlpAssetName()
             val asset = release.assets.firstOrNull { it.name == assetName }
                 ?: return@withContext Result.failure(
-                    workDataOf(KEY_ERROR to "Asset '$assetName' not found in release ${release.tagName}")
+                    workDataOf(KEY_ERROR to "Asset '$assetName' missing from ${release.tagName}")
                 )
 
             manager.saveLatestVersion(release.tagName)
 
-            // 2. Skip if already at this version and binary exists
-            val installedVersion = manager.installedVersionFlow.first()
-            if (installedVersion == release.tagName && manager.isReady) {
+            val installed = manager.installedVersionFlow.first()
+            if (installed == release.tagName && manager.isReady) {
                 return@withContext Result.success()
             }
 
-            // 3. Download to temp file, then atomic swap
-            val tempFile = File(applicationContext.filesDir, "yt-dlp.tmp")
-            downloadWithProgress(asset.browserDownloadUrl, asset.size, tempFile)
+            val tmp = File(applicationContext.filesDir, "yt-dlp.tmp")
+            downloadWithProgress(asset.browserDownloadUrl, asset.size, tmp)
 
-            val binFile = manager.binFile
-            tempFile.renameTo(binFile)
-            binFile.setExecutable(true, true)
+            val bin = manager.binFile
+            tmp.renameTo(bin)
+            bin.setExecutable(true, true)
 
-            // 4. Persist installed version
             manager.saveInstalledVersion(release.tagName)
-
             Result.success()
         } catch (e: Exception) {
             Result.failure(workDataOf(KEY_ERROR to (e.message ?: e.javaClass.simpleName)))
         }
     }
-
-    // ── Network helpers ────────────────────────────────────────────────────
 
     private fun fetchRelease(version: String?): Release {
         val url = if (version != null)
@@ -112,11 +122,11 @@ class YtDlpDownloadWorker @AssistedInject constructor(
         http.newCall(req).execute().use { resp ->
             check(resp.isSuccessful) { "Download failed ${resp.code}" }
             val body = resp.body ?: error("Empty download body")
-            val contentLength = if (totalBytes > 0) totalBytes else body.contentLength()
+            val len = if (totalBytes > 0) totalBytes else body.contentLength()
 
             dest.parentFile?.mkdirs()
-            var downloaded = 0L
-            var lastReported = -1
+            var sent = 0L
+            var lastPct = -1
 
             dest.outputStream().use { out ->
                 body.byteStream().use { src ->
@@ -124,11 +134,10 @@ class YtDlpDownloadWorker @AssistedInject constructor(
                     var n: Int
                     while (src.read(buf).also { n = it } != -1) {
                         out.write(buf, 0, n)
-                        downloaded += n
-                        val pct = if (contentLength > 0)
-                            (downloaded * 100 / contentLength).toInt() else 0
-                        if (pct != lastReported) {
-                            lastReported = pct
+                        sent += n
+                        val pct = if (len > 0) (sent * 100 / len).toInt() else 0
+                        if (pct != lastPct) {
+                            lastPct = pct
                             setProgress(workDataOf(KEY_PROGRESS to pct / 100f))
                         }
                     }
@@ -137,8 +146,6 @@ class YtDlpDownloadWorker @AssistedInject constructor(
         }
     }
 
-    // ── Static helpers ─────────────────────────────────────────────────────
-
     companion object {
         const val TAG                = "ytdlp_download"
         const val PERIODIC_TAG       = "ytdlp_periodic_update"
@@ -146,12 +153,6 @@ class YtDlpDownloadWorker @AssistedInject constructor(
         const val KEY_PROGRESS       = "progress"
         const val KEY_ERROR          = "error"
 
-        /**
-         * One-time update check. Fires immediately when network is available.
-         * Called on every app start — the worker itself short-circuits if the
-         * installed version already matches the latest GitHub release, so this
-         * is cheap when nothing changed.
-         */
         fun enqueue(context: Context, targetVersion: String?) {
             val data = workDataOf(KEY_TARGET_VERSION to targetVersion)
             val req = OneTimeWorkRequestBuilder<YtDlpDownloadWorker>()
@@ -164,16 +165,6 @@ class YtDlpDownloadWorker @AssistedInject constructor(
                 .enqueueUniqueWork(TAG, ExistingWorkPolicy.KEEP, req)
         }
 
-        /**
-         * Background periodic check (every 24h). Runs even if the app is not
-         * actively opened — ensures stream resolution stays working after
-         * upstream YouTube changes are pushed by the yt-dlp project, without
-         * requiring a new APK to be released.
-         *
-         * Constraints: connected network only, battery not low.
-         * Uses KEEP policy so re-enqueueing on each app start does not reset
-         * the existing schedule.
-         */
         fun enqueuePeriodic(context: Context) {
             val constraints = Constraints(
                 requiredNetworkType = NetworkType.CONNECTED,
