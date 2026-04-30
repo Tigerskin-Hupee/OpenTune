@@ -24,6 +24,6 @@ class YtDlpSettingsViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.Eagerly, YtDlpStatus())
 
     fun checkForUpdate() {
-        manager.enqueueUpdate(version = null)
+        manager.enqueueUpdate()
     }
 }

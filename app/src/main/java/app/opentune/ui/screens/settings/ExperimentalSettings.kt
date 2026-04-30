@@ -139,29 +139,23 @@ fun ExperimentalSettings(
 
         val statusText = when (ytDlpStatus.state) {
             YtDlpState.UNKNOWN       -> "Checking…"
-            YtDlpState.NOT_INSTALLED -> "Not installed"
-            YtDlpState.DOWNLOADING   ->
-                "Downloading… ${(ytDlpStatus.downloadProgress * 100).toInt()}%"
+            YtDlpState.INITIALISING  -> "Initialising…"
+            YtDlpState.UPDATING      -> "Updating…"
             YtDlpState.READY         ->
                 "Ready" + (ytDlpStatus.installedVersion?.let { " · $it" } ?: "")
             YtDlpState.ERROR         ->
                 "Error: ${ytDlpStatus.error ?: "unknown"}"
         }
-        val latestText = ytDlpStatus.latestVersion?.let { latest ->
-            if (ytDlpStatus.updateAvailable) "Update available: $latest"
-            else "Up to date ($latest)"
-        }
 
         PreferenceEntry(
             title = { Text(statusText) },
-            description = latestText,
             icon = { Icon(Icons.Rounded.CloudDownload, null) },
             onClick = {}
         )
         PreferenceEntry(
             title = { Text("Check for updates now") },
-            description = "Pull latest yt-dlp release from GitHub. " +
-                "App also auto-checks on launch and every 24h.",
+            description = "Pull latest yt-dlp release in-place. " +
+                "App also auto-checks every 24h.",
             icon = { Icon(Icons.Rounded.Update, null) },
             onClick = {
                 ytDlpViewModel.checkForUpdate()

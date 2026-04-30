@@ -5,6 +5,7 @@
  */
 package app.opentune.playback
 
+import android.app.Application
 import android.content.Context
 import androidx.hilt.work.HiltWorker
 import androidx.work.BackoffPolicy
@@ -18,143 +19,46 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import com.yausername.youtubedl_android.YoutubeDL
+import com.yausername.youtubedl_android.YoutubeDL.UpdateChannel
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import org.json.JSONObject
-import java.io.File
 import java.util.concurrent.TimeUnit
 
 /**
- * Downloads (and updates) the yt-dlp binary from the official GitHub releases.
- *
- * Skips work when the installed version already matches the requested release —
- * so it is safe to enqueue on every cold start and on a periodic 24h schedule.
+ * Updates the embedded yt-dlp Python via [YoutubeDL.updateYoutubeDL]. The
+ * library bundles a baseline yt-dlp inside the APK; this worker pulls newer
+ * versions in-place so playback keeps working after upstream YouTube changes,
+ * without an APK release.
  */
 @HiltWorker
 class YtDlpDownloadWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted params: WorkerParameters,
-    private val manager: YtDlpManager,
 ) : CoroutineWorker(appContext, params) {
-
-    private val http = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(120, TimeUnit.SECONDS)
-        .followRedirects(true)
-        .build()
-
-    data class Release(val tagName: String, val assetUrl: String, val assetSize: Long)
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         try {
-            setProgress(workDataOf(KEY_PROGRESS to 0f))
-
-            val targetVersion = inputData.getString(KEY_TARGET_VERSION)
-            val release = fetchRelease(targetVersion)
-
-            manager.saveLatestVersion(release.tagName)
-
-            val installed = manager.installedVersionFlow.first()
-            if (installed == release.tagName && manager.isReady) {
-                return@withContext Result.success()
-            }
-
-            val tmp = File(applicationContext.filesDir, "yt-dlp.tmp")
-            downloadWithProgress(release.assetUrl, release.assetSize, tmp)
-
-            val bin = manager.binFile
-            tmp.renameTo(bin)
-            bin.setExecutable(true, true)
-
-            manager.saveInstalledVersion(release.tagName)
-            Result.success()
+            // YoutubeDL.init must already have been called from App.onCreate.
+            // updateYoutubeDL is a no-op when already on latest.
+            val status = YoutubeDL.getInstance().updateYoutubeDL(applicationContext as Application, UpdateChannel.STABLE)
+            Result.success(workDataOf(KEY_STATUS to status?.toString().orEmpty()))
         } catch (e: Exception) {
             Result.failure(workDataOf(KEY_ERROR to (e.message ?: e.javaClass.simpleName)))
         }
     }
 
-    private fun fetchRelease(version: String?): Release {
-        val url = if (version != null)
-            "https://api.github.com/repos/yt-dlp/yt-dlp/releases/tags/$version"
-        else
-            "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
-
-        val req = Request.Builder()
-            .url(url)
-            .header("Accept", "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", "2022-11-28")
-            .header("User-Agent", "OpenTune/1.0 (Android; yt-dlp-updater)")
-            .build()
-
-        val body = http.newCall(req).execute().use { resp ->
-            check(resp.isSuccessful) { "GitHub API ${resp.code}: ${resp.message}" }
-            resp.body?.string() ?: error("Empty GitHub API response")
-        }
-
-        val root = JSONObject(body)
-        val tagName = root.getString("tag_name")
-        val assets = root.getJSONArray("assets")
-        val assetName = ytDlpAssetName()
-
-        for (i in 0 until assets.length()) {
-            val asset = assets.getJSONObject(i)
-            if (asset.getString("name") == assetName) {
-                return Release(
-                    tagName = tagName,
-                    assetUrl = asset.getString("browser_download_url"),
-                    assetSize = asset.getLong("size"),
-                )
-            }
-        }
-        error("Asset '$assetName' missing from $tagName")
-    }
-
-    private suspend fun downloadWithProgress(url: String, totalBytes: Long, dest: File) {
-        val req = Request.Builder().url(url).build()
-        http.newCall(req).execute().use { resp ->
-            check(resp.isSuccessful) { "Download failed ${resp.code}" }
-            val body = resp.body ?: error("Empty download body")
-            val len = if (totalBytes > 0) totalBytes else body.contentLength()
-
-            dest.parentFile?.mkdirs()
-            var sent = 0L
-            var lastPct = -1
-
-            dest.outputStream().use { out ->
-                body.byteStream().use { src ->
-                    val buf = ByteArray(32_768)
-                    var n: Int
-                    while (src.read(buf).also { n = it } != -1) {
-                        out.write(buf, 0, n)
-                        sent += n
-                        val pct = if (len > 0) (sent * 100 / len).toInt() else 0
-                        if (pct != lastPct) {
-                            lastPct = pct
-                            setProgress(workDataOf(KEY_PROGRESS to pct / 100f))
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     companion object {
-        const val TAG                = "ytdlp_download"
-        const val PERIODIC_TAG       = "ytdlp_periodic_update"
-        const val KEY_TARGET_VERSION = "target_version"
-        const val KEY_PROGRESS       = "progress"
-        const val KEY_ERROR          = "error"
+        const val TAG          = "ytdlp_update"
+        const val PERIODIC_TAG = "ytdlp_periodic_update"
+        const val KEY_STATUS   = "status"
+        const val KEY_ERROR    = "error"
 
-        fun enqueue(context: Context, targetVersion: String?) {
-            val data = workDataOf(KEY_TARGET_VERSION to targetVersion)
+        fun enqueueOneShot(context: Context) {
             val req = OneTimeWorkRequestBuilder<YtDlpDownloadWorker>()
                 .addTag(TAG)
-                .setInputData(data)
                 .setConstraints(Constraints(requiredNetworkType = NetworkType.CONNECTED))
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
                 .build()

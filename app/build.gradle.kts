@@ -245,11 +245,14 @@ dependencies {
     implementation(libs.hilt)
     ksp(libs.hilt.compiler)
 
-    // WorkManager + Hilt-Work (yt-dlp binary auto-update)
+    // WorkManager + Hilt-Work (periodic yt-dlp Python update)
     implementation(libs.workmanager)
     implementation(libs.hilt.work)
     ksp(libs.hilt.work.compiler)
     implementation(libs.okhttp)
+
+    // yt-dlp embedded in Python (.so) — executable from nativeLibraryDir on Android 10+
+    implementation(libs.youtubedl.android)
 
     coreLibraryDesugaring(libs.desugaring)
 
