@@ -88,6 +88,7 @@ class YtDlpDownloadWorker @AssistedInject constructor(
             .url(url)
             .header("Accept", "application/vnd.github+json")
             .header("X-GitHub-Api-Version", "2022-11-28")
+            .header("User-Agent", "OpenTune/1.0 (Android; yt-dlp-updater)")
             .build()
 
         val body = http.newCall(req).execute().use { resp ->
