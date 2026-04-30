@@ -134,7 +134,7 @@ fun ThumbnailPlaybackError(
                         detectTapGestures(
                             onTap = {
                                 val systemInfo =
-                                    "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) | ${BuildConfig.FLAVOR}\n${BuildConfig.APPLICATION_ID} | ${BuildConfig.BUILD_TYPE}\n${Build.BRAND} ${Build.DEVICE} (${Build.MODEL})\n${Build.VERSION.SDK_INT} (${Build.ID})\n\n"
+                                    "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})\n${BuildConfig.APPLICATION_ID} | ${BuildConfig.BUILD_TYPE}\n${Build.BRAND} ${Build.DEVICE} (${Build.MODEL})\n${Build.VERSION.SDK_INT} (${Build.ID})\n\n"
                                 val clipData = ClipData.newPlainText(
                                     "OuterTune player error",
                                     AnnotatedString(systemInfo + "OuterTune player error\n\n" + error.stackTraceToString())
