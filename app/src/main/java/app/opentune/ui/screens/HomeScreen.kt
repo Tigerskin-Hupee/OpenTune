@@ -522,7 +522,15 @@ fun HomeScreen(
                                                     startIndex = sectionSongs.indexOfFirst { it.id == musicItem.id }.coerceAtLeast(0)
                                                 )
                                             )
-                                            else -> {} // TODO: browse album/artist/playlist
+                                            is MusicItem.Album -> navController.navigate(
+                                                "online_browse/album/${musicItem.browseId}"
+                                            )
+                                            is MusicItem.Artist -> navController.navigate(
+                                                "online_browse/artist/${musicItem.browseId}"
+                                            )
+                                            is MusicItem.Playlist -> navController.navigate(
+                                                "online_browse/playlist/${musicItem.browseId}"
+                                            )
                                         }
                                     }
                             ) {

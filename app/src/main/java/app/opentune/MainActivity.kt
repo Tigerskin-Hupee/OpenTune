@@ -133,6 +133,7 @@ import app.opentune.ui.player.BottomSheetPlayer
 import app.opentune.ui.screens.AlbumScreen
 import app.opentune.ui.screens.HistoryScreen
 import app.opentune.ui.screens.HomeScreen
+import app.opentune.ui.screens.OnlineBrowseScreen
 import app.opentune.ui.screens.PlayerScreen
 import app.opentune.ui.screens.Screens
 import app.opentune.ui.screens.SetupWizard
@@ -620,6 +621,15 @@ class MainActivity : ComponentActivity() {
 
                                     composable("setup_wizard") {
                                         SetupWizard(navController)
+                                    }
+                                    composable(
+                                        route = "online_browse/{browseType}/{browseId}",
+                                        arguments = listOf(
+                                            navArgument("browseType") { type = NavType.StringType },
+                                            navArgument("browseId") { type = NavType.StringType },
+                                        )
+                                    ) {
+                                        OnlineBrowseScreen(navController)
                                     }
                                 }
                             }
