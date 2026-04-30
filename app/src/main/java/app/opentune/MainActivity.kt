@@ -187,6 +187,7 @@ class MainActivity : ComponentActivity() {
     lateinit var activityLauncher: ActivityLauncherHelper
 
     private var playerConnection by mutableStateOf<PlayerConnection?>(null)
+    var pendingYouTubeVideoId by mutableStateOf<String?>(null)
 
     val controllerViewModel: MediaControllerViewModel by viewModels()
 
@@ -199,6 +200,11 @@ class MainActivity : ComponentActivity() {
                 Toast.makeText(this, getString(R.string.scanner_missing_storage_perm), Toast.LENGTH_SHORT).show()
             }
         }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        extractYouTubeVideoId(intent)?.let { pendingYouTubeVideoId = it }
+    }
 
     override fun onDestroy() {
         Log.i(MAIN_TAG, "onDestroy() called. isFinishing = $isFinishing")
@@ -225,6 +231,7 @@ class MainActivity : ComponentActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         activityLauncher = ActivityLauncherHelper(this)
+        extractYouTubeVideoId(intent)?.let { pendingYouTubeVideoId = it }
 
         setContent {
             Log.v(MAIN_TAG, "RC-1")
@@ -508,6 +515,9 @@ class MainActivity : ComponentActivity() {
                                     }
                                     composable("history") {
                                         HistoryScreen(navController)
+                                    }
+                                    composable("youtube_search") {
+                                        app.opentune.ui.screens.YouTubeSearchScreen(navController)
                                     }
                                     composable("stats") {
                                         StatsScreen(navController)
@@ -890,6 +900,27 @@ class MainActivity : ComponentActivity() {
 
                             }
 
+                            // Play YouTube URL shared from another app
+                            val thisActivity = this@MainActivity
+                            LaunchedEffect(pendingYouTubeVideoId, playerConnection) {
+                                val videoId = thisActivity.pendingYouTubeVideoId ?: return@LaunchedEffect
+                                val conn = playerConnection ?: return@LaunchedEffect
+                                thisActivity.pendingYouTubeVideoId = null
+                                val meta = app.opentune.models.MediaMetadata(
+                                    id = videoId,
+                                    title = "YouTube: $videoId",
+                                    artists = emptyList(),
+                                    duration = 0,
+                                    genre = null,
+                                )
+                                conn.playQueue(
+                                    app.opentune.playback.queues.ListQueue(
+                                        title = "YouTube",
+                                        items = listOf(meta),
+                                    )
+                                )
+                            }
+
                             // Setup wizard
                             LaunchedEffect(Unit) {
                                 if (oobeStatus != OOBE_VERSION) {
@@ -948,6 +979,21 @@ class MainActivity : ComponentActivity() {
         const val ACTION_SONGS = "app.opentune.action.SONGS"
         const val ACTION_ALBUMS = "app.opentune.action.ALBUMS"
         const val ACTION_PLAYLISTS = "app.opentune.action.PLAYLISTS"
+
+        private val YT_ID_REGEX = Regex(
+            """(?:youtube\.com/(?:watch\?(?:.*&)?v=|embed/|shorts/)|youtu\.be/|music\.youtube\.com/watch\?(?:.*&)?v=|vnd\.youtube[:/])([a-zA-Z0-9_-]{11})"""
+        )
+
+        fun extractYouTubeVideoId(intent: Intent?): String? {
+            intent ?: return null
+            val text = when (intent.action) {
+                Intent.ACTION_SEND -> intent.getStringExtra(Intent.EXTRA_TEXT)
+                Intent.ACTION_VIEW -> intent.dataString
+                "android.nfc.action.NDEF_DISCOVERED" -> intent.dataString
+                else -> intent.dataString ?: intent.getStringExtra(Intent.EXTRA_TEXT)
+            } ?: return null
+            return YT_ID_REGEX.find(text)?.groupValues?.get(1)
+        }
     }
 }
 

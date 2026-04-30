@@ -337,5 +337,6 @@ We recycle translations from upstream, they are pulled periodically. -->
     <string name="new_version_available">New version available</string>
     <string name="translation_models">Translation Models</string>
     <string name="clear_translation_models">Clear translation models</string>
-    <string name="library_empty_message">Tap the Scanner tile above to import local music files, or share a YouTube link to this app to play it.</string>
+    <string name="library_empty_message">Search YouTube Music above, scan local files, or share a YouTube link to this app.</string>
+    <string name="search_youtube">YouTube</string>
 </resources>
