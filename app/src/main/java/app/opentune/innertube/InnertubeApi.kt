@@ -67,64 +67,130 @@ class InnertubeApi @Inject constructor() {
         }
     }
 
+    private data class PlayerClient(
+        val clientName: String,
+        val clientVersion: String,
+        val clientId: String,
+        val userAgent: String,
+        val extraContext: (JSONObject) -> Unit = {},
+    )
+
+    // Clients tried in order. iOS and ANDROID_VR currently bypass PoToken
+    // enforcement and return pre-signed CDN URLs without cipher processing.
+    private val playerClients = listOf(
+        PlayerClient(
+            clientName = "IOS",
+            clientVersion = "19.45.4",
+            clientId = "5",
+            userAgent = "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)",
+            extraContext = { c ->
+                c.put("deviceMake", "Apple")
+                c.put("deviceModel", "iPhone16,2")
+                c.put("osName", "iPhone")
+                c.put("osVersion", "18.1.0.22B83")
+            },
+        ),
+        PlayerClient(
+            clientName = "ANDROID_VR",
+            clientVersion = "1.60.19",
+            clientId = "28",
+            userAgent = "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+            extraContext = { c ->
+                c.put("deviceMake", "Oculus")
+                c.put("deviceModel", "Quest 3")
+                c.put("osName", "Android")
+                c.put("osVersion", "12L")
+                c.put("androidSdkVersion", 32)
+            },
+        ),
+        PlayerClient(
+            clientName = "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
+            clientVersion = "2.0",
+            clientId = "85",
+            userAgent = "Mozilla/5.0 (PlayStation; PlayStation 4/12.00) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Safari/605.1.15",
+        ),
+        PlayerClient(
+            clientName = "ANDROID",
+            clientVersion = "19.44.38",
+            clientId = "3",
+            userAgent = "com.google.android.youtube/19.44.38 (Linux; U; Android 11) gzip",
+            extraContext = { c -> c.put("androidSdkVersion", 30) },
+        ),
+    )
+
     /**
-     * Resolves a video ID to a direct audio CDN URL via the YouTube ANDROID
-     * client (client ID 3). This client returns pre-signed adaptive stream
-     * URLs that ExoPlayer plays without signature/cipher processing.
+     * Resolves a video ID to a direct audio CDN URL by trying multiple
+     * YouTube innertube clients. iOS / ANDROID_VR currently bypass PoToken
+     * enforcement and return pre-signed adaptive stream URLs that
+     * ExoPlayer plays without cipher processing.
      */
     fun getAudioStreamUrl(videoId: String): String {
+        val errors = mutableListOf<String>()
+        for (client in playerClients) {
+            try {
+                val url = tryClient(videoId, client)
+                Log.d(tag, "getAudioStreamUrl($videoId) ok via ${client.clientName}")
+                return url
+            } catch (e: Exception) {
+                Log.w(tag, "getAudioStreamUrl($videoId) ${client.clientName} failed: ${e.message}")
+                errors.add("${client.clientName}: ${e.message}")
+            }
+        }
+        error("All player clients failed for $videoId — ${errors.joinToString("; ")}")
+    }
+
+    private fun tryClient(videoId: String, client: PlayerClient): String {
         val body = JSONObject().apply {
             put("videoId", videoId)
             put("context", JSONObject().apply {
                 put("client", JSONObject().apply {
-                    put("clientName", "ANDROID")
-                    put("clientVersion", "19.44.38")
-                    put("androidSdkVersion", 30)
+                    put("clientName", client.clientName)
+                    put("clientVersion", client.clientVersion)
                     put("hl", "en")
                     put("gl", "US")
+                    client.extraContext(this)
                 })
             })
+            put("contentCheckOk", true)
+            put("racyCheckOk", true)
         }
         val req = Request.Builder()
             .url("https://www.youtube.com/youtubei/v1/player?prettyPrint=false")
             .addHeader("Content-Type", "application/json")
-            .addHeader("User-Agent", "com.google.android.youtube/19.44.38 (Linux; U; Android 11) gzip")
-            .addHeader("X-YouTube-Client-Name", "3")
-            .addHeader("X-YouTube-Client-Version", "19.44.38")
+            .addHeader("User-Agent", client.userAgent)
+            .addHeader("X-YouTube-Client-Name", client.clientId)
+            .addHeader("X-YouTube-Client-Version", client.clientVersion)
             .post(body.toString().toRequestBody("application/json".toMediaType()))
             .build()
 
-        val root = try {
-            http.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) error("Player API HTTP ${resp.code}")
-                resp.body?.string()?.let { JSONObject(it) }
-            }
-        } catch (e: Exception) {
-            Log.w(tag, "getAudioStreamUrl($videoId) request failed: ${e.message}")
-            null
-        } ?: error("Player API null response for $videoId")
+        val root = http.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) error("HTTP ${resp.code}")
+            resp.body?.string()?.let { JSONObject(it) }
+        } ?: error("null response")
 
         val status = root.optJSONObject("playabilityStatus")?.optString("status") ?: ""
-        if (status == "ERROR" || status == "UNPLAYABLE") {
+        if (status == "ERROR" || status == "UNPLAYABLE" || status == "LOGIN_REQUIRED") {
             val reason = root.optJSONObject("playabilityStatus")?.optString("reason") ?: status
-            error("Video $videoId not playable: $reason")
+            error("not playable: $reason")
         }
 
         val adaptiveFormats = root.optJSONObject("streamingData")
             ?.optJSONArray("adaptiveFormats")
-            ?: error("No streamingData for $videoId (status='$status')")
+            ?: error("no streamingData (status='$status')")
 
         data class Fmt(val url: String, val bitrate: Int)
         val candidates = mutableListOf<Fmt>()
         for (i in 0 until adaptiveFormats.length()) {
             val fmt = adaptiveFormats.getJSONObject(i)
             if (!fmt.optString("mimeType").startsWith("audio/")) continue
+            // Skip ciphered formats (signatureCipher present means we'd need decryption)
+            if (fmt.has("signatureCipher")) continue
             val url = fmt.optString("url").takeIf { it.startsWith("http") } ?: continue
             candidates.add(Fmt(url, fmt.optInt("bitrate", 0)))
         }
 
         return candidates.maxByOrNull { it.bitrate }?.url
-            ?: error("No direct audio stream for $videoId")
+            ?: error("no direct audio stream")
     }
 
     fun search(query: String): List<YtMusicTrack> {
