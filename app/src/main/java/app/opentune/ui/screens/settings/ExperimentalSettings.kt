@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.ConfirmationNumber
 import androidx.compose.material.icons.rounded.Coronavirus
 import androidx.compose.material.icons.rounded.Delete
@@ -34,7 +35,10 @@ import androidx.compose.material.icons.rounded.DeveloperMode
 import androidx.compose.material.icons.rounded.Devices
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Queue
+import androidx.compose.material.icons.rounded.Update
 import androidx.compose.material.icons.rounded.WarningAmber
+import androidx.compose.runtime.collectAsState
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -80,8 +84,10 @@ import app.opentune.ui.component.PreferenceGroupTitle
 import app.opentune.ui.component.SwitchPreference
 import app.opentune.ui.component.button.IconButton
 import app.opentune.ui.dialog.CounterDialog
+import app.opentune.playback.YtDlpState
 import app.opentune.ui.utils.backToMain
 import app.opentune.utils.rememberPreference
+import app.opentune.viewmodels.YtDlpSettingsViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -92,6 +98,7 @@ import kotlinx.coroutines.runBlocking
 fun ExperimentalSettings(
     navController: NavController,
     scrollBehavior: TopAppBarScrollBehavior,
+    ytDlpViewModel: YtDlpSettingsViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -99,6 +106,7 @@ fun ExperimentalSettings(
     val haptic = LocalHapticFeedback.current
     val playerConnection = LocalPlayerConnection.current
     val uriHandler = LocalUriHandler.current
+    val ytDlpStatus by ytDlpViewModel.status.collectAsState()
 
     // state variables and such
     val (audioGaplessOffload, onAudioGaplessOffloadChange) = rememberPreference(
@@ -126,6 +134,43 @@ fun ExperimentalSettings(
         columnModifier = Modifier
             .verticalScroll(rememberScrollState())
     ) {
+        // ── yt-dlp playback engine ──────────────────────────────────────────
+        PreferenceGroupTitle(title = "Playback engine (yt-dlp)")
+
+        val statusText = when (ytDlpStatus.state) {
+            YtDlpState.UNKNOWN       -> "Checking…"
+            YtDlpState.NOT_INSTALLED -> "Not installed"
+            YtDlpState.DOWNLOADING   ->
+                "Downloading… ${(ytDlpStatus.downloadProgress * 100).toInt()}%"
+            YtDlpState.READY         ->
+                "Ready" + (ytDlpStatus.installedVersion?.let { " · $it" } ?: "")
+            YtDlpState.ERROR         ->
+                "Error: ${ytDlpStatus.error ?: "unknown"}"
+        }
+        val latestText = ytDlpStatus.latestVersion?.let { latest ->
+            if (ytDlpStatus.updateAvailable) "Update available: $latest"
+            else "Up to date ($latest)"
+        }
+
+        PreferenceEntry(
+            title = { Text(statusText) },
+            description = latestText,
+            icon = { Icon(Icons.Rounded.CloudDownload, null) },
+            onClick = {}
+        )
+        PreferenceEntry(
+            title = { Text("Check for updates now") },
+            description = "Pull the latest yt-dlp release from GitHub. " +
+                "The app also checks automatically on launch and every 24h.",
+            icon = { Icon(Icons.Rounded.Update, null) },
+            onClick = {
+                ytDlpViewModel.checkForUpdate()
+                Toast.makeText(context, "Checking for yt-dlp updates…", Toast.LENGTH_SHORT).show()
+            }
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
         PreferenceGroupTitle(
             title = stringResource(R.string.experimental_settings_title)
         )

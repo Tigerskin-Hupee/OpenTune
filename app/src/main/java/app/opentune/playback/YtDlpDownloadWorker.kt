@@ -141,10 +141,17 @@ class YtDlpDownloadWorker @AssistedInject constructor(
 
     companion object {
         const val TAG                = "ytdlp_download"
+        const val PERIODIC_TAG       = "ytdlp_periodic_update"
         const val KEY_TARGET_VERSION = "target_version"
         const val KEY_PROGRESS       = "progress"
         const val KEY_ERROR          = "error"
 
+        /**
+         * One-time update check. Fires immediately when network is available.
+         * Called on every app start — the worker itself short-circuits if the
+         * installed version already matches the latest GitHub release, so this
+         * is cheap when nothing changed.
+         */
         fun enqueue(context: Context, targetVersion: String?) {
             val data = workDataOf(KEY_TARGET_VERSION to targetVersion)
             val req = OneTimeWorkRequestBuilder<YtDlpDownloadWorker>()
@@ -155,6 +162,34 @@ class YtDlpDownloadWorker @AssistedInject constructor(
                 .build()
             WorkManager.getInstance(context)
                 .enqueueUniqueWork(TAG, ExistingWorkPolicy.KEEP, req)
+        }
+
+        /**
+         * Background periodic check (every 24h). Runs even if the app is not
+         * actively opened — ensures stream resolution stays working after
+         * upstream YouTube changes are pushed by the yt-dlp project, without
+         * requiring a new APK to be released.
+         *
+         * Constraints: connected network only, battery not low.
+         * Uses KEEP policy so re-enqueueing on each app start does not reset
+         * the existing schedule.
+         */
+        fun enqueuePeriodic(context: Context) {
+            val constraints = Constraints(
+                requiredNetworkType = NetworkType.CONNECTED,
+                requiresBatteryNotLow = true,
+            )
+            val req = PeriodicWorkRequestBuilder<YtDlpDownloadWorker>(
+                repeatInterval = 24, repeatIntervalTimeUnit = TimeUnit.HOURS,
+                flexTimeInterval = 6, flexTimeIntervalUnit = TimeUnit.HOURS,
+            )
+                .addTag(PERIODIC_TAG)
+                .setConstraints(constraints)
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 1, TimeUnit.HOURS)
+                .build()
+            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+                PERIODIC_TAG, ExistingPeriodicWorkPolicy.KEEP, req,
+            )
         }
     }
 }
