@@ -7,6 +7,17 @@ plugins {
     alias(libs.plugins.hilt)
 }
 
+// Room 2.8.4 was compiled with kotlinx-serialization 1.6.x; 1.7.0 added
+// typeParametersSerializers() as abstract, causing AbstractMethodError during
+// KSP schema processing.  Force 1.6.3 across all configurations (including ksp)
+// so no transitive dep can pull in a newer runtime.
+configurations.all {
+    resolutionStrategy {
+        force("org.jetbrains.kotlinx:kotlinx-serialization-core:1.6.3")
+        force("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+    }
+}
+
 android {
     namespace = "app.opentune"
     compileSdk = 36
