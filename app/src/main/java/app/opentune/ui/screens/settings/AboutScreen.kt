@@ -107,7 +107,7 @@ fun AboutScreen(
             verticalAlignment = Alignment.Top,
         ) {
             Text(
-                text = "OuterTune",
+                text = "OpenTune",
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
@@ -153,14 +153,14 @@ fun AboutScreen(
             IconLabelButton(
                 text = "GitHub",
                 painter = painterResource(R.drawable.github),
-                onClick = { uriHandler.openUri("https://github.com/OuterTune/OuterTune") },
+                onClick = { uriHandler.openUri("https://github.com/Tigerskin-Hupee/OpenTune") },
                 modifier = Modifier.padding(horizontal = 8.dp)
             )
 
             IconLabelButton(
                 text = stringResource(R.string.wiki),
                 icon = Icons.Outlined.Info,
-                onClick = { uriHandler.openUri("https://github.com/OuterTune/OuterTune/wiki") },
+                onClick = { uriHandler.openUri("https://github.com/Tigerskin-Hupee/OpenTune/wiki") },
                 modifier = Modifier.padding(horizontal = 8.dp)
             )
         }
@@ -194,23 +194,13 @@ fun AboutScreen(
                 PreferenceEntry(
                     title = { Text(stringResource(R.string.help_bug_report_action)) },
                     onClick = {
-                        uriHandler.openUri("https://github.com/OuterTune/OuterTune/issues")
+                        uriHandler.openUri("https://github.com/Tigerskin-Hupee/OpenTune/issues")
                     }
                 )
                 PreferenceEntry(
                     title = { Text(stringResource(R.string.help_support_forum)) },
                     onClick = {
-                        uriHandler.openUri("https://github.com/OuterTune/OuterTune/discussions")
-                    }
-                )
-                PreferenceEntry(
-                    title = { Text(stringResource(R.string.help_contact_email_inquiries)) },
-                    onClick = {
-                        val clipData = ClipData.newPlainText(
-                            context.getString(R.string.app_name),
-                            AnnotatedString("outertune@protonmail.com")
-                        )
-                        clipboardManager.nativeClipboard.setPrimaryClip(clipData)
+                        uriHandler.openUri("https://github.com/Tigerskin-Hupee/OpenTune/discussions")
                     }
                 )
             }
@@ -287,7 +277,7 @@ fun AboutScreen(
                         name = "FFmpeg",
                         description = stringResource(R.string.ffmpeg_lgpl),
                         type = listOf(CUSTOM),
-                        url = "https://github.com/OuterTune/ffMetadataEx/blob/main/Modules.md"
+                        url = "https://github.com/Tigerskin-Hupee/OpenTune"
                     )
                 )
             }
