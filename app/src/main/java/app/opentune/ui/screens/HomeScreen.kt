@@ -19,9 +19,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.LazyHorizontalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
@@ -36,6 +40,7 @@ import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.SdCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults.Indicator
 import androidx.compose.material3.pulltorefresh.pullToRefresh
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
@@ -49,6 +54,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
@@ -71,6 +77,8 @@ import app.opentune.db.entities.LocalItem
 import app.opentune.db.entities.Playlist
 import app.opentune.db.entities.Song
 import app.opentune.extensions.togglePlayPause
+import app.opentune.innertube.models.MusicItem
+import app.opentune.innertube.models.asMediaMetadata
 import app.opentune.models.toMediaMetadata
 import app.opentune.playback.queues.ListQueue
 import app.opentune.ui.component.HideOnScrollFAB
@@ -113,6 +121,7 @@ fun HomeScreen(
     val forgottenFavorites by viewModel.forgottenFavorites.collectAsState()
     val keepListening by viewModel.keepListening.collectAsState()
     val similarRecommendations by viewModel.similarRecommendations.collectAsState()
+    val homeSections by viewModel.homeSections.collectAsState()
 
     val allLocalItems by viewModel.allLocalItems.collectAsState()
 
@@ -462,6 +471,65 @@ fun HomeScreen(
                         },
                         modifier = Modifier.animateItem()
                     )
+                }
+            }
+
+            // Online home sections from YouTube Music
+            homeSections.forEach { section ->
+                item {
+                    NavigationTitle(
+                        title = section.title,
+                        modifier = Modifier.animateItem()
+                    )
+                }
+                item {
+                    val songs = section.items.filterIsInstance<MusicItem.Song>()
+                    LazyRow(
+                        contentPadding = WindowInsets.systemBars
+                            .only(WindowInsetsSides.Horizontal)
+                            .asPaddingValues(),
+                        modifier = Modifier.fillMaxWidth().animateItem()
+                    ) {
+                        items(songs) { song ->
+                            Column(
+                                modifier = Modifier
+                                    .padding(horizontal = 6.dp)
+                                    .width(GridThumbnailHeight)
+                                    .clickable {
+                                        playerConnection.playQueue(
+                                            ListQueue(
+                                                title = section.title,
+                                                items = songs.map { it.asMediaMetadata() },
+                                                startIndex = songs.indexOfFirst { it.id == song.id }.coerceAtLeast(0)
+                                            )
+                                        )
+                                    }
+                            ) {
+                                AsyncImage(
+                                    model = song.thumbnailUrl,
+                                    contentDescription = null,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .aspectRatio(1f)
+                                        .clip(RoundedCornerShape(ThumbnailCornerRadius))
+                                )
+                                Text(
+                                    text = song.title,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(top = 4.dp)
+                                )
+                                Text(
+                                    text = song.artists,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
