@@ -9,9 +9,12 @@ import app.opentune.db.MusicDatabase
 import app.opentune.db.entities.Album
 import app.opentune.db.entities.LocalItem
 import app.opentune.db.entities.Song
+import app.opentune.innertube.InnertubeApi
+import app.opentune.innertube.YtMusicTrack
 import app.opentune.models.SimilarRecommendation
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.first
@@ -23,6 +26,7 @@ import javax.inject.Inject
 class HomeViewModel @Inject constructor(
     @ApplicationContext context: Context,
     val database: MusicDatabase,
+    private val innertube: InnertubeApi,
 ) : ViewModel() {
     val isRefreshing = MutableStateFlow(false)
     val isLoading = MutableStateFlow(false)
@@ -31,6 +35,7 @@ class HomeViewModel @Inject constructor(
     val forgottenFavorites = MutableStateFlow<List<Song>?>(null)
     val keepListening = MutableStateFlow<List<LocalItem>?>(null)
     val similarRecommendations = MutableStateFlow<List<SimilarRecommendation>?>(null)
+    val ytRecommendations = MutableStateFlow<List<YtMusicTrack>>(emptyList())
     val playlists = database.playlists(PlaylistFilter.LIBRARY, PlaylistSortType.NAME, true)
         .stateIn(viewModelScope, SharingStarted.Lazily, null)
 
@@ -88,5 +93,8 @@ class HomeViewModel @Inject constructor(
 
     init {
         refresh()
+        viewModelScope.launch(Dispatchers.IO) {
+            ytRecommendations.value = innertube.getRecommendations()
+        }
     }
 }

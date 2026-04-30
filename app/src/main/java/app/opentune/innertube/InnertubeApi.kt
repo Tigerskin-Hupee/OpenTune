@@ -98,6 +98,84 @@ class InnertubeApi @Inject constructor() {
         }
     }
 
+    fun getRecommendations(): List<YtMusicTrack> {
+        val body = JSONObject().apply {
+            put("context", contextJson)
+            put("browseId", "FEmusic_home")
+        }
+        val root = post("browse", body) ?: return emptyList()
+        return try {
+            val results = mutableListOf<YtMusicTrack>()
+            val shelves = root
+                .optJSONObject("contents")
+                ?.optJSONObject("singleColumnBrowseResultsRenderer")
+                ?.optJSONArray("tabs")
+                ?.optJSONObject(0)
+                ?.optJSONObject("tabRenderer")
+                ?.optJSONObject("content")
+                ?.optJSONObject("sectionListRenderer")
+                ?.optJSONArray("contents")
+                ?: return emptyList()
+
+            for (i in 0 until shelves.length()) {
+                val carousel = shelves.getJSONObject(i)
+                    .optJSONObject("musicCarouselShelfRenderer") ?: continue
+                val items = carousel.optJSONArray("contents") ?: continue
+                for (j in 0 until items.length()) {
+                    parseTwoRowTrack(items.getJSONObject(j))?.let { results.add(it) }
+                    if (results.size >= 30) return results
+                }
+            }
+            results
+        } catch (e: Exception) {
+            Log.w(tag, "getRecommendations parse failed: ${e.message}")
+            emptyList()
+        }
+    }
+
+    private fun parseTwoRowTrack(item: JSONObject): YtMusicTrack? {
+        val renderer = item.optJSONObject("musicTwoRowItemRenderer") ?: return null
+        val videoId = renderer
+            .optJSONObject("navigationEndpoint")
+            ?.optJSONObject("watchEndpoint")
+            ?.optString("videoId")
+            ?.takeIf { it.isNotBlank() }
+            ?: renderer.optJSONObject("overlay")
+                ?.optJSONObject("musicItemThumbnailOverlayRenderer")
+                ?.optJSONObject("content")
+                ?.optJSONObject("musicPlayButtonRenderer")
+                ?.optJSONObject("playNavigationEndpoint")
+                ?.optJSONObject("watchEndpoint")
+                ?.optString("videoId")
+                ?.takeIf { it.isNotBlank() }
+            ?: return null
+
+        val title = renderer.optJSONObject("title")
+            ?.optJSONArray("runs")
+            ?.optJSONObject(0)
+            ?.optString("text") ?: videoId
+
+        val artist = renderer.optJSONObject("subtitle")
+            ?.optJSONArray("runs")
+            ?.let { runs ->
+                (0 until runs.length())
+                    .map { runs.getJSONObject(it).optString("text") }
+                    .firstOrNull { it != "•" && it != " • " && it.isNotBlank() }
+            } ?: ""
+
+        val thumbnail = renderer.optJSONObject("thumbnailRenderer")
+            ?.optJSONObject("musicThumbnailRenderer")
+            ?.optJSONObject("thumbnail")
+            ?.optJSONArray("thumbnails")
+            ?.let { thumbs ->
+                (0 until thumbs.length()).map { thumbs.getJSONObject(it) }
+                    .maxByOrNull { it.optInt("width", 0) }
+                    ?.optString("url")
+            }
+
+        return YtMusicTrack(videoId = videoId, title = title, artistName = artist, thumbnailUrl = thumbnail, durationText = null)
+    }
+
     private fun parseTrack(item: JSONObject): YtMusicTrack? {
         val renderer = item.optJSONObject("musicResponsiveListItemRenderer") ?: return null
         val videoId = renderer

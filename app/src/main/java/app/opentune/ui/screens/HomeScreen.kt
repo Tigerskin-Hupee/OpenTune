@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyHorizontalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -57,6 +58,8 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material.icons.rounded.MusicNote
@@ -68,6 +71,8 @@ import app.opentune.LocalMenuState
 import app.opentune.LocalPlayerAwareWindowInsets
 import app.opentune.LocalPlayerConnection
 import app.opentune.R
+import app.opentune.innertube.YtMusicTrack
+import app.opentune.models.MediaMetadata
 import app.opentune.constants.GridThumbnailHeight
 import app.opentune.constants.ListItemHeight
 import app.opentune.constants.ListThumbnailSize
@@ -126,6 +131,7 @@ fun HomeScreen(
     val forgottenFavorites by viewModel.forgottenFavorites.collectAsState()
     val keepListening by viewModel.keepListening.collectAsState()
     val similarRecommendations by viewModel.similarRecommendations.collectAsState()
+    val ytRecommendations by viewModel.ytRecommendations.collectAsState()
 
     val allLocalItems by viewModel.allLocalItems.collectAsState()
 
@@ -322,6 +328,7 @@ fun HomeScreen(
                 }
 
                 item {
+                    val queueTitle = stringResource(R.string.quick_picks)
                     LazyHorizontalGrid(
                         state = quickPicksLazyGridState,
                         rows = GridCells.Fixed(4),
@@ -351,8 +358,13 @@ fun HomeScreen(
 
                                 thumbnailSize = listThumbnailSize,
                                 onPlay = {
-                                    // TODO: local library quick picks playback
-
+                                    playerConnection.playQueue(
+                                        ListQueue(
+                                            title = queueTitle,
+                                            items = quickPicks.map { it.toMediaMetadata() },
+                                            startIndex = quickPicks.indexOf(originalSong)
+                                        )
+                                    )
                                 },
                                 modifier = Modifier.width(horizontalLazyGridItemWidth)
                             )
@@ -498,6 +510,44 @@ fun HomeScreen(
                 }
             }
 
+            ytRecommendations.takeIf { it.isNotEmpty() }?.let { recs ->
+                item {
+                    NavigationTitle(
+                        title = stringResource(R.string.recommended),
+                        modifier = Modifier.animateItem()
+                    )
+                }
+                item {
+                    val recsSnap = recs
+                    val recTitle = stringResource(R.string.recommended)
+                    LazyRow(
+                        contentPadding = WindowInsets.systemBars
+                            .only(WindowInsetsSides.Horizontal)
+                            .asPaddingValues(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .animateItem()
+                    ) {
+                        items(recsSnap, key = { it.videoId }) { track ->
+                            YtRecommendationItem(
+                                track = track,
+                                isActive = track.videoId == mediaMetadata?.id,
+                                isPlaying = isPlaying,
+                                onClick = {
+                                    playerConnection.playQueue(
+                                        ListQueue(
+                                            title = recTitle,
+                                            items = recsSnap.map { it.toHomeMediaMetadata() },
+                                            startIndex = recsSnap.indexOf(track),
+                                        )
+                                    )
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
             if (!isLoading && allLocalItems.isEmpty()) {
                 item {
                     Column(
@@ -541,7 +591,15 @@ fun HomeScreen(
             lazyListState = lazylistState,
             icon = Icons.Rounded.Casino,
             onClick = {
-                // TODO: local library radio
+                val songs = allLocalItems.filterIsInstance<app.opentune.db.entities.Song>()
+                if (songs.isNotEmpty()) {
+                    playerConnection.playQueue(
+                        ListQueue(
+                            title = "Shuffle",
+                            items = songs.shuffled().map { it.toMediaMetadata() },
+                        )
+                    )
+                }
             }
         )
 
@@ -554,3 +612,72 @@ fun HomeScreen(
         )
     }
 }
+
+@Composable
+private fun YtRecommendationItem(
+    track: YtMusicTrack,
+    isActive: Boolean,
+    isPlaying: Boolean,
+    onClick: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .width(GridThumbnailHeight + 24.dp)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box {
+            AsyncImage(
+                model = track.thumbnailUrl,
+                contentDescription = null,
+                modifier = Modifier
+                    .size(GridThumbnailHeight)
+                    .clip(RoundedCornerShape(ThumbnailCornerRadius)),
+            )
+            if (isActive) {
+                Box(
+                    modifier = Modifier
+                        .size(GridThumbnailHeight)
+                        .clip(RoundedCornerShape(ThumbnailCornerRadius))
+                        .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.4f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (isPlaying) {
+                        androidx.compose.material3.Icon(
+                            imageVector = Icons.Rounded.MusicNote,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(28.dp),
+                        )
+                    }
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = track.title,
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        )
+        if (track.artistName.isNotBlank()) {
+            Text(
+                text = track.artistName,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+private fun YtMusicTrack.toHomeMediaMetadata() = MediaMetadata(
+    id = videoId,
+    title = title,
+    artists = listOf(MediaMetadata.Artist(id = null, name = artistName)),
+    duration = 0,
+    thumbnailUrl = thumbnailUrl,
+    genre = null,
+)
