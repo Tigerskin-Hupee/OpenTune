@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.util.Log
 import androidx.documentfile.provider.DocumentFile
+import androidx.documentfile.provider.TreeDocumentFileOt
 import app.opentune.db.entities.Song
 import app.opentune.utils.scanners.LocalMediaScanner.Companion.scanDfRecursive
 import app.opentune.utils.scanners.documentFileFromUri
@@ -89,9 +90,7 @@ class DownloadDirectoryManagerOt(private var context: Context, private var dir: 
     }
 
     fun isExists(mediaId: String): DocumentFile? {
-        return availableFiles.find {
-            it.name?.substringAfterLast('[')?.substringBeforeLast(']') == mediaId
-        }
+        return availableFiles.find { (it as TreeDocumentFileOt).id == mediaId }
     }
 
     fun getFilePathIfExists(mediaId: String): Uri? {

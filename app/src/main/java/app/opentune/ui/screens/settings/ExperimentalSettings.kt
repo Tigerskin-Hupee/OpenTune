@@ -101,12 +101,12 @@ fun ExperimentalSettings(
     ytDlpViewModel: YtDlpSettingsViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
+    val ytDlpStatus by ytDlpViewModel.status.collectAsState()
     val coroutineScope = rememberCoroutineScope()
     val database = LocalDatabase.current
     val haptic = LocalHapticFeedback.current
     val playerConnection = LocalPlayerConnection.current
     val uriHandler = LocalUriHandler.current
-    val ytDlpStatus by ytDlpViewModel.status.collectAsState()
 
     // state variables and such
     val (audioGaplessOffload, onAudioGaplessOffloadChange) = rememberPreference(
@@ -160,8 +160,8 @@ fun ExperimentalSettings(
         )
         PreferenceEntry(
             title = { Text("Check for updates now") },
-            description = "Pull the latest yt-dlp release from GitHub. " +
-                "The app also checks automatically on launch and every 24h.",
+            description = "Pull latest yt-dlp release from GitHub. " +
+                "App also auto-checks on launch and every 24h.",
             icon = { Icon(Icons.Rounded.Update, null) },
             onClick = {
                 ytDlpViewModel.checkForUpdate()

@@ -19,13 +19,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.LazyHorizontalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
@@ -40,7 +36,6 @@ import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.SdCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults.Indicator
 import androidx.compose.material3.pulltorefresh.pullToRefresh
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
@@ -54,8 +49,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
@@ -78,8 +71,6 @@ import app.opentune.db.entities.LocalItem
 import app.opentune.db.entities.Playlist
 import app.opentune.db.entities.Song
 import app.opentune.extensions.togglePlayPause
-import app.opentune.innertube.models.MusicItem
-import app.opentune.innertube.models.asMediaMetadata
 import app.opentune.models.toMediaMetadata
 import app.opentune.playback.queues.ListQueue
 import app.opentune.ui.component.HideOnScrollFAB
@@ -109,7 +100,6 @@ fun HomeScreen(
     navController: NavController,
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
-    val context = LocalContext.current
     val menuState = LocalMenuState.current
     val database = LocalDatabase.current
     val density = LocalDensity.current
@@ -123,7 +113,6 @@ fun HomeScreen(
     val forgottenFavorites by viewModel.forgottenFavorites.collectAsState()
     val keepListening by viewModel.keepListening.collectAsState()
     val similarRecommendations by viewModel.similarRecommendations.collectAsState()
-    val homeSections by viewModel.homeSections.collectAsState()
 
     val allLocalItems by viewModel.allLocalItems.collectAsState()
 
@@ -149,12 +138,18 @@ fun HomeScreen(
                             if (it.id == mediaMetadata?.id) {
                                 playerConnection.player.togglePlayPause()
                             } else {
-                                playerConnection.playQueue(
-                                    ListQueue(
-                                        title = source,
-                                        items = listOf(it.toMediaMetadata())
+                                val song = it.toMediaMetadata()
+                                if (song.isLocal) {
+                                    playerConnection.playQueue(
+                                        ListQueue(
+                                            title = source,
+                                            items = listOf(song)
+                                        )
                                     )
-                                )
+                                } else {
+                                    // TODO: local library radio playback
+
+                                }
                             }
                         },
                         onLongClick = {
@@ -343,15 +338,8 @@ fun HomeScreen(
 
                                 thumbnailSize = listThumbnailSize,
                                 onPlay = {
-                                    val title = context.getString(R.string.quick_picks)
-                                    playerConnection.playQueue(
-                                        ListQueue(
-                                            title = title,
-                                            items = quickPicks.map { it.toMediaMetadata() },
-                                            startIndex = quickPicks.indexOfFirst { it.id == originalSong.id }
-                                                .coerceAtLeast(0)
-                                        )
-                                    )
+                                    // TODO: local library quick picks playback
+
                                 },
                                 modifier = Modifier.width(horizontalLazyGridItemWidth)
                             )
@@ -474,96 +462,6 @@ fun HomeScreen(
                         },
                         modifier = Modifier.animateItem()
                     )
-                }
-            }
-
-            // Online home sections from YouTube Music
-            homeSections.forEach { section ->
-                item {
-                    NavigationTitle(
-                        title = section.title,
-                        modifier = Modifier.animateItem()
-                    )
-                }
-                item {
-                    val sectionSongs = section.items.filterIsInstance<MusicItem.Song>()
-                    LazyRow(
-                        contentPadding = WindowInsets.systemBars
-                            .only(WindowInsetsSides.Horizontal)
-                            .asPaddingValues(),
-                        modifier = Modifier.fillMaxWidth().animateItem()
-                    ) {
-                        items(section.items) { musicItem ->
-                            val thumbnailUrl = when (musicItem) {
-                                is MusicItem.Song -> musicItem.thumbnailUrl
-                                is MusicItem.Album -> musicItem.thumbnailUrl
-                                is MusicItem.Artist -> musicItem.thumbnailUrl
-                                is MusicItem.Playlist -> musicItem.thumbnailUrl
-                            }
-                            val title = when (musicItem) {
-                                is MusicItem.Song -> musicItem.title
-                                is MusicItem.Album -> musicItem.title
-                                is MusicItem.Artist -> musicItem.name
-                                is MusicItem.Playlist -> musicItem.title
-                            }
-                            val subtitle = when (musicItem) {
-                                is MusicItem.Song -> musicItem.artists
-                                is MusicItem.Album -> musicItem.artists.orEmpty()
-                                is MusicItem.Artist -> ""
-                                is MusicItem.Playlist -> musicItem.author.orEmpty()
-                            }
-                            Column(
-                                modifier = Modifier
-                                    .padding(horizontal = 6.dp)
-                                    .width(GridThumbnailHeight)
-                                    .clickable {
-                                        when (musicItem) {
-                                            is MusicItem.Song -> playerConnection.playQueue(
-                                                ListQueue(
-                                                    title = section.title,
-                                                    items = sectionSongs.map { it.asMediaMetadata() },
-                                                    startIndex = sectionSongs.indexOfFirst { it.id == musicItem.id }.coerceAtLeast(0)
-                                                )
-                                            )
-                                            is MusicItem.Album -> navController.navigate(
-                                                "online_browse/album/${musicItem.browseId}"
-                                            )
-                                            is MusicItem.Artist -> navController.navigate(
-                                                "online_browse/artist/${musicItem.browseId}"
-                                            )
-                                            is MusicItem.Playlist -> navController.navigate(
-                                                "online_browse/playlist/${musicItem.browseId}"
-                                            )
-                                        }
-                                    }
-                            ) {
-                                AsyncImage(
-                                    model = thumbnailUrl,
-                                    contentDescription = null,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .aspectRatio(1f)
-                                        .clip(RoundedCornerShape(ThumbnailCornerRadius))
-                                )
-                                Text(
-                                    text = title,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.padding(top = 4.dp)
-                                )
-                                if (subtitle.isNotEmpty()) {
-                                    Text(
-                                        text = subtitle,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
-                            }
-                        }
-                    }
                 }
             }
 

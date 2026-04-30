@@ -65,9 +65,11 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.SessionToken
 import app.opentune.MainActivity
 import app.opentune.R
+import app.opentune.constants.AudioDecoderKey
 import app.opentune.constants.AudioGaplessOffloadKey
 import app.opentune.constants.AudioNormalizationKey
 import app.opentune.constants.AudioOffloadKey
+import app.opentune.constants.ENABLE_FFMETADATAEX
 import app.opentune.constants.KeepAliveKey
 import app.opentune.constants.MAX_PLAYER_CONSECUTIVE_ERR
 import app.opentune.constants.MaxQueuesKey
@@ -106,6 +108,7 @@ import app.opentune.utils.playerCoroutine
 import app.opentune.utils.reportException
 import com.google.common.util.concurrent.MoreExecutors
 import dagger.hilt.android.AndroidEntryPoint
+import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.NextRenderersFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -149,9 +152,6 @@ class MusicService : MediaLibraryService(),
     lateinit var lyricsHelper: LyricsHelper
 
     @Inject
-    lateinit var streamResolver: StreamResolver
-
-    @Inject
     lateinit var mediaLibrarySessionCallback: MediaLibrarySessionCallback
 
     private val binder = MusicBinder()
@@ -167,6 +167,9 @@ class MusicService : MediaLibraryService(),
     @Inject
     @DownloadCache
     lateinit var downloadCache: SimpleCache
+
+    @Inject
+    lateinit var streamResolver: StreamResolver
 
     lateinit var player: ExoPlayer
     private lateinit var mediaSession: MediaLibrarySession
@@ -609,7 +612,10 @@ class MusicService : MediaLibraryService(),
                 return@Factory dataSpec
             }
 
-            Log.d(TAG, "PLAYING: remote song (resolving stream URL)")
+            // Not cached / not downloaded — resolve stream URL via yt-dlp.
+            // yt-dlp is auto-updated from GitHub Releases by YtDlpManager so
+            // upstream YouTube changes are handled without an APK release.
+            Log.d(TAG, "PLAYING: remote song (resolving stream URL via StreamResolver)")
             val urlResult = runBlocking { streamResolver.getStreamUrl(mediaId) }
             val url = urlResult.getOrElse { err ->
                 throw PlaybackException(
@@ -623,28 +629,66 @@ class MusicService : MediaLibraryService(),
     }
 
     private fun createRenderersFactory(gaplessOffloadAllowed: Boolean): DefaultRenderersFactory {
-        return object : DefaultRenderersFactory(this) {
-            override fun buildAudioSink(
-                context: Context,
-                enableFloatOutput: Boolean,
-                enableAudioTrackPlaybackParams: Boolean
-            ): AudioSink? {
-                return DefaultAudioSink.Builder(this@MusicService)
-                    .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
-                    .setAudioProcessorChain(
-                        DefaultAudioSink.DefaultAudioProcessorChain(
-                            emptyArray(),
-                            SilenceSkippingAudioProcessor(),
-                            SonicAudioProcessor()
+        if (ENABLE_FFMETADATAEX) {
+            return object : NextRenderersFactory(this@MusicService) {
+                override fun buildAudioSink(
+                    context: Context,
+                    pcmEncodingRestrictionLifted: Boolean,
+                    enableFloatOutput: Boolean,
+                    enableAudioTrackPlaybackParams: Boolean
+                ): AudioSink? {
+                    return DefaultAudioSink.Builder(this@MusicService)
+                        .setPcmEncodingRestrictionLifted(pcmEncodingRestrictionLifted)
+                        .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                        .setAudioProcessorChain(
+                            DefaultAudioSink.DefaultAudioProcessorChain(
+                                emptyArray(),
+                                SilenceSkippingAudioProcessor(),
+                                SonicAudioProcessor()
+                            )
                         )
-                    )
-                    .setAudioOffloadSupportProvider(
-                        MyAudioOffloadSupportProvider(
-                            DefaultAudioOffloadSupportProvider(context),
-                            !gaplessOffloadAllowed
+                        .setAudioOffloadSupportProvider(
+                            MyAudioOffloadSupportProvider(
+                                DefaultAudioOffloadSupportProvider(context),
+                                !gaplessOffloadAllowed
+                            )
                         )
+                        .build()
+                }
+            }
+                .setEnableDecoderFallback(true)
+                .setExtensionRendererMode(
+                    dataStore.get(
+                        AudioDecoderKey,
+                        DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF
                     )
-                    .build()
+                )
+        } else {
+            return object : DefaultRenderersFactory(this) {
+                override fun buildAudioSink(
+                    context: Context,
+                    pcmEncodingRestrictionLifted: Boolean,
+                    enableFloatOutput: Boolean,
+                    enableAudioTrackPlaybackParams: Boolean
+                ): AudioSink? {
+                    return DefaultAudioSink.Builder(this@MusicService)
+                        .setPcmEncodingRestrictionLifted(pcmEncodingRestrictionLifted)
+                        .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                        .setAudioProcessorChain(
+                            DefaultAudioSink.DefaultAudioProcessorChain(
+                                emptyArray(),
+                                SilenceSkippingAudioProcessor(),
+                                SonicAudioProcessor()
+                            )
+                        )
+                        .setAudioOffloadSupportProvider(
+                            MyAudioOffloadSupportProvider(
+                                DefaultAudioOffloadSupportProvider(context),
+                                !gaplessOffloadAllowed
+                            )
+                        )
+                        .build()
+                }
             }
         }
     }

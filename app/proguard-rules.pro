@@ -1,127 +1,92 @@
-# ============================================================
-# OpenTune ProGuard / R8 rules
-# ============================================================
+# Add project specific ProGuard rules here.
+# You can control the set of applied configuration files using the
+# proguardFiles setting in build.gradle.kts.
+#
+# For more details, see
+#   http://developer.android.com/guide/developing/tools/proguard.html
 
-# ── Kotlin ───────────────────────────────────────────────────
--keepattributes Signature
--keepattributes *Annotation*
--keepattributes EnclosingMethod
--keepattributes InnerClasses
--keepattributes SourceFile,LineNumberTable
--keep class kotlin.Metadata { *; }
--dontwarn kotlin.**
+# If your project uses WebView with JS, uncomment the following
+# and specify the fully qualified class name to the JavaScript interface
+# class:
+#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
+#   public *;
+#}
 
-# Kotlin Coroutines
--keepnames class kotlinx.coroutines.internal.MainDispatcherFactory {}
--keepnames class kotlinx.coroutines.CoroutineExceptionHandler {}
--keepclassmembers class kotlinx.coroutines.** {
-    volatile <fields>;
+# Uncomment this to preserve the line number information for
+# debugging stack traces.
+#-keepattributes SourceFile,LineNumberTable
+
+# If you keep the line number information, uncomment this to
+# hide the original source file name.
+#-renamesourcefileattribute SourceFile
+
+## Kotlin Serialization
+# Keep `Companion` object fields of serializable classes.
+# This avoids serializer lookup through `getDeclaredClasses` as done for named companion objects.
+-if @kotlinx.serialization.Serializable class **
+-keepclasseswithmembers class <1> {
+    static <1>$Companion Companion;
 }
--dontwarn kotlinx.coroutines.**
 
-# Kotlin Serialization
+# Keep `serializer()` on companion objects (both default and named) of serializable classes.
+-if @kotlinx.serialization.Serializable class ** {
+    static **$* *;
+}
+-keepclasseswithmembers class <2>$<3> {
+    kotlinx.serialization.KSerializer serializer(...);
+}
+
+# Keep `INSTANCE.serializer()` of serializable objects.
+-if @kotlinx.serialization.Serializable class ** {
+    public static ** INSTANCE;
+}
+-keepclasseswithmembers class <1> {
+    public static <1> INSTANCE;
+    kotlinx.serialization.KSerializer serializer(...);
+}
+
+# @Serializable and @Polymorphic are used at runtime for polymorphic serialization.
 -keepattributes RuntimeVisibleAnnotations,AnnotationDefault
--keepclassmembers @kotlinx.serialization.Serializable class ** {
-    *** Companion;
-    *** INSTANCE;
-    kotlinx.serialization.KSerializer serializer(...);
-}
--keep,includedescriptorclasses class app.opentune.**$$serializer { *; }
--keepclassmembers class app.opentune.** {
-    *** Companion;
-}
--keepclasseswithmembers class app.opentune.** {
-    kotlinx.serialization.KSerializer serializer(...);
-}
--dontwarn kotlinx.serialization.**
 
-# ── Hilt / Dagger ────────────────────────────────────────────
--keep,allowobfuscation,allowshrinking class * extends dagger.hilt.android.internal.managers.ActivityComponentManager { *; }
--keep class dagger.hilt.** { *; }
--keep class javax.inject.** { *; }
--keep class * extends dagger.hilt.android.HiltAndroidApp
--keepclasseswithmembernames class * {
-    @dagger.* <fields>;
-    @dagger.* <methods>;
-    @javax.inject.* <fields>;
-    @javax.inject.* <methods>;
-}
--dontwarn dagger.**
--dontwarn dagger.hilt.**
+-dontwarn javax.servlet.ServletContainerInitializer
+-dontwarn org.bouncycastle.jsse.BCSSLParameters
+-dontwarn org.bouncycastle.jsse.BCSSLSocket
+-dontwarn org.bouncycastle.jsse.provider.BouncyCastleJsseProvider
+-dontwarn org.conscrypt.Conscrypt$Version
+-dontwarn org.conscrypt.Conscrypt
+-dontwarn org.conscrypt.ConscryptHostnameVerifier
+-dontwarn org.openjsse.javax.net.ssl.SSLParameters
+-dontwarn org.openjsse.javax.net.ssl.SSLSocket
+-dontwarn org.openjsse.net.ssl.OpenJSSE
+-dontwarn org.slf4j.impl.StaticLoggerBinder
 
-# ── Room ─────────────────────────────────────────────────────
--keep class * extends androidx.room.RoomDatabase
--keep @androidx.room.Entity class *
--keep @androidx.room.Dao interface *
--keepclassmembers @androidx.room.Entity class * { *; }
--keep class app.opentune.db.** { *; }
--dontwarn androidx.room.**
+## Rules for NewPipeExtractor
+-keep class org.schabi.newpipe.extractor.timeago.patterns.** { *; }
+-keep class org.mozilla.javascript.** { *; }
+-keep class org.mozilla.javascript.engine.** { *; }
+-dontwarn org.mozilla.javascript.JavaToJSONConverters
+-dontwarn org.mozilla.javascript.tools.**
+-keep class javax.script.** { *; }
+-dontwarn javax.script.**
+-keep class jdk.dynalink.** { *; }
+-dontwarn jdk.dynalink.**
+# Rules for jsoup. See https://github.com/jhy/jsoup/issues/2459
+-dontwarn com.google.re2j.**
 
-# ── AndroidX / Jetpack ───────────────────────────────────────
--keep class androidx.lifecycle.** { *; }
--keep class androidx.work.** { *; }
--keep class * extends androidx.work.Worker
--keep class * extends androidx.work.CoroutineWorker
--keep class * extends androidx.work.ListenableWorker {
-    public <init>(android.content.Context, androidx.work.WorkerParameters);
-}
--dontwarn androidx.work.**
-
-# DataStore
--keep class androidx.datastore.** { *; }
--dontwarn androidx.datastore.**
-
-# ── Media3 / ExoPlayer ───────────────────────────────────────
--keep class androidx.media3.** { *; }
--keep interface androidx.media3.** { *; }
--keep class com.google.android.exoplayer2.** { *; }
--dontwarn androidx.media3.**
--dontwarn com.google.android.exoplayer2.**
-
-# ── OkHttp ───────────────────────────────────────────────────
--dontwarn okhttp3.**
--dontwarn okio.**
--keep class okhttp3.** { *; }
--keepnames class okhttp3.internal.publicsuffix.PublicSuffixDatabase
--dontwarn org.codehaus.mojo.animal_sniffer.*
--dontwarn javax.annotation.**
-
-# ── Ktor ─────────────────────────────────────────────────────
--keep class io.ktor.** { *; }
--dontwarn io.ktor.**
-
-# ── Coil ─────────────────────────────────────────────────────
--keep class coil.** { *; }
--dontwarn coil.**
-
-# ── App entities / models ─────────────────────────────────────
--keep class app.opentune.db.entities.** { *; }
--keep class app.opentune.innertube.** { *; }
--keep class app.opentune.playback.YtDlpManager { *; }
--keep class app.opentune.playback.YtDlpDownloadWorker { *; }
--keep class app.opentune.playback.YtDlpUpdateChecker { *; }
--keep class app.opentune.backup.BackupManager { *; }
--keep class app.opentune.lyrics.LrcLine { *; }
--keep class app.opentune.innertube.models.** { *; }
--keep class app.opentune.innertube.InnertubeApi { *; }
--keep class app.opentune.innertube.AudioQuality { *; }
-
-# ── Enum classes ──────────────────────────────────────────────
--keepclassmembers enum * {
-    public static **[] values();
-    public static ** valueOf(java.lang.String);
+## Logging (does not affect Timber)
+-assumenosideeffects class android.util.Log {
+    public static boolean isLoggable(java.lang.String, int);
+    public static int v(...);
+    public static int d(...);
+    ## Leave in release builds
+    #public static int i(...);
+    #public static int w(...);
+    #public static int e(...);
 }
 
-# ── Reflection safety ─────────────────────────────────────────
--keepclassmembers class * {
-    @android.webkit.JavascriptInterface <methods>;
-}
--keepclassmembers class * implements android.os.Parcelable {
-    public static final android.os.Parcelable$Creator CREATOR;
-}
+## OuterTune required modules
+-keep class wah.mikooomich.ffMetadataEx.** { *; }
 
-# ── Suppress known-safe warnings ──────────────────────────────
--dontwarn com.google.errorprone.annotations.**
--dontwarn com.google.j2objc.annotations.**
--dontwarn sun.misc.Unsafe
--dontwarn java.lang.invoke.StringConcatFactory
+## Quality of life for logs
+-keepclasseswithmembernames class app.opentune.playback.**
+-keepclasseswithmembernames class app.opentune.utils.scanners.**
