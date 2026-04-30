@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 
-<!-- This file hosts strings specific to OuterTune. This separation allows us to easily recycle translations from upstream InnerTune,
-while also allowing users to translate our app as well. New, specific strings to OuterTune go here. -->
+<!-- This file hosts strings specific to OpenTune. This separation allows us to easily recycle translations from upstream InnerTune,
+while also allowing users to translate our app as well. New, specific strings to OpenTune go here. -->
 
 <resources>
 <!-- General -->
@@ -170,7 +170,7 @@ while also allowing users to translate our app as well. New, specific strings to
     <string name="audio_offload">Enable offload</string>
     <string name="audio_offload_description">Use the offload audio path for audio playback. Enabling this may reduce power usage but can lead experience issues with audio playback or post processing. This preference has no effect for unsupported codecs or devices</string>
     <string name="keep_alive_title">Prevent system killing app</string>
-    <string name="keep_alive_description">Use a persistent foreground service to prevent OuterTune from being closed in the background</string>
+    <string name="keep_alive_description">Use a persistent foreground service to prevent OpenTune from being closed in the background</string>
     <string name="persistent_queue_desc_ot">Restore previous open queue(s) when the app starts</string>
     <string name="min_playback_duration">Minimum playback duration</string>
     <string name="min_playback_duration_description">The minimum amount of a song that must be played before it is considered \"played\"</string>
@@ -283,8 +283,8 @@ while also allowing users to translate our app as well. New, specific strings to
     <string name="dl_size_used_main">External: %s used</string>
     <string name="dl_size_used_extra">Extra imports: %s used</string>
     <string name="dl_storage_tooltip">Internal Downloads are saved in the app’s private storage and aren’t accessible without root.
-        \n\nExternal Downloads are saved to your device’s external storage (e.g., /sdcard or micro SD cards) and can be accessed or edited directly with a file explorer. For the External Downloads folder, we recommend choosing an empty folder specifically for song downloads, as OuterTune may modify or delete files in that folder.
-        \n\nExtra Import folders are read-only and used for loading additional songs. OuterTune will never change or delete files in these folders. You can select these folders in the advanced section.
+        \n\nExternal Downloads are saved to your device’s external storage (e.g., /sdcard or micro SD cards) and can be accessed or edited directly with a file explorer. For the External Downloads folder, we recommend choosing an empty folder specifically for song downloads, as OpenTune may modify or delete files in that folder.
+        \n\nExtra Import folders are read-only and used for loading additional songs. OpenTune will never change or delete files in these folders. You can select these folders in the advanced section.
         \n\nWhen you clear downloads, only internal songs are deleted. External Downloads and Extra Import songs must be removed manually, either through the song’s menu or manually via a file explorer.
         \n\nRescan download folders: Song downloads in the External Downloads and Extra Imports folders are NOT updated automatically. If you manually add, remove, or change files using a file explorer, you may need to rescan the download folders to update the app’s database. This option is available in the advanced section.
     </string>
