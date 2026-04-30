@@ -1,127 +1,111 @@
-# OuterTune
+# OpenTune
 
-<img src="./assets/outertune.webp" height="88" alt="OuterTune app icon">
+<img src="./assets/outertune.webp" height="88" alt="OpenTune app icon">
 
-A Material 3 music player for Android
+A Material 3 YouTube Music player for Android — powered by yt-dlp
 
+[![License](https://img.shields.io/github/license/Tigerskin-Hupee/OpenTune)](https://www.gnu.org/licenses/gpl-3.0)
+[![Latest release](https://img.shields.io/github/v/release/Tigerskin-Hupee/OpenTune?include_prereleases)](https://github.com/Tigerskin-Hupee/OpenTune/releases)
 
-## Hey there...
+[<img src="assets/badge_github.png" alt="Get it on GitHub" height="40">](https://github.com/Tigerskin-Hupee/OpenTune/releases/latest)
 
-I won't waste your time:
+---
 
-This app is no longer in active development. If you are looking for a replacement YouTube Music client, try [Metrolist](https://github.com/MetrolistGroup/Metrolist), [ArchiveTune](https://github.com/koiverse/ArchiveTune), etc. If you are looking for a local music player (or want to keep with with my antics...), then [Gramophone](https://github.com/FoedusProgramme/Gramophone) may just be for you.
+## What is OpenTune?
 
-Should anyone wish to take on the maintainer role and resurrect this app, feel free to contact us :D
+OpenTune is a fork of [OuterTune](https://github.com/DD3Boh/OuterTune) that replaces the traditional YouTube stream resolution with **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** — the most actively maintained YouTube downloader available.
 
-However, if you do want me to waste your time: https://github.com/OuterTune/OuterTune/discussions/1116
+### Why yt-dlp?
 
-<details>
- <summary>Click to show old readme</summary>
+YouTube frequently changes its internal stream cipher and API formats, causing music players to break silently. yt-dlp is a community-maintained project that stays ahead of every YouTube change.
 
+OpenTune **automatically downloads and updates yt-dlp in the background** — so when YouTube changes its format, the app self-heals without needing an APK update.
 
-[![Latest release](https://img.shields.io/github/v/release/OuterTune/OuterTune?include_prereleases)](https://github.com/OuterTune/OuterTune/releases)
-[![License](https://img.shields.io/github/license/OuterTune/OuterTune)](https://www.gnu.org/licenses/gpl-3.0)
-[![Downloads](https://img.shields.io/github/downloads/OuterTune/OuterTune/total)](https://github.com/OuterTune/OuterTune/releases)
-
-
-<!-- use  "⠀⠀" for spacing -->
-[<img src="assets/badge_github.png" alt="Get it on GitHub" height="40">](https://github.com/OuterTune/OuterTune/releases/latest)⠀⠀
-[<img src="assets/IzzyOnDroidButtonGreyBorder.svg" alt="Get it on IzzyOnDroid" height="40">](https://apt.izzysoft.de/fdroid/index/apk/com.dd3boh.outertune)⠀⠀
-[<img src="assets/badge_obtainium.png" alt="Get it on Obtainium" height="40">](https://apps.obtainium.imranr.dev/redirect?r=obtainium://app/%7B%22id%22%3A%22com.dd3boh.outertune%22%2C%22url%22%3A%22https%3A%2F%2Fgithub.com%2FDD3Boh%2FOuterTune%22%2C%22author%22%3A%22DD3Boh%22%2C%22name%22%3A%22OuterTune%22%2C%22preferredApkIndex%22%3A0%2C%22additionalSettings%22%3A%22%7B%5C%22includePrereleases%5C%22%3Afalse%2C%5C%22fallbackToOlderReleases%5C%22%3Atrue%2C%5C%22filterReleaseTitlesByRegEx%5C%22%3A%5C%22%5C%22%2C%5C%22filterReleaseNotesByRegEx%5C%22%3A%5C%22%5C%22%2C%5C%22verifyLatestTag%5C%22%3Afalse%2C%5C%22dontSortReleasesList%5C%22%3Afalse%2C%5C%22useLatestAssetDateAsReleaseDate%5C%22%3Afalse%2C%5C%22trackOnly%5C%22%3Afalse%2C%5C%22versionExtractionRegEx%5C%22%3A%5C%22%5C%22%2C%5C%22matchGroupToUse%5C%22%3A%5C%22%5C%22%2C%5C%22versionDetection%5C%22%3Atrue%2C%5C%22releaseDateAsVersion%5C%22%3Afalse%2C%5C%22useVersionCodeAsOSVersion%5C%22%3Afalse%2C%5C%22apkFilterRegEx%5C%22%3A%5C%22%5C%22%2C%5C%22invertAPKFilter%5C%22%3Afalse%2C%5C%22autoApkFilterByArch%5C%22%3Atrue%2C%5C%22appName%5C%22%3A%5C%22%5C%22%2C%5C%22shizukuPretendToBeGooglePlay%5C%22%3Afalse%2C%5C%22allowInsecure%5C%22%3Afalse%2C%5C%22exemptFromBackgroundUpdates%5C%22%3Afalse%2C%5C%22skipUpdateNotifications%5C%22%3Afalse%2C%5C%22about%5C%22%3A%5C%22A%20Material%203%20YouTube%20Music%20client%20%26%20local%20music%20player%20for%20Android%5C%22%7D%22%2C%22overrideSource%22%3A%22GitHub%22%7D)
-
-
-
+---
 
 ## Features
 
-OuterTune is a supercharged fork of [InnerTune](https://github.com/z-huang/InnerTune). This app is both a local media player, and a YouTube Music client.
+### YouTube Music
+- Search and play from YouTube Music directly
+- Recommended tracks on the home screen (YouTube Music home feed)
+- Share any `youtube.com`, `youtu.be`, or `music.youtube.com` link to the app to play instantly
 
-- YouTube Music client features
-    - Song downloading (offline playback)
-    - Seamless playback: no ADs & background playback
-    - Account synchronization
-        - Full playlist sync from the app to the remote account is temporally unavailable
-- Local audio file playback (ex. MP3, OGG, FLAC, etc.)
-    - Play local and Youtube Music songs at the same time
-    - Uses a custom tag extractor instead of MediaStore's broken metadata extractor! (e.g tags delimited with \\ now show up properly)
-- Sleek Material3 design
-- Multiple queues
-- Synchronized lyrics, and support for word by word/Karaoke lyrics formats (e.g LRC, TTML)
-- Audio normalization, tempo/pitch adjustment, and various other audio effects
+### yt-dlp Engine
+- Auto-downloads the yt-dlp binary from GitHub Releases on first launch
+- Checks for updates every 24 hours in the background — no APK update needed when YouTube changes
+- Stream URL resolved via YouTube player API (fast path), yt-dlp used as fallback
+- Status visible in **Settings → Experimental**
+
+### Local Music
+- Plays MP3, OGG, FLAC, WAV, AAC and more
+- Custom tag extractor — no broken MediaStore metadata
+- Local and YouTube songs can coexist in the same queue
+
+### Player & UI
+- Material 3 design with dynamic color theming
+- Multiple independent queues
+- Synchronized lyrics — word-by-word / karaoke (LRC, TTML)
+- Audio normalization, tempo and pitch adjustment
 - Android Auto support
-- Support for Android 8 (Oreo) and higher
+- Adaptive layout for phones and tablets
+- Android 8 (Oreo) and higher
 
-> [!NOTE]
-> Android 8 (Oreo) and higher is supported. While the app may work on Android 7.x (Nougat), we do not officially support this version
+---
 
-> [!NOTE]
-> Read our FAQ and guides on our [wiki](https://github.com/OuterTune/OuterTune/wiki/Frequently-Asked-Questions-(FAQ))
+## How yt-dlp Integration Works
 
+```
+Search / Recommendation → tap to play
+        ↓
+  MusicService receives MediaItem (videoId)
+        ↓
+  StreamResolver checks in-memory cache (5h TTL)
+        ↓ cache miss
+  YouTube ANDROID player API  ←— primary, no binary needed
+        ↓ if fails (geo-block, etc.)
+  yt-dlp binary               ←— fallback, auto-updated
+        ↓
+  CDN stream URL → ExoPlayer
+```
+
+yt-dlp is kept in the app's private storage and updated silently whenever a new release is published on the [official yt-dlp repository](https://github.com/yt-dlp/yt-dlp/releases).
+
+---
 
 ## Screenshots
 
-<img src="./assets/main-interface.jpg" alt="Main player interface" />
+<img src="./assets/main-interface.jpg" alt="Home screen and library" />
 <br/><br/>
-<img src="./assets/player.jpg" alt="Player interface"/>
-<br/><br/>
-<img src="./assets/ytm-sync.jpg" alt="Sync with YouTube Music"/>
+<img src="./assets/player.jpg" alt="Now playing screen"/>
 
-[Full image gallery](./assets/gallery)
+---
 
-> [!WARNING]
->
->If you're in a region where YouTube Music is not supported, you won't be able to use this app
-***unless*** you have a proxy or VPN to connect to a YTM supported region.
+## Building
 
-</details>
+Requirements: Android Studio Ladybug or newer, JDK 17+, Android SDK 36.
 
-## Building & Contributing
+```bash
+git clone --recurse-submodules https://github.com/Tigerskin-Hupee/OpenTune.git
+cd OpenTune
+./gradlew assembleRelease
+```
 
-We are looking for contributors, translators, and maintainers! If you would like to help out, or just wish to build the
-app yourself, please see the [building and contribution notes](./CONTRIBUTING.md).
+For detailed setup and contribution guidelines, see [CONTRIBUTING.md](./CONTRIBUTING.md).
 
-### Submitting Translations
-
-We use Weblate to translate OuterTune. For more details or to submit translations, visit our [Weblate page](https://hosted.weblate.org/projects/outertune/).
-
-<a href="https://hosted.weblate.org/projects/outertune/">
-<img src="https://hosted.weblate.org/widget/outertune/multi-auto.svg" alt="Translation status" />
-</a>
-
-Thank you very much for helping to make OuterTune accessible to many people worldwide.
-
-## Support us
-
-If you like OuterTune, you're welcome to send a donation. Donations will support the development,
-including bug fixes and new features.
-
-<a href="https://paypal.me/DD3Boh"><img src="./assets/paypal.png" alt="PayPal" height="60" ></a>
-
-## Help & Support
-
-For bug reports and/or feature requests, please create a [GitHub issue](https://github.com/OuterTune/OuterTune/issues).
-If you have want help with the app, check out the [Discussion Forum](https://github.com/OuterTune/OuterTune/discussions).
-
-For all other inquiries NOT related to the app, you can contact us at outertune@protonmail.com. **This is NOT a support email!**
+---
 
 ## Attribution
 
-Thanks to all our contributors! Check them out [here](https://github.com/OuterTune/OuterTune/graphs/contributors)
+OpenTune is built on top of:
 
-[z-huang/InnerTune](https://github.com/z-huang/InnerTune) for providing an awesome base for this fork, none of this
-would have been possible without it.
+- [OuterTune](https://github.com/DD3Boh/OuterTune) — direct upstream (local music + multi-queue architecture)
+- [InnerTune](https://github.com/z-huang/InnerTune) — original base project
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) — stream resolution engine
 
-[Musicolet](https://play.google.com/store/apps/details?id=in.krosbits.musicolet) for inspiration of a local music player
-experience done right.
-
-[Gramophone](https://github.com/FoedusProgramme/Gramophone) for emotional support, and a legendary lyrics parser
-
-[![Star History Chart](https://api.star-history.com/svg?repos=outertune/outertune&type=Date)](https://www.star-history.com/#outertune/outertune&Date)
+---
 
 ## Disclaimer
 
-This project and its contents are not affiliated with, funded, authorized, endorsed by, or in any
-way associated with YouTube, Google LLC or any of its affiliates and subsidiaries.
+This project and its contents are not affiliated with, funded, authorized, endorsed by, or in any way associated with YouTube, Google LLC or any of its affiliates and subsidiaries.
 
-Any trademark, service mark, trade name, or other intellectual property rights used in this project
-are owned by the respective owners.
+Any trademark, service mark, trade name, or other intellectual property rights used in this project are owned by the respective owners.
