@@ -1,6 +1,7 @@
 /*
  * Copyright (C) 2024 z-huang/InnerTune
  * Copyright (C) 2025 OuterTune Project
+ * Copyright (C) 2025 OpenTune
  *
  * SPDX-License-Identifier: GPL-3.0
  *
@@ -19,15 +20,16 @@ import coil3.memory.MemoryCache
 import coil3.request.CachePolicy
 import coil3.request.allowHardware
 import coil3.request.crossfade
+import app.opentune.playback.YtDlpManager
 import app.opentune.utils.CoilBitmapLoader
 import app.opentune.utils.LocalArtworkPathKeyer
-import app.opentune.playback.YtDlpManager
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.DelicateCoroutinesApi
 import javax.inject.Inject
 
 @HiltAndroidApp
 class App : Application(), SingletonImageLoader.Factory, Configuration.Provider {
+    private val TAG = App::class.simpleName.toString()
 
     @Inject
     lateinit var workerFactory: HiltWorkerFactory
@@ -35,7 +37,10 @@ class App : Application(), SingletonImageLoader.Factory, Configuration.Provider 
     @Inject
     lateinit var ytDlpManager: YtDlpManager
 
-    private val TAG = App::class.simpleName.toString()
+    override val workManagerConfiguration: Configuration
+        get() = Configuration.Builder()
+            .setWorkerFactory(workerFactory)
+            .build()
 
     @OptIn(DelicateCoroutinesApi::class)
     override fun onCreate() {
@@ -45,14 +50,12 @@ class App : Application(), SingletonImageLoader.Factory, Configuration.Provider 
             System.setProperty("kotlinx.coroutines.debug", "on")
         }
 
+        // Auto-update yt-dlp binary so playback keeps working after upstream
+        // YouTube changes — no APK release needed.
         ytDlpManager.initialize()
+
         instance = this
     }
-
-    override val workManagerConfiguration: Configuration
-        get() = Configuration.Builder()
-            .setWorkerFactory(workerFactory)
-            .build()
 
     override fun newImageLoader(context: PlatformContext): ImageLoader {
 

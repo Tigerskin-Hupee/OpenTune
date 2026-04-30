@@ -1,13 +1,17 @@
+/*
+ * Copyright (C) 2025 OpenTune
+ *
+ * SPDX-License-Identifier: GPL-3.0
+ */
 package app.opentune.playback
 
 import android.content.Context
 import android.os.Build
-import androidx.datastore.core.DataStore
-import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import app.opentune.utils.dataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -16,14 +20,8 @@ import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
-// ── Public state model ──────────────────────────────────────────────────────
-
 enum class YtDlpState {
-    UNKNOWN,       // app just launched, not yet checked
-    NOT_INSTALLED, // no binary on disk
-    DOWNLOADING,   // WorkManager job in progress
-    READY,         // binary present and executable
-    ERROR,         // last download attempt failed
+    UNKNOWN, NOT_INSTALLED, DOWNLOADING, READY, ERROR,
 }
 
 data class YtDlpStatus(
@@ -34,12 +32,10 @@ data class YtDlpStatus(
     val error: String? = null,
 ) {
     val updateAvailable: Boolean
-        get() = state == YtDlpState.READY
-                && latestVersion != null
-                && latestVersion != installedVersion
+        get() = state == YtDlpState.READY &&
+                latestVersion != null &&
+                latestVersion != installedVersion
 }
-
-// ── ABI → asset name mapping ─────────────────────────────────────────────────
 
 internal fun ytDlpAssetName(): String {
     val abi = Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a"
@@ -52,24 +48,19 @@ internal fun ytDlpAssetName(): String {
     }
 }
 
-// ── Manager ──────────────────────────────────────────────────────────────────
-
 @Singleton
 class YtDlpManager @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val dataStore: DataStore<Preferences>,
 ) {
     val binFile: File get() = File(context.filesDir, "yt-dlp")
 
     val isReady: Boolean get() = binFile.exists() && binFile.canExecute()
 
-    // Stored installed version from DataStore
-    val installedVersionFlow: Flow<String?> = dataStore.data
+    val installedVersionFlow: Flow<String?> = context.dataStore.data
         .map { it[KEY_VERSION] }
 
-    // Combined status from DataStore + WorkManager work state
     val statusFlow: Flow<YtDlpStatus> = combine(
-        dataStore.data,
+        context.dataStore.data,
         WorkManager.getInstance(context).getWorkInfosByTagFlow(YtDlpDownloadWorker.TAG),
     ) { prefs, workInfos ->
         val stored = prefs[KEY_VERSION]
@@ -80,59 +71,40 @@ class YtDlpManager @Inject constructor(
             workInfo?.state == WorkInfo.State.RUNNING ||
             workInfo?.state == WorkInfo.State.ENQUEUED -> {
                 val progress = workInfo.progress.getFloat(YtDlpDownloadWorker.KEY_PROGRESS, 0f)
-                YtDlpStatus(
-                    state = YtDlpState.DOWNLOADING,
-                    installedVersion = stored,
-                    latestVersion = latest,
-                    downloadProgress = progress,
-                )
+                YtDlpStatus(YtDlpState.DOWNLOADING, stored, latest, progress)
             }
             workInfo?.state == WorkInfo.State.FAILED -> YtDlpStatus(
-                state = YtDlpState.ERROR,
-                installedVersion = stored,
-                latestVersion = latest,
+                YtDlpState.ERROR, stored, latest,
                 error = workInfo.outputData.getString(YtDlpDownloadWorker.KEY_ERROR),
             )
-            isReady -> YtDlpStatus(
-                state = YtDlpState.READY,
-                installedVersion = stored,
-                latestVersion = latest,
-            )
-            else -> YtDlpStatus(
-                state = YtDlpState.NOT_INSTALLED,
-                installedVersion = stored,
-                latestVersion = latest,
-            )
+            isReady -> YtDlpStatus(YtDlpState.READY, stored, latest)
+            else    -> YtDlpStatus(YtDlpState.NOT_INSTALLED, stored, latest)
         }
     }
 
     /**
-     * Called from Application.onCreate.
-     * 1. Always enqueues a one-time check (worker no-ops if already on latest version).
-     * 2. Schedules a periodic 24h background check so updates land even if the app
-     *    isn't actively opened — keeps stream resolution working after upstream
-     *    YouTube changes without requiring a new APK release.
+     * Trigger update check on every launch + schedule 24h periodic background check.
+     * The worker no-ops if installed version already matches latest.
      */
     fun initialize() {
         YtDlpDownloadWorker.enqueue(context, targetVersion = null)
         YtDlpDownloadWorker.enqueuePeriodic(context)
     }
 
-    /** Manually trigger an update (e.g. from Settings "Check for updates" button). */
     fun enqueueUpdate(version: String? = null) {
         YtDlpDownloadWorker.enqueue(context, targetVersion = version)
     }
 
     suspend fun saveInstalledVersion(version: String) {
-        dataStore.edit { it[KEY_VERSION] = version }
+        context.dataStore.edit { it[KEY_VERSION] = version }
     }
 
     suspend fun saveLatestVersion(version: String) {
-        dataStore.edit { it[KEY_LATEST_VERSION] = version }
+        context.dataStore.edit { it[KEY_LATEST_VERSION] = version }
     }
 
     companion object {
-        val KEY_VERSION         = stringPreferencesKey("ytdlp_version")
-        val KEY_LATEST_VERSION  = stringPreferencesKey("ytdlp_latest_version")
+        val KEY_VERSION        = stringPreferencesKey("ytdlp_version")
+        val KEY_LATEST_VERSION = stringPreferencesKey("ytdlp_latest_version")
     }
 }
