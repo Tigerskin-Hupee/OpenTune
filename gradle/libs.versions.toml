@@ -1,14 +1,14 @@
 [versions]
-agp = "8.9.1"
-kotlin = "2.0.21"
-ksp = "2.0.21-1.0.27"
-hilt = "2.51.1"
-compose-bom = "2024.10.01"
+agp = "9.2.0"
+kotlin = "2.3.21"
+ksp = "2.3.4"
+hilt = "2.59.2"
+compose = "1.11.0"
 media3 = "1.8.0"
 room = "2.8.4"
 ktor = "2.3.12"
 coroutines = "1.10.2"
-coil = "3.0.4"
+coil = "3.4.0"
 lifecycle = "2.10.0"
 adaptive = "1.2.0"
 material3 = "1.4.0"
@@ -34,19 +34,18 @@ datastore = { group = "androidx.datastore", name = "datastore-preferences", vers
 # Navigation
 hilt-navigation = { group = "androidx.hilt", name = "hilt-navigation-compose", version = "1.3.0" }
 
-# Compose
-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "compose-bom" }
-compose-ui = { group = "androidx.compose.ui", name = "ui" }
-compose-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
-compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
-compose-ui-util = { group = "androidx.compose.ui", name = "ui-util" }
-compose-foundation = { group = "androidx.compose.foundation", name = "foundation" }
-compose-runtime = { group = "androidx.compose.runtime", name = "runtime" }
-compose-animation = { group = "androidx.compose.animation", name = "animation-graphics" }
+# Compose (explicit versions, no BOM)
+compose-ui = { group = "androidx.compose.ui", name = "ui", version.ref = "compose" }
+compose-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics", version.ref = "compose" }
+compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview", version.ref = "compose" }
+compose-ui-util = { group = "androidx.compose.ui", name = "ui-util", version.ref = "compose" }
+compose-foundation = { group = "androidx.compose.foundation", name = "foundation", version.ref = "compose" }
+compose-runtime = { group = "androidx.compose.runtime", name = "runtime", version.ref = "compose" }
+compose-animation = { group = "androidx.compose.animation", name = "animation-graphics", version.ref = "compose" }
 compose-reorderable = { module = "sh.calvin.reorderable:reorderable", version = "3.1.0" }
-compose-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
-compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
-compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest" }
+compose-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended", version = "1.7.8" }
+compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling", version.ref = "compose" }
+compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest", version.ref = "compose" }
 
 # Material
 material3 = { group = "androidx.compose.material3", name = "material3", version.ref = "material3" }
@@ -55,7 +54,7 @@ palette = { group = "androidx.palette", name = "palette", version = "1.0.0" }
 
 # UI extras
 lazycolumnscrollbar = { group = "com.github.nanihadesuka", name = "LazyColumnScrollbar", version.ref = "lazycolumnscrollbar" }
-shimmer = { group = "com.valentinilk.shimmer", name = "compose-shimmer", version = "1.3.1" }
+shimmer = { group = "com.valentinilk.shimmer", name = "compose-shimmer", version = "1.4.0" }
 
 # ViewModel
 viewmodel = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-ktx", version.ref = "lifecycle" }
@@ -84,7 +83,7 @@ ktor-serialization-json = { group = "io.ktor", name = "ktor-serialization-kotlin
 
 # Kotlinx
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
-kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version = "1.6.3" }
+kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version = "1.7.3" }
 
 # Coil 3
 coil = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }
