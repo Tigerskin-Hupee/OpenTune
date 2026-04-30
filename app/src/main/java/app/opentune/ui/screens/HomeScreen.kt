@@ -55,6 +55,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
@@ -108,6 +109,7 @@ fun HomeScreen(
     navController: NavController,
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
+    val context = LocalContext.current
     val menuState = LocalMenuState.current
     val database = LocalDatabase.current
     val density = LocalDensity.current
@@ -147,18 +149,12 @@ fun HomeScreen(
                             if (it.id == mediaMetadata?.id) {
                                 playerConnection.player.togglePlayPause()
                             } else {
-                                val song = it.toMediaMetadata()
-                                if (song.isLocal) {
-                                    playerConnection.playQueue(
-                                        ListQueue(
-                                            title = source,
-                                            items = listOf(song)
-                                        )
+                                playerConnection.playQueue(
+                                    ListQueue(
+                                        title = source,
+                                        items = listOf(it.toMediaMetadata())
                                     )
-                                } else {
-                                    // TODO: local library radio playback
-
-                                }
+                                )
                             }
                         },
                         onLongClick = {
@@ -347,8 +343,15 @@ fun HomeScreen(
 
                                 thumbnailSize = listThumbnailSize,
                                 onPlay = {
-                                    // TODO: local library quick picks playback
-
+                                    val title = context.getString(R.string.quick_picks)
+                                    playerConnection.playQueue(
+                                        ListQueue(
+                                            title = title,
+                                            items = quickPicks.map { it.toMediaMetadata() },
+                                            startIndex = quickPicks.indexOfFirst { it.id == originalSong.id }
+                                                .coerceAtLeast(0)
+                                        )
+                                    )
                                 },
                                 modifier = Modifier.width(horizontalLazyGridItemWidth)
                             )
