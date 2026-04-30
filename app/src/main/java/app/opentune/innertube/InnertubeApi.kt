@@ -36,7 +36,7 @@ class InnertubeApi @Inject constructor() {
     private val webRemixContext = JSONObject().apply {
         put("client", JSONObject().apply {
             put("clientName", "WEB_REMIX")
-            put("clientVersion", "1.20240101.01.00")
+            put("clientVersion", "1.20260415.01.00")
             put("hl", "en")
         })
     }
@@ -48,7 +48,7 @@ class InnertubeApi @Inject constructor() {
             .addHeader("Content-Type", "application/json")
             .addHeader("User-Agent", "Mozilla/5.0 (compatible; OpenTune/1.0)")
             .addHeader("X-YouTube-Client-Name", "67")
-            .addHeader("X-YouTube-Client-Version", "1.20240101.01.00")
+            .addHeader("X-YouTube-Client-Version", "1.20260415.01.00")
             .addHeader("Origin", "https://music.youtube.com")
             .addHeader("Referer", "https://music.youtube.com/")
             .post(body.toString().toRequestBody("application/json".toMediaType()))
