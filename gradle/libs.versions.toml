@@ -84,7 +84,7 @@ ktor-serialization-json = { group = "io.ktor", name = "ktor-serialization-kotlin
 
 # Kotlinx
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
-kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version = "1.7.3" }
+kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version = "1.6.3" }
 
 # Coil 3
 coil = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }
