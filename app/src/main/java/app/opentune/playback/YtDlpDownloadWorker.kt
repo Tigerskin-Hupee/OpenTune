@@ -23,11 +23,9 @@ import dagger.assisted.AssistedInject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.SerialName
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.TimeUnit
 
@@ -50,20 +48,7 @@ class YtDlpDownloadWorker @AssistedInject constructor(
         .followRedirects(true)
         .build()
 
-    private val json = Json { ignoreUnknownKeys = true }
-
-    @Serializable
-    data class Release(
-        @SerialName("tag_name") val tagName: String,
-        val assets: List<Asset>,
-    )
-
-    @Serializable
-    data class Asset(
-        val name: String,
-        @SerialName("browser_download_url") val browserDownloadUrl: String,
-        val size: Long,
-    )
+    data class Release(val tagName: String, val assetUrl: String, val assetSize: Long)
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         try {
@@ -71,11 +56,6 @@ class YtDlpDownloadWorker @AssistedInject constructor(
 
             val targetVersion = inputData.getString(KEY_TARGET_VERSION)
             val release = fetchRelease(targetVersion)
-            val assetName = ytDlpAssetName()
-            val asset = release.assets.firstOrNull { it.name == assetName }
-                ?: return@withContext Result.failure(
-                    workDataOf(KEY_ERROR to "Asset '$assetName' missing from ${release.tagName}")
-                )
 
             manager.saveLatestVersion(release.tagName)
 
@@ -85,7 +65,7 @@ class YtDlpDownloadWorker @AssistedInject constructor(
             }
 
             val tmp = File(applicationContext.filesDir, "yt-dlp.tmp")
-            downloadWithProgress(asset.browserDownloadUrl, asset.size, tmp)
+            downloadWithProgress(release.assetUrl, release.assetSize, tmp)
 
             val bin = manager.binFile
             tmp.renameTo(bin)
@@ -114,7 +94,23 @@ class YtDlpDownloadWorker @AssistedInject constructor(
             check(resp.isSuccessful) { "GitHub API ${resp.code}: ${resp.message}" }
             resp.body?.string() ?: error("Empty GitHub API response")
         }
-        return json.decodeFromString(body)
+
+        val root = JSONObject(body)
+        val tagName = root.getString("tag_name")
+        val assets = root.getJSONArray("assets")
+        val assetName = ytDlpAssetName()
+
+        for (i in 0 until assets.length()) {
+            val asset = assets.getJSONObject(i)
+            if (asset.getString("name") == assetName) {
+                return Release(
+                    tagName = tagName,
+                    assetUrl = asset.getString("browser_download_url"),
+                    assetSize = asset.getLong("size"),
+                )
+            }
+        }
+        error("Asset '$assetName' missing from $tagName")
     }
 
     private suspend fun downloadWithProgress(url: String, totalBytes: Long, dest: File) {
