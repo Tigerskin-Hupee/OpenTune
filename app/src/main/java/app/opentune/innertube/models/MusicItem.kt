@@ -36,13 +36,14 @@ sealed class MusicItem {
 
 data class HomeSection(val title: String, val items: List<MusicItem>)
 
-/** Convert a Song MusicItem to an app.opentune.db.entities.Song for playback. */
-fun MusicItem.Song.toSongEntity() = app.opentune.db.entities.Song(
+/** Convert a Song MusicItem to an app.opentune.db.entities.SongEntity for playback. */
+fun MusicItem.Song.toSongEntity() = app.opentune.db.entities.SongEntity(
     id = id,
     title = title,
     albumName = album,
     thumbnailUrl = thumbnailUrl,
     duration = durationText?.parseDurationToSeconds() ?: -1,
+    localPath = null,
 )
 
 private fun String.parseDurationToSeconds(): Int {

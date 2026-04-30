@@ -65,11 +65,9 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.SessionToken
 import app.opentune.MainActivity
 import app.opentune.R
-import app.opentune.constants.AudioDecoderKey
 import app.opentune.constants.AudioGaplessOffloadKey
 import app.opentune.constants.AudioNormalizationKey
 import app.opentune.constants.AudioOffloadKey
-import app.opentune.constants.ENABLE_FFMETADATAEX
 import app.opentune.constants.KeepAliveKey
 import app.opentune.constants.MAX_PLAYER_CONSECUTIVE_ERR
 import app.opentune.constants.MaxQueuesKey
@@ -108,7 +106,6 @@ import app.opentune.utils.playerCoroutine
 import app.opentune.utils.reportException
 import com.google.common.util.concurrent.MoreExecutors
 import dagger.hilt.android.AndroidEntryPoint
-import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.NextRenderersFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -626,66 +623,28 @@ class MusicService : MediaLibraryService(),
     }
 
     private fun createRenderersFactory(gaplessOffloadAllowed: Boolean): DefaultRenderersFactory {
-        if (ENABLE_FFMETADATAEX) {
-            return object : NextRenderersFactory(this@MusicService) {
-                override fun buildAudioSink(
-                    context: Context,
-                    pcmEncodingRestrictionLifted: Boolean,
-                    enableFloatOutput: Boolean,
-                    enableAudioTrackPlaybackParams: Boolean
-                ): AudioSink? {
-                    return DefaultAudioSink.Builder(this@MusicService)
-                        .setPcmEncodingRestrictionLifted(pcmEncodingRestrictionLifted)
-                        .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
-                        .setAudioProcessorChain(
-                            DefaultAudioSink.DefaultAudioProcessorChain(
-                                emptyArray(),
-                                SilenceSkippingAudioProcessor(),
-                                SonicAudioProcessor()
-                            )
+        return object : DefaultRenderersFactory(this) {
+            override fun buildAudioSink(
+                context: Context,
+                enableFloatOutput: Boolean,
+                enableAudioTrackPlaybackParams: Boolean
+            ): AudioSink? {
+                return DefaultAudioSink.Builder(this@MusicService)
+                    .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                    .setAudioProcessorChain(
+                        DefaultAudioSink.DefaultAudioProcessorChain(
+                            emptyArray(),
+                            SilenceSkippingAudioProcessor(),
+                            SonicAudioProcessor()
                         )
-                        .setAudioOffloadSupportProvider(
-                            MyAudioOffloadSupportProvider(
-                                DefaultAudioOffloadSupportProvider(context),
-                                !gaplessOffloadAllowed
-                            )
-                        )
-                        .build()
-                }
-            }
-                .setEnableDecoderFallback(true)
-                .setExtensionRendererMode(
-                    dataStore.get(
-                        AudioDecoderKey,
-                        DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF
                     )
-                )
-        } else {
-            return object : DefaultRenderersFactory(this) {
-                override fun buildAudioSink(
-                    context: Context,
-                    pcmEncodingRestrictionLifted: Boolean,
-                    enableFloatOutput: Boolean,
-                    enableAudioTrackPlaybackParams: Boolean
-                ): AudioSink? {
-                    return DefaultAudioSink.Builder(this@MusicService)
-                        .setPcmEncodingRestrictionLifted(pcmEncodingRestrictionLifted)
-                        .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
-                        .setAudioProcessorChain(
-                            DefaultAudioSink.DefaultAudioProcessorChain(
-                                emptyArray(),
-                                SilenceSkippingAudioProcessor(),
-                                SonicAudioProcessor()
-                            )
+                    .setAudioOffloadSupportProvider(
+                        MyAudioOffloadSupportProvider(
+                            DefaultAudioOffloadSupportProvider(context),
+                            !gaplessOffloadAllowed
                         )
-                        .setAudioOffloadSupportProvider(
-                            MyAudioOffloadSupportProvider(
-                                DefaultAudioOffloadSupportProvider(context),
-                                !gaplessOffloadAllowed
-                            )
-                        )
-                        .build()
-                }
+                    )
+                    .build()
             }
         }
     }
