@@ -40,6 +40,7 @@ import androidx.media3.common.Timeline
 import androidx.media3.common.audio.SonicAudioProcessor
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR
@@ -562,7 +563,14 @@ class MusicService : MediaLibraryService(),
                 CacheDataSource.Factory()
                     .setCache(playerCache)
                     .setUpstreamDataSourceFactory(
-                        DefaultDataSource.Factory(this)
+                        DefaultDataSource.Factory(
+                            this,
+                            DefaultHttpDataSource.Factory()
+                                .setUserAgent("com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)")
+                                .setAllowCrossProtocolRedirects(true)
+                                .setConnectTimeoutMs(30_000)
+                                .setReadTimeoutMs(30_000)
+                        )
                     )
                     .setCacheWriteDataSinkFactory(null)
                     .setFlags(FLAG_IGNORE_CACHE_ON_ERROR)
@@ -778,6 +786,14 @@ class MusicService : MediaLibraryService(),
 
     override fun onPlayerError(error: PlaybackException) {
         super.onPlayerError(error)
+
+        // Invalidate cached stream URL on CDN auth errors (403/410) so the
+        // next attempt re-resolves via StreamResolver.
+        if (error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS) {
+            player.currentMediaItem?.mediaId?.let { mediaId ->
+                runBlocking { streamResolver.invalidate(mediaId) }
+            }
+        }
 
         // wait for reconnection
         val isConnectionError = (error.cause?.cause is PlaybackException)

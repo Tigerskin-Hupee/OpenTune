@@ -43,6 +43,11 @@ class StreamResolver @Inject constructor(
         return mutex.withLock { resolve(videoId) }
     }
 
+    /** Drop a cached URL; called after a 403/410 from the CDN. */
+    suspend fun invalidate(videoId: String) {
+        cacheMutex.withLock { urlCache.remove(videoId) }
+    }
+
     private suspend fun resolve(videoId: String): Result<String> {
         // 1. Cache
         cacheMutex.withLock {
@@ -89,7 +94,7 @@ class StreamResolver @Inject constructor(
     }
 
     companion object {
-        private const val URL_TTL_MS = 5L * 60 * 60 * 1000  // 5 hours
+        private const val URL_TTL_MS = 4L * 60 * 60 * 1000  // 4h (YouTube CDN URLs expire ~6h)
     }
 }
 
