@@ -461,7 +461,7 @@ fun SetupWizard(
                                 )
                             }
                             Text(
-                                text = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                                text = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) | ${BuildConfig.FLAVOR}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(top = 8.dp)

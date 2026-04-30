@@ -98,8 +98,10 @@ class MediaLibrarySessionCallback @Inject constructor(
     override fun onPlaybackResumption(
         mediaSession: MediaSession,
         controller: MediaSession.ControllerInfo,
+        isForPlayback: Boolean,
     ): ListenableFuture<MediaItemsWithStartPosition> = scope.future(Dispatchers.IO) {
-        Log.i(TAG, "onPlaybackResumption() called")
+        // TODO: when this is stable, change to debug
+        Log.i(TAG, "onPlaybackResumption() called. isForPlayback = $isForPlayback")
         val q = database.getResumptionQueue()
         if (q == null) {
             Log.w(TAG, "No resumption queue data. Loading empty list")
@@ -107,11 +109,20 @@ class MediaLibrarySessionCallback @Inject constructor(
         }
         Log.i(TAG, "Resumption queue found. Loading queue: size = ${q.queue.size}, queue name = ${q.title}, " +
                 "queuePosShuffled = ${q.getQueuePosShuffled()}, lastSongPos = ${q.lastSongPos},")
-        return@future MediaItemsWithStartPosition(
-            q.getCurrentQueueShuffled().map { it.toMediaItem() },
-            q.getQueuePosShuffled(),
-            q.lastSongPos
-        )
+
+       if (isForPlayback) {
+           return@future MediaItemsWithStartPosition(
+               q.getCurrentQueueShuffled().map { it.toMediaItem() },
+               q.getQueuePosShuffled(),
+               q.lastSongPos
+           )
+       } else {
+           return@future MediaItemsWithStartPosition(
+               listOf(q.getCurrentSong()!!.toMediaItem()),
+               q.getQueuePosShuffled(),
+               q.lastSongPos
+           )
+       }
     }
 
     override fun onGetLibraryRoot(

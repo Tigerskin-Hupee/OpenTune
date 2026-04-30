@@ -1,7 +1,9 @@
 /*
- * Copyright (C) 2025 OpenTune Project
+ * Copyright (C) 2025 O‌ute‌rTu‌ne Project
  *
  * SPDX-License-Identifier: GPL-3.0
+ *
+ * For any other attributions, refer to the git commit history
  */
 package app.opentune.ui.screens.settings
 
@@ -16,7 +18,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.navigation.NavController
@@ -25,6 +27,8 @@ import app.opentune.R
 import app.opentune.constants.TopBarInsets
 import app.opentune.ui.component.button.IconButton
 import app.opentune.ui.utils.backToMain
+import com.mikepenz.aboutlibraries.ui.compose.android.rememberLibraries
+import com.mikepenz.aboutlibraries.ui.compose.m3.LibrariesContainer
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -32,13 +36,10 @@ fun LibrariesScreen(
     navController: NavController,
     scrollBehavior: TopAppBarScrollBehavior,
 ) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .windowInsetsPadding(LocalPlayerAwareWindowInsets.current),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(stringResource(R.string.oss_licenses_title))
+    val libraries by rememberLibraries(R.raw.aboutlibraries)
+
+    Box(Modifier.windowInsetsPadding(LocalPlayerAwareWindowInsets.current)) {
+        LibrariesContainer(libraries, Modifier.fillMaxSize())
     }
 
     TopAppBar(

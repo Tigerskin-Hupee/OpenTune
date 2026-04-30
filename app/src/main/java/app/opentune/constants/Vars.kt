@@ -1,12 +1,13 @@
 package app.opentune.constants
 
 import android.os.Build
+import app.opentune.BuildConfig
 
 /**
  * Feature flags
  */
 
-const val ENABLE_FFMETADATAEX = false
+const val ENABLE_FFMETADATAEX = BuildConfig.FLAVOR == "full"
 
 const val M3U_EXPORT_RELATIVE_PATH = false
 
