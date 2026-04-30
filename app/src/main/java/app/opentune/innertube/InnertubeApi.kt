@@ -41,17 +41,6 @@ class InnertubeApi @Inject constructor() {
         })
     }
 
-    // ANDROID_MUSIC client — returns direct (non-ciphered) stream URLs
-    private val androidMusicContext = JSONObject().apply {
-        put("client", JSONObject().apply {
-            put("clientName", "ANDROID_MUSIC")
-            put("clientVersion", "6.21.52")
-            put("androidSdkVersion", 30)
-            put("hl", "en")
-            put("gl", "US")
-        })
-    }
-
     private fun postYtMusic(endpoint: String, body: JSONObject): JSONObject? {
         val url = "https://music.youtube.com/youtubei/v1/$endpoint?prettyPrint=false"
         val req = Request.Builder()
@@ -78,60 +67,60 @@ class InnertubeApi @Inject constructor() {
         }
     }
 
-    private fun postYouTube(endpoint: String, body: JSONObject): JSONObject? {
-        val url = "https://www.youtube.com/youtubei/v1/$endpoint?prettyPrint=false"
-        val req = Request.Builder()
-            .url(url)
-            .addHeader("Content-Type", "application/json")
-            .addHeader("User-Agent", "com.google.android.apps.youtube.music/6.21.52 (Linux; U; Android 11) gzip")
-            .post(body.toString().toRequestBody("application/json".toMediaType()))
-            .build()
-        return try {
-            http.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) {
-                    Log.w(tag, "postYouTube $endpoint HTTP ${resp.code}")
-                    return null
-                }
-                resp.body?.string()?.let { JSONObject(it) }
-            }
-        } catch (e: Exception) {
-            Log.w(tag, "postYouTube $endpoint failed: ${e.message}")
-            null
-        }
-    }
-
     /**
-     * Resolves a YouTube video ID to a direct audio CDN URL using the
-     * ANDROID_MUSIC client, which returns pre-signed URLs that ExoPlayer
-     * can play without signature decoding.
+     * Resolves a video ID to a direct audio CDN URL via the YouTube ANDROID
+     * client (client ID 3). This client returns pre-signed adaptive stream
+     * URLs that ExoPlayer plays without signature/cipher processing.
      */
     fun getAudioStreamUrl(videoId: String): String {
         val body = JSONObject().apply {
             put("videoId", videoId)
-            put("context", androidMusicContext)
+            put("context", JSONObject().apply {
+                put("client", JSONObject().apply {
+                    put("clientName", "ANDROID")
+                    put("clientVersion", "19.44.38")
+                    put("androidSdkVersion", 30)
+                    put("hl", "en")
+                    put("gl", "US")
+                })
+            })
         }
-        val root = postYouTube("player", body)
-            ?: error("Player API returned null for $videoId")
+        val req = Request.Builder()
+            .url("https://www.youtube.com/youtubei/v1/player?prettyPrint=false")
+            .addHeader("Content-Type", "application/json")
+            .addHeader("User-Agent", "com.google.android.youtube/19.44.38 (Linux; U; Android 11) gzip")
+            .addHeader("X-YouTube-Client-Name", "3")
+            .addHeader("X-YouTube-Client-Version", "19.44.38")
+            .post(body.toString().toRequestBody("application/json".toMediaType()))
+            .build()
+
+        val root = try {
+            http.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) error("Player API HTTP ${resp.code}")
+                resp.body?.string()?.let { JSONObject(it) }
+            }
+        } catch (e: Exception) {
+            Log.w(tag, "getAudioStreamUrl($videoId) request failed: ${e.message}")
+            null
+        } ?: error("Player API null response for $videoId")
 
         val status = root.optJSONObject("playabilityStatus")?.optString("status") ?: ""
-        if (status == "ERROR" || status == "UNPLAYABLE" || status == "LOGIN_REQUIRED") {
+        if (status == "ERROR" || status == "UNPLAYABLE") {
             val reason = root.optJSONObject("playabilityStatus")?.optString("reason") ?: status
             error("Video $videoId not playable: $reason")
         }
 
         val adaptiveFormats = root.optJSONObject("streamingData")
             ?.optJSONArray("adaptiveFormats")
-            ?: error("No streamingData for $videoId (status=$status)")
+            ?: error("No streamingData for $videoId (status='$status')")
 
         data class Fmt(val url: String, val bitrate: Int)
         val candidates = mutableListOf<Fmt>()
         for (i in 0 until adaptiveFormats.length()) {
             val fmt = adaptiveFormats.getJSONObject(i)
-            val mimeType = fmt.optString("mimeType", "")
-            if (!mimeType.startsWith("audio/")) continue
+            if (!fmt.optString("mimeType").startsWith("audio/")) continue
             val url = fmt.optString("url").takeIf { it.startsWith("http") } ?: continue
-            val bitrate = fmt.optInt("bitrate", 0)
-            candidates.add(Fmt(url, bitrate))
+            candidates.add(Fmt(url, fmt.optInt("bitrate", 0)))
         }
 
         return candidates.maxByOrNull { it.bitrate }?.url

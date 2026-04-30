@@ -258,7 +258,7 @@ class MainActivity : ComponentActivity() {
             }
 
 
-            val (oobeStatus) = rememberPreference(OobeStatusKey, defaultValue = 0)
+            var oobeStatus by rememberPreference(OobeStatusKey, defaultValue = 0)
 
             var filter by rememberEnumPreference(LibraryFilterKey, Screens.LibraryFilter.ALL)
             val (slimNav) = rememberPreference(SlimNavBarKey, defaultValue = false)
@@ -922,10 +922,10 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
 
-                            // Setup wizard
+                            // OpenTune: no account setup needed — skip setup wizard immediately
                             LaunchedEffect(Unit) {
                                 if (oobeStatus != OOBE_VERSION) {
-                                    navController.navigate("setup_wizard")
+                                    oobeStatus = OOBE_VERSION
                                 }
                             }
 
