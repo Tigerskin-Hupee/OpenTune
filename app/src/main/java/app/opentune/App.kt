@@ -21,6 +21,7 @@ import coil3.request.allowHardware
 import coil3.request.crossfade
 import app.opentune.utils.CoilBitmapLoader
 import app.opentune.utils.LocalArtworkPathKeyer
+import app.opentune.playback.YtDlpManager
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.DelicateCoroutinesApi
 import javax.inject.Inject
@@ -30,6 +31,9 @@ class App : Application(), SingletonImageLoader.Factory, Configuration.Provider 
 
     @Inject
     lateinit var workerFactory: HiltWorkerFactory
+
+    @Inject
+    lateinit var ytDlpManager: YtDlpManager
 
     private val TAG = App::class.simpleName.toString()
 
@@ -41,6 +45,7 @@ class App : Application(), SingletonImageLoader.Factory, Configuration.Provider 
             System.setProperty("kotlinx.coroutines.debug", "on")
         }
 
+        ytDlpManager.initialize()
         instance = this
     }
 

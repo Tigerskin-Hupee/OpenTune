@@ -1,5 +1,7 @@
 package app.opentune.innertube.models
 
+import app.opentune.models.MediaMetadata
+
 /** Sealed type for all items returned from YouTube Music API calls. */
 sealed class MusicItem {
     data class Song(
@@ -35,6 +37,16 @@ sealed class MusicItem {
 }
 
 data class HomeSection(val title: String, val items: List<MusicItem>)
+
+/** Convert an online MusicItem.Song to a playable MediaMetadata. */
+fun MusicItem.Song.asMediaMetadata() = MediaMetadata(
+    id = id,
+    title = title,
+    artists = listOf(MediaMetadata.Artist(id = null, name = artists)),
+    duration = -1,
+    thumbnailUrl = thumbnailUrl,
+    genre = null,
+)
 
 /** Convert a Song MusicItem to an app.opentune.db.entities.SongEntity for playback. */
 fun MusicItem.Song.toSongEntity() = app.opentune.db.entities.SongEntity(
