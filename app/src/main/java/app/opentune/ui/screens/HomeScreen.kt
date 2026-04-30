@@ -287,16 +287,16 @@ fun HomeScreen(
                         .animateItem()
                 ) {
                     NavigationTile(
-                        title = stringResource(R.string.history),
-                        icon = Icons.Rounded.History,
-                        onClick = { navController.navigate("history") },
+                        title = stringResource(R.string.search_youtube),
+                        icon = Icons.Rounded.MusicNote,
+                        onClick = { navController.navigate("youtube_search") },
                         modifier = Modifier.weight(1f)
                     )
 
                     NavigationTile(
-                        title = stringResource(R.string.stats),
-                        icon = Icons.AutoMirrored.Rounded.TrendingUp,
-                        onClick = { navController.navigate("stats") },
+                        title = stringResource(R.string.history),
+                        icon = Icons.Rounded.History,
+                        onClick = { navController.navigate("history") },
                         modifier = Modifier.weight(1f)
                     )
 
