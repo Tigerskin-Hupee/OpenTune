@@ -27,6 +27,19 @@ jobs:
       - name: Accept SDK licenses
         run: yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --licenses
 
+      - name: Decode keystore
+        run: |
+          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > ${{ github.workspace }}/opentune-release.jks
+            echo "storeFile=${{ github.workspace }}/opentune-release.jks" > keystore.properties
+            echo "storePassword=${{ secrets.KEYSTORE_PASSWORD }}" >> keystore.properties
+            echo "keyAlias=${{ secrets.KEY_ALIAS }}" >> keystore.properties
+            echo "keyPassword=${{ secrets.KEY_PASSWORD }}" >> keystore.properties
+            echo "Keystore configured."
+          else
+            echo "No keystore secrets found, will use debug signing."
+          fi
+
       - name: Build release APK
         run: ./gradlew assembleCoreRelease --stacktrace -DskipFormatKtlint
 
