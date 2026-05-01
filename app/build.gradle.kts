@@ -59,7 +59,14 @@ android {
             isShrinkResources = true
             isCrunchPngs = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.getByName("ot_release")
+            // Use real release key if keystore.properties is provided,
+            // otherwise fall back to the debug key so CI can still produce
+            // an installable APK.
+            signingConfig = if (!keystoreProperties.isEmpty) {
+                signingConfigs.getByName("ot_release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
         debug {
             applicationIdSuffix = ".debug"
