@@ -61,7 +61,26 @@ class LyricsHelper @Inject constructor(
             return parseLrc(dbLyrics, trim, multiline)
         }
 
+        // Online fallback via lrclib.net (free, no auth required)
+        val onlineLyrics = fetchOnlineLyrics(mediaMetadata)
+        if (onlineLyrics != null) {
+            database.upsert(app.opentune.db.entities.LyricsEntity(mediaMetadata.id, onlineLyrics))
+            return parseLrc(onlineLyrics, trim, multiline)
+        }
+
         return null
+    }
+
+    private suspend fun fetchOnlineLyrics(mediaMetadata: MediaMetadata): String? {
+        val title = mediaMetadata.title
+        val artist = mediaMetadata.artists.firstOrNull()?.name.orEmpty()
+        val duration = mediaMetadata.duration
+        return LrcLibLyricsProvider.getLyrics(
+            id = mediaMetadata.id,
+            title = title,
+            artist = artist,
+            duration = duration,
+        ).getOrNull()
     }
 
     /**

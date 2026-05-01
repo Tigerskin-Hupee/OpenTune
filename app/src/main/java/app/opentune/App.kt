@@ -17,10 +17,12 @@ import androidx.work.Configuration
 import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
+import coil3.disk.DiskCache
 import coil3.memory.MemoryCache
-import coil3.request.CachePolicy
+import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.request.allowHardware
 import coil3.request.crossfade
+import okhttp3.OkHttpClient
 import app.opentune.innertube.NewPipeDownloader
 import app.opentune.utils.CoilBitmapLoader
 import app.opentune.utils.LocalArtworkPathKeyer
@@ -62,9 +64,9 @@ class App : Application(), SingletonImageLoader.Factory, Configuration.Provider 
     }
 
     override fun newImageLoader(context: PlatformContext): ImageLoader {
-
         return ImageLoader.Builder(this)
             .components {
+                add(OkHttpNetworkFetcherFactory(callFactory = { OkHttpClient() }))
                 add(CoilBitmapLoader.Factory(this@App))
                 add(LocalArtworkPathKeyer())
             }
@@ -75,7 +77,12 @@ class App : Application(), SingletonImageLoader.Factory, Configuration.Provider 
                     .maxSizePercent(context, 0.3)
                     .build()
             }
-            .diskCachePolicy(CachePolicy.DISABLED)
+            .diskCache {
+                DiskCache.Builder()
+                    .directory(cacheDir.resolve("image_cache"))
+                    .maxSizeBytes(50L * 1024 * 1024)
+                    .build()
+            }
             .build()
     }
 
