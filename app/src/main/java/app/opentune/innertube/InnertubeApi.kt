@@ -52,24 +52,34 @@ class InnertubeApi @Inject constructor() {
 
     /** Resolve a video id to a direct audio CDN URL (highest-bitrate audio stream). */
     fun getAudioStreamUrl(videoId: String): String {
-        val url = "https://www.youtube.com/watch?v=$videoId"
-        val info = StreamInfo.getInfo(ServiceList.YouTube, url)
-        val streams = info.audioStreams
-        if (streams.isNullOrEmpty()) error("audioStreams empty for $videoId")
+        val start = System.currentTimeMillis()
+        return try {
+            val url = "https://www.youtube.com/watch?v=$videoId"
+            val info = StreamInfo.getInfo(ServiceList.YouTube, url)
+            val streams = info.audioStreams
+            if (streams.isNullOrEmpty()) error("audioStreams empty for $videoId")
 
-        // Prefer PROGRESSIVE_HTTP — direct CDN URLs ExoPlayer can use without
-        // a manifest. Fall back to all streams if none are progressive.
-        val candidates = streams.filter {
-            it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP
-        }.ifEmpty { streams }
+            // Prefer PROGRESSIVE_HTTP — direct CDN URLs ExoPlayer can use without
+            // a manifest. Fall back to all streams if none are progressive.
+            val candidates = streams.filter {
+                it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP
+            }.ifEmpty { streams }
 
-        val best = candidates.maxByOrNull { s ->
-            s.averageBitrate.takeIf { it > 0 } ?: s.bitrate
-        } ?: error("no audio stream for $videoId")
+            val best = candidates.maxByOrNull { s ->
+                s.averageBitrate.takeIf { it > 0 } ?: s.bitrate
+            } ?: error("no audio stream for $videoId")
 
-        val streamUrl = best.content ?: error("audio stream had null url for $videoId")
-        Log.d(tag, "getAudioStreamUrl($videoId) ok delivery=${best.deliveryMethod} bitrate=${best.averageBitrate}")
-        return streamUrl
+            val streamUrl = best.content ?: error("audio stream had null url for $videoId")
+            val elapsed = System.currentTimeMillis() - start
+            Log.d(tag, "getAudioStreamUrl($videoId) ok ${elapsed}ms delivery=${best.deliveryMethod} bitrate=${best.averageBitrate}")
+            app.opentune.utils.DiagnosticsLogger.logStream(videoId, true, elapsed)
+            streamUrl
+        } catch (e: Exception) {
+            val elapsed = System.currentTimeMillis() - start
+            Log.w(tag, "getAudioStreamUrl($videoId) FAILED ${elapsed}ms: ${e.message}")
+            app.opentune.utils.DiagnosticsLogger.logStream(videoId, false, elapsed, e.javaClass.simpleName + ": " + e.message?.take(120))
+            throw e
+        }
     }
 
     fun search(query: String): List<YtMusicTrack> {

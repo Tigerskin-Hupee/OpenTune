@@ -11,6 +11,9 @@ package app.opentune.ui.screens.settings
 
 import android.content.ClipData
 import android.os.Build
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -264,6 +267,42 @@ fun AboutScreen(
                                     text = it,
                                     style = MaterialTheme.typography.bodySmall,
                                 )
+                            }
+                        }
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+
+            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                SettingsClickToReveal("Playback Diagnostics") {
+                    val report = app.opentune.utils.DiagnosticsLogger.getReport(context)
+                    val clipboardManager = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                            as android.content.ClipboardManager
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = report,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            modifier = Modifier.horizontalScroll(androidx.compose.foundation.rememberScrollState())
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = {
+                                clipboardManager.setPrimaryClip(
+                                    ClipData.newPlainText("OpenTune Diagnostics", report)
+                                )
+                            }) {
+                                Text("Copy Report")
+                            }
+                            Button(
+                                onClick = { app.opentune.utils.DiagnosticsLogger.clear() },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                                )
+                            ) {
+                                Text("Clear")
                             }
                         }
                     }
