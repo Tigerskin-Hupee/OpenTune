@@ -11,7 +11,6 @@ package app.opentune.innertube
 
 import android.util.Log
 import org.schabi.newpipe.extractor.ServiceList
-import org.schabi.newpipe.extractor.playlist.PlaylistInfo
 import org.schabi.newpipe.extractor.search.SearchInfo
 import org.schabi.newpipe.extractor.stream.DeliveryMethod
 import org.schabi.newpipe.extractor.stream.StreamInfo
@@ -87,36 +86,45 @@ class InnertubeApi @Inject constructor() {
     }
 
     /**
-     * Recommendation feed. Without OAuth we can't get a personalised home
-     * feed, so we use YouTube's globally-curated music chart playlist.
+     * Recommendation feed — aggregates results from several popular-music
+     * search terms. Without OAuth we have no personalised feed; this gives
+     * a reasonable global mix without needing a specific playlist URL.
      */
     fun getRecommendations(): List<YtMusicTrack> {
-        // YouTube Music — Top 100 Global. Stable, public, no auth required.
-        val playlistUrl = "https://music.youtube.com/playlist?list=PL4fGSI1pDJn40WjZ6utkIuj2rNg-7iGsq"
-        return try {
-            val info = PlaylistInfo.getInfo(ServiceList.YouTube, playlistUrl)
-            val items = info.relatedItems
-                .filterIsInstance<StreamInfoItem>()
-                .mapNotNull { it.toTrack() }
-                .take(30)
-            Log.d(tag, "getRecommendations -> ${items.size} tracks (chart playlist)")
-            if (items.isNotEmpty()) return items
-            // Fallback: a popular search if the playlist disappears
-            search("top hits ${java.time.Year.now().value}").take(30)
-        } catch (e: Exception) {
-            Log.w(tag, "getRecommendations failed [${e.javaClass.simpleName}]: ${e.message}")
+        val year = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+        val queries = listOf(
+            "top hits $year",
+            "popular music $year",
+            "best songs $year",
+        )
+        val seen = mutableSetOf<String>()
+        val results = mutableListOf<YtMusicTrack>()
+        for (q in queries) {
+            if (results.size >= 30) break
             try {
-                search("top hits ${java.time.Year.now().value}").take(30)
-            } catch (e2: Exception) {
-                Log.w(tag, "getRecommendations search fallback also failed: ${e2.message}")
-                emptyList()
+                val page = SearchInfo.getInfo(
+                    ServiceList.YouTube,
+                    ServiceList.YouTube.searchQHFactory.fromQuery(q),
+                )
+                page.relatedItems
+                    .filterIsInstance<StreamInfoItem>()
+                    .mapNotNull { it.toTrack() }
+                    .filter { seen.add(it.videoId) }
+                    .forEach { results.add(it) }
+            } catch (e: Exception) {
+                Log.w(tag, "getRecommendations '$q' failed: ${e.message}")
             }
         }
+        Log.d(tag, "getRecommendations -> ${results.size} tracks")
+        return results.take(30)
     }
 
     private fun StreamInfoItem.toTrack(): YtMusicTrack? {
         val id = videoIdFromUrl(url) ?: return null
-        val thumb = thumbnails?.maxByOrNull { it.width }?.url
+        // Prefer the highest-res thumbnail from NewPipeExtractor; fall back to
+        // the standard YouTube thumbnail URL which is always available.
+        val thumb = thumbnails.maxByOrNull { it.width }?.url?.takeIf { it.isNotBlank() }
+            ?: "https://i.ytimg.com/vi/$id/hqdefault.jpg"
         val durationText = if (duration > 0) formatDuration(duration) else null
         return YtMusicTrack(
             videoId = id,
