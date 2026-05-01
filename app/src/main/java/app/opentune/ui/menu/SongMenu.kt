@@ -154,15 +154,16 @@ fun SongMenu(
             bottom = 8.dp + WindowInsets.systemBars.asPaddingValues().calculateBottomPadding()
         )
     ) {
-        // TODO: local library radio playback
-        if (!song.song.isLocal)
-            GridMenuItem(
-                icon = Icons.Rounded.Radio,
-                title = R.string.start_radio
-            ) {
-                onDismiss()
-//                playerConnection.playQueue(YouTubeQueue.radio(song.toMediaMetadata()), isRadio = true)
-            }
+        GridMenuItem(
+            icon = Icons.Rounded.Radio,
+            title = R.string.start_radio
+        ) {
+            playerConnection.playQueue(
+                app.opentune.playback.queues.RadioQueue(song.toMediaMetadata(), playerConnection.service.innertube),
+                isRadio = true,
+            )
+            onDismiss()
+        }
 
         GridMenuItem(
             icon = Icons.Rounded.PlayArrow,
