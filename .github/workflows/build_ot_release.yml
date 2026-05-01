@@ -1,17 +1,24 @@
-name: Build APKs for release
+name: Release
+
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           submodules: recursive
 
-      - name: set up JDK 21
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           java-version: 21
@@ -21,40 +28,41 @@ jobs:
       - name: Accept SDK licenses
         run: yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --licenses
 
-      - name: Setup signing configs
+      - name: Decode keystore
         run: |
-          echo "$KEYSTORE" | base64 --decode > test.jks
-          echo "$KEYSTORE_PROPERTIES" > keystore.properties
-        env:
-          KEYSTORE: ${{ secrets.KEYSTORE }}
-          KEYSTORE_PROPERTIES: ${{ secrets.KEYSTORE_PROPERTIES }}
+          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > ${{ github.workspace }}/opentune-release.jks
+            echo "storeFile=${{ github.workspace }}/opentune-release.jks" > keystore.properties
+            echo "storePassword=${{ secrets.KEYSTORE_PASSWORD }}" >> keystore.properties
+            echo "keyAlias=${{ secrets.KEY_ALIAS }}" >> keystore.properties
+            echo "keyPassword=${{ secrets.KEY_PASSWORD }}" >> keystore.properties
+          fi
 
-      - name: Get date-time string
-        id: datetime
+      - name: Extract version info
+        id: version
         run: |
-          DATE_TAG=$(date +'%Y-%m-%d_%H-%M-%S')
-          echo "date_tag=$DATE_TAG" >> $GITHUB_ENV
+          VERSION_NAME=$(grep 'versionName' app/build.gradle.kts | grep -o '"[^"]*"' | tr -d '"')
+          VERSION_CODE=$(grep 'versionCode' app/build.gradle.kts | grep -o '[0-9]\+' | head -1)
+          echo "version_name=$VERSION_NAME" >> $GITHUB_OUTPUT
+          echo "version_code=$VERSION_CODE" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION_NAME ($VERSION_CODE)"
 
-      - name: Resolve ffMetadatEx
-        run: git clone https://github.com/OuterTune/ffMetadataEx -b vibebur-128 ../ffMetadataEx
+      - name: Build release APK
+        run: ./gradlew assembleCoreRelease --stacktrace -DskipFormatKtlint
 
-      - name: Resolve ffmpeg libs
-        run: git clone https://github.com/mikooomich/ffmpeg-android-maker-prebuilt/ -b audio ../ffMetadataEx/ffmpeg-android-maker
-
-      - name: Build core release APK
-        run: ./gradlew assembleCoreRelease
-
-      - name: Build full release APK
-        run: ./gradlew assembleFullRelease
-
-      - name: Create github release draft
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ env.date_tag }}
-          name: "Build ${{ env.date_tag }}"
-          draft: true
-          files: |
-            app/build/outputs/apk/core/release/*.apk
-            app/build/outputs/apk/full/release/*.apk
+          tag_name: v${{ steps.version.outputs.version_name }}
+          name: "OpenTune v${{ steps.version.outputs.version_name }}"
+          body: |
+            ## OpenTune v${{ steps.version.outputs.version_name }} (build ${{ steps.version.outputs.version_code }})
+
+            ### 安裝說明
+            1. 下載 `OpenTune-${{ steps.version.outputs.version_name }}-release.apk`
+            2. 直接安裝（無需移除舊版）
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.version_name, 'alpha') || contains(steps.version.outputs.version_name, 'beta') }}
+          files: app/build/outputs/apk/core/release/*.apk
         env:
-          GITHUB_TOKEN: ${{ secrets.REL_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
