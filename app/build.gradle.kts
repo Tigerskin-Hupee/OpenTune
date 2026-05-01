@@ -64,16 +64,6 @@ android {
         debug {
             applicationIdSuffix = ".debug"
         }
-
-        // userdebug is release builds without minify
-        create("userdebug") {
-            initWith(getByName("release"))
-            isMinifyEnabled = false
-            isShrinkResources = false
-//            isDebuggable = true
-            isProfileable = true
-            matchingFallbacks += listOf("release")
-        }
     }
 
     buildFeatures {
@@ -245,20 +235,15 @@ dependencies {
     implementation(libs.hilt)
     ksp(libs.hilt.compiler)
 
-    // WorkManager + Hilt-Work (periodic yt-dlp Python update)
+    // WorkManager + Hilt-Work (kept for future periodic background tasks)
     implementation(libs.workmanager)
     implementation(libs.hilt.work)
     ksp(libs.hilt.work.compiler)
     implementation(libs.okhttp)
 
-    // yt-dlp embedded in Python (.so) — executable from nativeLibraryDir on Android 10+
-    implementation(libs.youtubedl.android)
-
-    // NewPipeExtractor — pure-JVM YouTube extraction. Being trialled as a
-    // replacement for yt-dlp/innertube; verified by NewPipeExtractorVerificationTest.
+    // NewPipeExtractor — pure-JVM YouTube extraction. Handles PoToken,
+    // signature ciphers, n-parameter throttling. Same library used by NewPipe.
     implementation(libs.newpipe.extractor)
-
-    testImplementation(libs.junit)
 
     coreLibraryDesugaring(libs.desugaring)
 
