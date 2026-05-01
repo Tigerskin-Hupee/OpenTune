@@ -12,6 +12,9 @@ package app.opentune.innertube
 import android.util.Log
 import org.schabi.newpipe.extractor.InfoItem
 import org.schabi.newpipe.extractor.ServiceList
+import org.schabi.newpipe.extractor.channel.ChannelInfoItem
+import org.schabi.newpipe.extractor.playlist.PlaylistInfo
+import org.schabi.newpipe.extractor.playlist.PlaylistInfoItem
 import org.schabi.newpipe.extractor.search.SearchInfo
 import org.schabi.newpipe.extractor.stream.DeliveryMethod
 import org.schabi.newpipe.extractor.stream.StreamInfo
@@ -25,6 +28,22 @@ data class YtMusicTrack(
     val artistName: String,
     val thumbnailUrl: String?,
     val durationText: String?,
+)
+
+data class YtMusicArtist(
+    val channelId: String,
+    val name: String,
+    val thumbnailUrl: String?,
+    val subscriberCount: Long,
+)
+
+data class YtMusicAlbum(
+    val playlistId: String,
+    val title: String,
+    val artistName: String,
+    val thumbnailUrl: String?,
+    val streamCount: Long,
+    val url: String,
 )
 
 @Singleton
@@ -86,6 +105,42 @@ class InnertubeApi @Inject constructor() {
         }
     }
 
+    fun searchArtists(query: String): List<YtMusicArtist> {
+        return try {
+            val info = SearchInfo.getInfo(
+                ServiceList.YouTube,
+                ServiceList.YouTube.searchQHFactory.fromQuery(query, listOf("music_artists"), ""),
+            )
+            info.relatedItems.filterIsInstance<ChannelInfoItem>().map { it.toArtist() }
+        } catch (e: Exception) {
+            Log.w(tag, "searchArtists('$query') failed: ${e.message}")
+            emptyList()
+        }
+    }
+
+    fun searchAlbums(query: String): List<YtMusicAlbum> {
+        return try {
+            val info = SearchInfo.getInfo(
+                ServiceList.YouTube,
+                ServiceList.YouTube.searchQHFactory.fromQuery(query, listOf("music_albums"), ""),
+            )
+            info.relatedItems.filterIsInstance<PlaylistInfoItem>().map { it.toAlbum() }
+        } catch (e: Exception) {
+            Log.w(tag, "searchAlbums('$query') failed: ${e.message}")
+            emptyList()
+        }
+    }
+
+    fun getPlaylistSongs(playlistUrl: String): List<YtMusicTrack> {
+        return try {
+            val info = PlaylistInfo.getInfo(ServiceList.YouTube, playlistUrl)
+            info.relatedItems.filterIsInstance<StreamInfoItem>().mapNotNull { it.toTrack() }
+        } catch (e: Exception) {
+            Log.w(tag, "getPlaylistSongs('$playlistUrl') failed: ${e.message}")
+            emptyList()
+        }
+    }
+
     /**
      * Recommendation feed — aggregates results from several popular-music
      * search terms. Without OAuth we have no personalised feed; this gives
@@ -137,6 +192,28 @@ class InnertubeApi @Inject constructor() {
             Log.w(tag, "getRelatedSongs($videoId) failed: ${e.message}")
             emptyList()
         }
+    }
+
+    private fun ChannelInfoItem.toArtist(): YtMusicArtist {
+        val thumb = thumbnails.maxByOrNull { it.width }?.url?.takeIf { it.isNotBlank() }
+        val channelId = url?.substringAfterLast("/") ?: ""
+        return YtMusicArtist(channelId = channelId, name = name ?: "", thumbnailUrl = thumb, subscriberCount = subscriberCount)
+    }
+
+    private fun PlaylistInfoItem.toAlbum(): YtMusicAlbum {
+        val thumb = thumbnails.maxByOrNull { it.width }?.url?.takeIf { it.isNotBlank() }
+        val playlistId = url?.let { u ->
+            val idx = u.indexOf("list=")
+            if (idx >= 0) u.substring(idx + 5).substringBefore("&") else u.substringAfterLast("/")
+        } ?: ""
+        return YtMusicAlbum(
+            playlistId = playlistId,
+            title = name ?: "",
+            artistName = uploaderName ?: "",
+            thumbnailUrl = thumb,
+            streamCount = streamCount,
+            url = url ?: "",
+        )
     }
 
     private fun StreamInfoItem.toTrack(): YtMusicTrack? {

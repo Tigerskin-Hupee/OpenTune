@@ -22,11 +22,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Album
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -34,6 +37,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -55,9 +60,12 @@ import androidx.navigation.NavController
 import coil3.compose.AsyncImage
 import app.opentune.LocalPlayerConnection
 import app.opentune.R
+import app.opentune.innertube.YtMusicAlbum
+import app.opentune.innertube.YtMusicArtist
 import app.opentune.innertube.YtMusicTrack
 import app.opentune.models.MediaMetadata
 import app.opentune.playback.queues.ListQueue
+import app.opentune.viewmodels.SearchTab
 import app.opentune.viewmodels.YouTubeSearchViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -68,13 +76,15 @@ fun YouTubeSearchScreen(
     viewModel: YouTubeSearchViewModel = hiltViewModel(),
 ) {
     val playerConnection = LocalPlayerConnection.current
-    val results by viewModel.results.collectAsState()
+    val songResults by viewModel.songResults.collectAsState()
+    val artistResults by viewModel.artistResults.collectAsState()
+    val albumResults by viewModel.albumResults.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val error by viewModel.error.collectAsState()
+    val selectedTab by viewModel.selectedTab.collectAsState()
     var queryText by remember { mutableStateOf(initialQuery) }
     val keyboard = LocalSoftwareKeyboardController.current
 
-    // Trigger search if launched with a pre-filled query
     LaunchedEffect(initialQuery) {
         if (initialQuery.isNotBlank()) {
             viewModel.query.value = initialQuery
@@ -109,6 +119,21 @@ fun YouTubeSearchScreen(
             }
         )
 
+        val tabs = listOf(
+            stringResource(R.string.songs),
+            stringResource(R.string.artists),
+            stringResource(R.string.albums),
+        )
+        TabRow(selectedTabIndex = selectedTab.ordinal) {
+            tabs.forEachIndexed { index, title ->
+                Tab(
+                    selected = selectedTab.ordinal == index,
+                    onClick = { viewModel.selectedTab.value = SearchTab.entries[index] },
+                    text = { Text(title) },
+                )
+            }
+        }
+
         when {
             isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
@@ -121,33 +146,74 @@ fun YouTubeSearchScreen(
                     modifier = Modifier.padding(16.dp)
                 )
             }
-            results.isEmpty() && queryText.isNotBlank() -> Box(
-                Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = stringResource(R.string.no_results_found),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            else -> LazyColumn(
-                modifier = Modifier.fillMaxSize()
-            ) {
-                items(results) { track ->
-                    YouTubeTrackItem(
-                        track = track,
-                        onClick = {
-                            keyboard?.hide()
-                            playerConnection?.playQueue(
-                                ListQueue(
-                                    title = "YouTube Search",
-                                    items = results.map { it.toMediaMetadata() },
-                                    startIndex = results.indexOf(track),
+            else -> when (selectedTab) {
+                SearchTab.SONGS -> {
+                    if (songResults.isEmpty() && queryText.isNotBlank()) {
+                        EmptyResults()
+                    } else {
+                        LazyColumn(Modifier.fillMaxSize()) {
+                            items(songResults) { track ->
+                                YouTubeTrackItem(
+                                    track = track,
+                                    onClick = {
+                                        keyboard?.hide()
+                                        playerConnection?.playQueue(
+                                            ListQueue(
+                                                title = "YouTube Search",
+                                                items = songResults.map { it.toMediaMetadata() },
+                                                startIndex = songResults.indexOf(track),
+                                            )
+                                        )
+                                    }
                                 )
-                            )
+                            }
                         }
-                    )
+                    }
+                }
+                SearchTab.ARTISTS -> {
+                    if (artistResults.isEmpty() && queryText.isNotBlank()) {
+                        EmptyResults()
+                    } else {
+                        LazyColumn(Modifier.fillMaxSize()) {
+                            items(artistResults) { artist ->
+                                YouTubeArtistItem(
+                                    artist = artist,
+                                    onClick = {
+                                        keyboard?.hide()
+                                        navController.navigate(
+                                            "youtube_search?q=${java.net.URLEncoder.encode(artist.name, "UTF-8")}"
+                                        )
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+                SearchTab.ALBUMS -> {
+                    if (albumResults.isEmpty() && queryText.isNotBlank()) {
+                        EmptyResults()
+                    } else {
+                        LazyColumn(Modifier.fillMaxSize()) {
+                            items(albumResults) { album ->
+                                YouTubeAlbumItem(
+                                    album = album,
+                                    onClick = {
+                                        keyboard?.hide()
+                                        viewModel.loadPlaylistSongs(album.url) { songs ->
+                                            if (songs.isNotEmpty()) {
+                                                playerConnection?.playQueue(
+                                                    ListQueue(
+                                                        title = album.title,
+                                                        items = songs.map { it.toMediaMetadata() },
+                                                    )
+                                                )
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -155,10 +221,18 @@ fun YouTubeSearchScreen(
 }
 
 @Composable
-private fun YouTubeTrackItem(
-    track: YtMusicTrack,
-    onClick: () -> Unit,
-) {
+private fun EmptyResults() {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text(
+            text = stringResource(R.string.no_results_found),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun YouTubeTrackItem(track: YtMusicTrack, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -169,20 +243,14 @@ private fun YouTubeTrackItem(
         AsyncImage(
             model = track.thumbnailUrl,
             contentDescription = null,
-            modifier = Modifier
-                .size(52.dp)
-                .clip(RoundedCornerShape(4.dp)),
+            modifier = Modifier.size(52.dp).clip(RoundedCornerShape(4.dp)),
         )
-        Spacer(modifier = Modifier.width(12.dp))
+        Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = track.title,
-                style = MaterialTheme.typography.bodyLarge,
-                maxLines = 1,
-            )
+            Text(track.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1)
             if (track.artistName.isNotBlank()) {
                 Text(
-                    text = track.artistName,
+                    track.artistName,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -191,6 +259,84 @@ private fun YouTubeTrackItem(
         }
         Icon(
             imageVector = Icons.Rounded.Search,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(20.dp),
+        )
+    }
+}
+
+@Composable
+private fun YouTubeArtistItem(artist: YtMusicArtist, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (artist.thumbnailUrl != null) {
+            AsyncImage(
+                model = artist.thumbnailUrl,
+                contentDescription = null,
+                modifier = Modifier.size(52.dp).clip(CircleShape),
+            )
+        } else {
+            Box(
+                modifier = Modifier.size(52.dp).clip(CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Rounded.Person, contentDescription = null, modifier = Modifier.size(32.dp))
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Text(artist.name, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f), maxLines = 1)
+        Icon(
+            imageVector = Icons.Rounded.Search,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(20.dp),
+        )
+    }
+}
+
+@Composable
+private fun YouTubeAlbumItem(album: YtMusicAlbum, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (album.thumbnailUrl != null) {
+            AsyncImage(
+                model = album.thumbnailUrl,
+                contentDescription = null,
+                modifier = Modifier.size(52.dp).clip(RoundedCornerShape(4.dp)),
+            )
+        } else {
+            Box(
+                modifier = Modifier.size(52.dp).clip(RoundedCornerShape(4.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Rounded.Album, contentDescription = null, modifier = Modifier.size(32.dp))
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(album.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1)
+            if (album.artistName.isNotBlank()) {
+                Text(
+                    album.artistName,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+        }
+        Icon(
+            imageVector = Icons.Rounded.Album,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.size(20.dp),
