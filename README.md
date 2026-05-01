@@ -1,60 +1,101 @@
+# OpenTune
+
 <div align="center">
   <img src="./assets/ic_launcher_round.png" alt="OpenTune" width="100" />
-  <h1>OpenTune</h1>
-  <p>A free, open-source Android music player powered by YouTube Music and yt-dlp.</p>
 </div>
+
+A Material 3 music player for Android — streams YouTube audio **without** the YouTube Music API.
+
+[![License](https://img.shields.io/github/license/OuterTune/OuterTune)](https://www.gnu.org/licenses/gpl-3.0)
 
 ---
 
 ## What is OpenTune?
 
-OpenTune streams music directly from YouTube Music — no account required. It uses the YouTube ANDROID player API as the primary stream resolver, with yt-dlp as an automatic fallback for geo-restricted or login-required content.
+OpenTune is a fork of [OuterTune](https://github.com/OuterTune/OuterTune) that replaces the YouTube Music API with **[NewPipeExtractor](https://github.com/TeamNewPipe/NewPipeExtractor)** — the same pure-JVM library used by NewPipe, InnerTune, and Gramophone.
 
-## Stream Architecture
+This means:
+- No YouTube Music account required
+- No region restrictions
+- No official API keys needed
+- Works anywhere YouTube is accessible
 
-```
-Search / Share URL
-       ↓
-  Tap to play
-       ↓
-  StreamResolver
-   ├─ 1. In-memory cache (5h TTL)
-   ├─ 2. YouTube ANDROID player API  ← primary, no binary needed
-   └─ 3. yt-dlp binary (auto-updated) ← fallback
-       ↓
-    ExoPlayer
-```
+---
 
-yt-dlp is downloaded automatically from the [official GitHub releases](https://github.com/yt-dlp/yt-dlp/releases) and updated every 24 hours in the background.
+## Architecture
 
-## Main Features
+| Layer | Technology | Purpose |
+|---|---|---|
+| **Audio Streaming** | [NewPipeExtractor v0.26.1](https://github.com/TeamNewPipe/NewPipeExtractor) | Resolves YouTube video IDs to direct CDN audio URLs (handles PoToken, signature ciphers, n-parameter throttling) |
+| **Search** | NewPipeExtractor `SearchInfo` | Songs, Artists, Albums/Playlists via `music_songs` / `music_artists` / `music_albums` content filters |
+| **Recommendations** | NewPipeExtractor `SearchInfo` | Aggregates popular music search terms for a global feed |
+| **Radio / Related** | NewPipeExtractor `StreamInfo.relatedItems` | Seeds a continuous radio queue from any track; auto-extends when queue runs low |
+| **Lyrics** | [lrclib.net](https://lrclib.net) | Free, no-auth synced/plain lyrics API; results cached in local Room DB |
+| **Local Lyrics** | `.lrc` file lookup | Reads sidecar `.lrc` files next to local audio files |
+| **Image Loading** | [Coil 3](https://coil-kt.github.io/coil/) + OkHttp | Network thumbnails via `coil-network-okhttp`; local audio embedded art via `MediaMetadataRetriever` |
+| **Local Playback** | [Gramophone](https://github.com/FoedusProgramme/Gramophone) tag extractor | Parses ID3/FLAC/OGG tags; handles `\\`-delimited multi-value fields correctly |
+| **Player** | ExoPlayer (Media3) | Background playback, notification controls, Android Auto |
+| **Database** | Room | Stores songs, playlists, lyrics cache, play history, queue persistence |
+| **DI** | Hilt | Dependency injection throughout |
 
-- **Search** YouTube Music by song, artist, or album
-- **Home recommendations** from YouTube Music
-- **Playback** with ExoPlayer — background play, notification controls
-- **yt-dlp fallback** for geo-restricted tracks
-- **Auto-update** yt-dlp binary via WorkManager (daily, on Wi-Fi)
-- **Local library** — scan and play music already on your device
-- **Queue management** — shuffle, repeat, reorder
-- **Share** a YouTube/YouTube Music URL to play it directly in OpenTune
+---
 
-## Screenshots
+## Features
 
-| Home | Player |
-|------|--------|
-| ![Home](./assets/main-interface.jpg) | ![Player](./assets/player.jpg) |
+- **YouTube streaming** — search songs, browse recommendations, start radio from any track
+- **Tabbed search** — Songs / Artists / Albums tabs powered by NewPipeExtractor
+- **Infinite radio** — auto-fetches related songs when the queue runs low
+- **Synced lyrics** — fetched from lrclib.net, displayed word-by-word with the Gramophone parser
+- **Local audio playback** — MP3, FLAC, OGG, Opus, and more
+- **Multiple queues** — manage several queues simultaneously
+- **Download** — cache YouTube audio for offline playback
+- **Library** — like, save, and organize songs into playlists
+- **Play history & statistics**
+- **Audio effects** — normalization, equalizer, tempo/pitch adjustment
+- **Material 3 design** — dynamic color, dark mode
+- **Android Auto** support
+- **Minimum SDK: Android 8 (Oreo, API 24)**
+
+---
+
+## Key Differences from OuterTune
+
+| | OuterTune | OpenTune |
+|---|---|---|
+| Streaming backend | YouTube Music API (requires auth) | NewPipeExtractor (no auth) |
+| Search | YouTube Music search | YouTube search via NewPipeExtractor |
+| Lyrics | KuGou, LrcLib, local | LrcLib, local |
+| Account sync | YouTube Music account | — (local only) |
+| Recommendations | Personalised YTM feed | Global popular music feed |
+
+---
 
 ## Building
 
-1. Clone the repo  
-   ```bash
-   git clone https://github.com/Tigerskin-Hupee/OpenTune.git
-   ```
-2. Open in Android Studio (Hedgehog or newer)
-3. Build & run on a device or emulator (API 26+)
+```bash
+git clone https://github.com/Tigerskin-Hupee/OpenTune.git
+cd OpenTune
+./gradlew assembleDebug
+```
 
-No API keys or accounts are required.
+APK output: `app/build/outputs/apk/core/debug/OpenTune-1.0.0-alpha1-debug.apk`
 
-## Based on
+No API keys or accounts required.
 
-[OuterTune](https://github.com/DD3Boh/OuterTune) — GPL-3.0
+---
+
+## Attribution
+
+- [OuterTune](https://github.com/OuterTune/OuterTune) — base fork (GPL-3.0)
+- [InnerTune](https://github.com/z-huang/InnerTune) — original foundation
+- [NewPipeExtractor](https://github.com/TeamNewPipe/NewPipeExtractor) — YouTube extraction engine
+- [Gramophone](https://github.com/FoedusProgramme/Gramophone) — tag extractor and LRC lyrics parser
+- [lrclib.net](https://lrclib.net) — free synced lyrics database
+
+---
+
+## Disclaimer
+
+This project is not affiliated with, funded, authorized, endorsed by, or in any way associated with YouTube, Google LLC or any of its affiliates and subsidiaries.
+
+Any trademark, service mark, trade name, or other intellectual property rights used in this project are owned by the respective owners.
