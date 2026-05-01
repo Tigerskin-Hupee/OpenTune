@@ -254,6 +254,12 @@ dependencies {
     // yt-dlp embedded in Python (.so) — executable from nativeLibraryDir on Android 10+
     implementation(libs.youtubedl.android)
 
+    // NewPipeExtractor — pure-JVM YouTube extraction. Being trialled as a
+    // replacement for yt-dlp/innertube; verified by NewPipeExtractorVerificationTest.
+    implementation(libs.newpipe.extractor)
+
+    testImplementation(libs.junit)
+
     coreLibraryDesugaring(libs.desugaring)
 
     // misc

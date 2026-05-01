@@ -75,7 +75,12 @@ hilt-compiler = { group = "com.google.dagger", name = "hilt-android-compiler", v
 aboutlibraries-compose-m3 = { module = "com.mikepenz:aboutlibraries-compose-m3", version.ref = "aboutLibraries" }
 desugaring = { group = "com.android.tools", name = "desugar_jdk_libs", version = "2.1.5" }
 
-#junit = { group = "junit", name = "junit", version = "4.13.2" }
+# NewPipeExtractor — pure-JVM YouTube extraction. Pulled via JitPack.
+# Pinning to a recent stable; bump if YouTube changes break extraction.
+newpipe-extractor = { group = "com.github.TeamNewPipe", name = "NewPipeExtractor", version = "v0.24.5" }
+
+# JUnit for the verification test that proves NewPipeExtractor can reach YT.
+junit = { group = "junit", name = "junit", version = "4.13.2" }
 
 [plugins]
 aboutlibraries = { id = "com.mikepenz.aboutlibraries.plugin", version.ref = "aboutLibraries" }
