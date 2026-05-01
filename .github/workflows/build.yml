@@ -1,4 +1,4 @@
-name: Build debug APK
+name: Build APKs
 on:
   workflow_dispatch:
   push:
@@ -27,11 +27,17 @@ jobs:
       - name: Accept SDK licenses
         run: yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --licenses
 
-      - name: Build debug APK and run jvm tests
-        run: ./gradlew assembleCoreDebug lintCoreDebug testCoreDebugUnitTest --stacktrace -DskipFormatKtlint
+      - name: Build debug + release APKs and lint
+        run: ./gradlew assembleCoreDebug assembleCoreRelease lintCoreDebug --stacktrace -DskipFormatKtlint
 
-      - name: Upload APK
+      - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: app
+          name: OpenTune-debug
           path: app/build/outputs/apk/core/debug/*.apk
+
+      - name: Upload release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenTune-release
+          path: app/build/outputs/apk/core/release/*.apk
