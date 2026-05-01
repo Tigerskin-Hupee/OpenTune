@@ -14,6 +14,7 @@ import app.opentune.innertube.YtMusicTrack
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.debounce
@@ -74,10 +75,10 @@ class YouTubeSearchViewModel @Inject constructor(
         }
     }
 
-    fun loadPlaylistSongs(playlistUrl: String, onResult: (List<YtMusicTrack>) -> Unit) {
+    fun loadPlaylistSongs(playlistId: String, onResult: (List<YtMusicTrack>) -> Unit) {
         viewModelScope.launch(Dispatchers.IO) {
-            val songs = api.getPlaylistSongs(playlistUrl)
-            onResult(songs)
+            val songs = api.getPlaylistSongs(playlistId)
+            withContext(Dispatchers.Main) { onResult(songs) }
         }
     }
 }

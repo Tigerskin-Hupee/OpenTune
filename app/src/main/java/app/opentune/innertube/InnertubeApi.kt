@@ -154,12 +154,14 @@ class InnertubeApi @Inject constructor() {
         }
     }
 
-    fun getPlaylistSongs(playlistUrl: String): List<YtMusicTrack> {
+    fun getPlaylistSongs(playlistId: String): List<YtMusicTrack> {
+        if (playlistId.isBlank()) return emptyList()
+        val url = "https://www.youtube.com/playlist?list=$playlistId"
         return try {
-            val info = PlaylistInfo.getInfo(ServiceList.YouTube, playlistUrl)
+            val info = PlaylistInfo.getInfo(ServiceList.YouTube, url)
             info.relatedItems.filterIsInstance<StreamInfoItem>().mapNotNull { it.toTrack() }
         } catch (e: Exception) {
-            Log.w(tag, "getPlaylistSongs('$playlistUrl') failed: ${e.message}")
+            Log.w(tag, "getPlaylistSongs('$playlistId') failed: ${e.message}")
             emptyList()
         }
     }
