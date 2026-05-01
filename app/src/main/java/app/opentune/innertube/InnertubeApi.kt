@@ -154,14 +154,23 @@ class InnertubeApi @Inject constructor() {
         }
     }
 
-    fun getPlaylistSongs(playlistId: String): List<YtMusicTrack> {
-        if (playlistId.isBlank()) throw IllegalArgumentException("playlistId is blank")
-        val url = "https://www.youtube.com/playlist?list=$playlistId"
-        Log.d(tag, "getPlaylistSongs: fetching $url")
-        val info = PlaylistInfo.getInfo(ServiceList.YouTube, url)
-        val tracks = info.relatedItems.filterIsInstance<StreamInfoItem>().mapNotNull { it.toTrack() }
-        Log.d(tag, "getPlaylistSongs('$playlistId'): ${tracks.size} tracks")
-        return tracks
+    fun getPlaylistSongs(playlistId: String, fallbackQuery: String = ""): List<YtMusicTrack> {
+        if (playlistId.isNotBlank()) {
+            val url = "https://www.youtube.com/playlist?list=$playlistId"
+            try {
+                val info = PlaylistInfo.getInfo(ServiceList.YouTube, url)
+                val tracks = info.relatedItems.filterIsInstance<StreamInfoItem>().mapNotNull { it.toTrack() }
+                if (tracks.isNotEmpty()) {
+                    Log.d(tag, "getPlaylistSongs('$playlistId'): ${tracks.size} tracks")
+                    return tracks
+                }
+            } catch (e: Exception) {
+                Log.w(tag, "PlaylistInfo failed for '$playlistId', using search fallback: ${e.message}")
+            }
+        }
+        if (fallbackQuery.isBlank()) return emptyList()
+        Log.d(tag, "getPlaylistSongs: fallback search '$fallbackQuery'")
+        return search(fallbackQuery)
     }
 
     /**

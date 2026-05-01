@@ -204,7 +204,7 @@ fun YouTubeSearchScreen(
                                     album = album,
                                     onClick = {
                                         keyboard?.hide()
-                                        viewModel.loadPlaylistSongs(album.playlistId) { songs, error ->
+                                        viewModel.loadPlaylistSongs(album.playlistId, "${album.title} ${album.artistName}".trim()) { songs, error ->
                                             if (songs.isNotEmpty()) {
                                                 playerConnection?.playQueue(
                                                     ListQueue(
@@ -232,7 +232,7 @@ fun YouTubeSearchScreen(
                                     album = playlist,
                                     onClick = {
                                         keyboard?.hide()
-                                        viewModel.loadPlaylistSongs(playlist.playlistId) { songs, error ->
+                                        viewModel.loadPlaylistSongs(playlist.playlistId, "${playlist.title} ${playlist.artistName}".trim()) { songs, error ->
                                             if (songs.isNotEmpty()) {
                                                 playerConnection?.playQueue(
                                                     ListQueue(
