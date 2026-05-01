@@ -620,9 +620,7 @@ class MusicService : MediaLibraryService(),
                 return@Factory dataSpec
             }
 
-            // Not cached / not downloaded — resolve stream URL via yt-dlp.
-            // yt-dlp is auto-updated from GitHub Releases by YtDlpManager so
-            // upstream YouTube changes are handled without an APK release.
+            // Not cached / not downloaded — resolve via NewPipeExtractor.
             Log.d(TAG, "PLAYING: remote song (resolving stream URL via StreamResolver)")
             val urlResult = runBlocking { streamResolver.getStreamUrl(mediaId) }
             val url = urlResult.getOrElse { err ->

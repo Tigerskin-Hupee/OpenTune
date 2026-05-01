@@ -27,7 +27,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Bolt
-import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.ConfirmationNumber
 import androidx.compose.material.icons.rounded.Coronavirus
 import androidx.compose.material.icons.rounded.Delete
@@ -35,10 +34,7 @@ import androidx.compose.material.icons.rounded.DeveloperMode
 import androidx.compose.material.icons.rounded.Devices
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Queue
-import androidx.compose.material.icons.rounded.Update
 import androidx.compose.material.icons.rounded.WarningAmber
-import androidx.compose.runtime.collectAsState
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -84,10 +80,8 @@ import app.opentune.ui.component.PreferenceGroupTitle
 import app.opentune.ui.component.SwitchPreference
 import app.opentune.ui.component.button.IconButton
 import app.opentune.ui.dialog.CounterDialog
-import app.opentune.playback.YtDlpState
 import app.opentune.ui.utils.backToMain
 import app.opentune.utils.rememberPreference
-import app.opentune.viewmodels.YtDlpSettingsViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -98,10 +92,8 @@ import kotlinx.coroutines.runBlocking
 fun ExperimentalSettings(
     navController: NavController,
     scrollBehavior: TopAppBarScrollBehavior,
-    ytDlpViewModel: YtDlpSettingsViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
-    val ytDlpStatus by ytDlpViewModel.status.collectAsState()
     val coroutineScope = rememberCoroutineScope()
     val database = LocalDatabase.current
     val haptic = LocalHapticFeedback.current
@@ -134,37 +126,6 @@ fun ExperimentalSettings(
         columnModifier = Modifier
             .verticalScroll(rememberScrollState())
     ) {
-        // ── yt-dlp playback engine ──────────────────────────────────────────
-        PreferenceGroupTitle(title = "Playback engine (yt-dlp)")
-
-        val statusText = when (ytDlpStatus.state) {
-            YtDlpState.UNKNOWN       -> "Checking…"
-            YtDlpState.INITIALISING  -> "Initialising…"
-            YtDlpState.UPDATING      -> "Updating…"
-            YtDlpState.READY         ->
-                "Ready" + (ytDlpStatus.installedVersion?.let { " · $it" } ?: "")
-            YtDlpState.ERROR         ->
-                "Error: ${ytDlpStatus.error ?: "unknown"}"
-        }
-
-        PreferenceEntry(
-            title = { Text(statusText) },
-            icon = { Icon(Icons.Rounded.CloudDownload, null) },
-            onClick = {}
-        )
-        PreferenceEntry(
-            title = { Text("Check for updates now") },
-            description = "Pull latest yt-dlp release in-place. " +
-                "App also auto-checks every 24h.",
-            icon = { Icon(Icons.Rounded.Update, null) },
-            onClick = {
-                ytDlpViewModel.checkForUpdate()
-                Toast.makeText(context, "Checking for yt-dlp updates…", Toast.LENGTH_SHORT).show()
-            }
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
         PreferenceGroupTitle(
             title = stringResource(R.string.experimental_settings_title)
         )

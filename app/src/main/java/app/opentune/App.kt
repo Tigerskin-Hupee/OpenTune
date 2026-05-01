@@ -21,15 +21,13 @@ import coil3.memory.MemoryCache
 import coil3.request.CachePolicy
 import coil3.request.allowHardware
 import coil3.request.crossfade
-import app.opentune.playback.YtDlpManager
+import app.opentune.innertube.NewPipeDownloader
 import app.opentune.utils.CoilBitmapLoader
 import app.opentune.utils.LocalArtworkPathKeyer
-import com.yausername.youtubedl_android.YoutubeDL
 import dagger.hilt.android.HiltAndroidApp
-import kotlinx.coroutines.DelicateCoroutinesApi
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.launch
+import org.schabi.newpipe.extractor.NewPipe
+import org.schabi.newpipe.extractor.localization.ContentCountry
+import org.schabi.newpipe.extractor.localization.Localization
 import javax.inject.Inject
 
 @HiltAndroidApp
@@ -39,15 +37,11 @@ class App : Application(), SingletonImageLoader.Factory, Configuration.Provider 
     @Inject
     lateinit var workerFactory: HiltWorkerFactory
 
-    @Inject
-    lateinit var ytDlpManager: YtDlpManager
-
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
             .setWorkerFactory(workerFactory)
             .build()
 
-    @OptIn(DelicateCoroutinesApi::class)
     override fun onCreate() {
         super.onCreate()
 
@@ -55,23 +49,14 @@ class App : Application(), SingletonImageLoader.Factory, Configuration.Provider 
             System.setProperty("kotlinx.coroutines.debug", "on")
         }
 
-        // Initialise yt-dlp (embedded Python in nativeLibraryDir — works under
-        // SELinux on Android 10+). Heavy: extracts .so on first launch.
-        GlobalScope.launch(Dispatchers.IO) {
-            try {
-                YoutubeDL.getInstance().init(this@App)
-                val ver = runCatching { YoutubeDL.getInstance().version(this@App) }.getOrElse { "?" }
-                Log.i(TAG, "yt-dlp library ready, version=$ver")
-                ytDlpManager.onLibraryReady()
-            } catch (t: Throwable) {
-                Log.e(TAG, "yt-dlp library init failed [${t.javaClass.name}]: ${t.message}", t)
-                ytDlpManager.onLibraryError(t)
-            }
+        // Initialise NewPipeExtractor — pure-JVM YouTube extraction. Cheap
+        // (no native binary, no disk extraction); safe to call on main thread.
+        try {
+            NewPipe.init(NewPipeDownloader(), Localization("en", "US"), ContentCountry("US"))
+            Log.i(TAG, "NewPipeExtractor initialised")
+        } catch (t: Throwable) {
+            Log.e(TAG, "NewPipeExtractor init failed [${t.javaClass.name}]: ${t.message}", t)
         }
-
-        // Schedule the periodic update worker — runs the library's
-        // updateYoutubeDL() so yt-dlp stays current without an APK release.
-        ytDlpManager.scheduleUpdates()
 
         instance = this
     }

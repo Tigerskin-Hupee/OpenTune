@@ -15,22 +15,14 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Resolves a YouTube video ID to a playable audio URL.
+ * Resolves a YouTube video ID to a playable audio URL via NewPipeExtractor.
  *
- * Strategy (in order):
- *   1. In-memory cache (4h TTL).
- *   2. yt-dlp via embedded Python — handles PoToken, signature ciphers, and
- *      whatever else YouTube introduces; updated daily by [YtDlpDownloadWorker].
- *   3. Innertube player API (IOS / ANDROID_VR / TVHTML5 / ANDROID) — fallback
- *      while yt-dlp is still initialising on first launch.
- *
- * Per-video [Mutex] prevents stampede when multiple coroutines request the
- * same ID concurrently (e.g. on queue setup).
+ * - In-memory cache (4h TTL; YouTube CDN URLs expire ~6h).
+ * - Per-video [Mutex] prevents stampede on concurrent requests for the same id.
  */
 @Singleton
 class StreamResolver @Inject constructor(
     private val innertube: InnertubeApi,
-    private val ytDlpHelper: YtDlpHelper,
 ) {
     private val tag = "StreamResolver"
     private val urlCache = HashMap<String, Pair<String, Long>>()
@@ -49,7 +41,6 @@ class StreamResolver @Inject constructor(
     }
 
     private suspend fun resolve(videoId: String): Result<String> {
-        // 1. Cache
         cacheMutex.withLock {
             urlCache[videoId]?.let { (url, expireAt) ->
                 if (expireAt > System.currentTimeMillis()) {
@@ -61,32 +52,15 @@ class StreamResolver @Inject constructor(
             }
         }
 
-        // 2. yt-dlp (primary — handles PoToken & signature ciphers).
-        if (ytDlpHelper.isInstalled) {
-            Log.d(tag, "resolve($videoId) trying yt-dlp")
-            val result = ytDlpHelper.getStreamUrl(videoId)
-            if (result.isSuccess) {
-                cacheUrl(videoId, result.getOrThrow())
-                Log.d(tag, "resolve($videoId) yt-dlp ok")
-                return result
-            }
-            Log.w(tag, "resolve($videoId) yt-dlp failed: ${result.exceptionOrNull()?.message}")
-        } else {
-            Log.d(tag, "resolve($videoId) yt-dlp not yet initialised — using innertube fallback")
-        }
-
-        // 3. Innertube player API fallback (multi-client).
-        Log.d(tag, "resolve($videoId) trying innertube player API")
-        try {
+        return try {
             val url = withContext(Dispatchers.IO) { innertube.getAudioStreamUrl(videoId) }
             cacheUrl(videoId, url)
-            Log.d(tag, "resolve($videoId) innertube ok")
-            return Result.success(url)
+            Log.d(tag, "resolve($videoId) ok")
+            Result.success(url)
         } catch (e: Exception) {
-            Log.w(tag, "resolve($videoId) innertube failed: ${e.message}")
+            Log.w(tag, "resolve($videoId) failed [${e.javaClass.simpleName}]: ${e.message}")
+            Result.failure(StreamResolutionException(videoId, e))
         }
-
-        return Result.failure(StreamResolutionException(videoId))
     }
 
     private suspend fun cacheUrl(videoId: String, url: String) {
@@ -100,5 +74,5 @@ class StreamResolver @Inject constructor(
     }
 }
 
-class StreamResolutionException(videoId: String) :
-    Exception("Failed to resolve stream for $videoId (player API and yt-dlp both failed)")
+class StreamResolutionException(videoId: String, cause: Throwable? = null) :
+    Exception("Failed to resolve stream for $videoId", cause)
