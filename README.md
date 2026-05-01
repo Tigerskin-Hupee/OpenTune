@@ -1,6 +1,8 @@
 # OpenTune
 
-<img src="./assets/outertune.webp" height="88" alt="OpenTune app icon">
+<div align="center">
+  <img src="./assets/ic_launcher_round.png" alt="OpenTune" width="100" />
+</div>
 
 A Material 3 music player for Android — streams YouTube audio **without** the YouTube Music API.
 
@@ -71,12 +73,14 @@ This means:
 ## Building
 
 ```bash
-git clone https://github.com/tigerskin-hupee/opentune.git
-cd opentune
+git clone https://github.com/Tigerskin-Hupee/OpenTune.git
+cd OpenTune
 ./gradlew assembleDebug
 ```
 
 APK output: `app/build/outputs/apk/core/debug/OpenTune-1.0.0-alpha1-debug.apk`
+
+No API keys or accounts required.
 
 ---
 
