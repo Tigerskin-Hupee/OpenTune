@@ -23,6 +23,7 @@ import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.request.allowHardware
 import coil3.request.crossfade
 import okhttp3.OkHttpClient
+import okio.Path.Companion.toOkioPath
 import app.opentune.innertube.NewPipeDownloader
 import app.opentune.utils.CoilBitmapLoader
 import app.opentune.utils.LocalArtworkPathKeyer
@@ -79,7 +80,7 @@ class App : Application(), SingletonImageLoader.Factory, Configuration.Provider 
             }
             .diskCache {
                 DiskCache.Builder()
-                    .directory(cacheDir.resolve("image_cache"))
+                    .directory(cacheDir.resolve("image_cache").toOkioPath())
                     .maxSizeBytes(50L * 1024 * 1024)
                     .build()
             }
