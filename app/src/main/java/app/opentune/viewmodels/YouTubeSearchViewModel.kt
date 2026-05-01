@@ -75,10 +75,10 @@ class YouTubeSearchViewModel @Inject constructor(
         }
     }
 
-    fun loadPlaylistSongs(playlistId: String, onResult: (List<YtMusicTrack>, String?) -> Unit) {
+    fun loadPlaylistSongs(playlistId: String, fallbackQuery: String = "", onResult: (List<YtMusicTrack>, String?) -> Unit) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val songs = api.getPlaylistSongs(playlistId)
+                val songs = api.getPlaylistSongs(playlistId, fallbackQuery)
                 withContext(Dispatchers.Main) { onResult(songs, null) }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { onResult(emptyList(), e.javaClass.simpleName + ": " + e.message?.take(100)) }
