@@ -17,10 +17,14 @@ class RadioQueue(
     override val preloadItem: MediaMetadata = seedTrack
     override val startShuffled: Boolean = false
 
+    // Tracks the last videoId used so nextPage() fetches different related songs
+    private var lastId: String = seedTrack.id
+
     override suspend fun getInitialStatus(): Queue.Status {
         val related = withContext(Dispatchers.IO) {
             api.getRelatedSongs(seedTrack.id)
         }
+        if (related.isNotEmpty()) lastId = related.last().videoId
         val items = mutableListOf(seedTrack)
         items.addAll(related.map { it.toMediaMetadata() })
         return Queue.Status(
@@ -32,7 +36,13 @@ class RadioQueue(
 
     override fun hasNextPage(): Boolean = true
 
-    override suspend fun nextPage(): List<MediaMetadata> = emptyList()
+    override suspend fun nextPage(): List<MediaMetadata> {
+        val related = withContext(Dispatchers.IO) {
+            api.getRelatedSongs(lastId)
+        }
+        if (related.isNotEmpty()) lastId = related.last().videoId
+        return related.map { it.toMediaMetadata() }
+    }
 
     private fun YtMusicTrack.toMediaMetadata() = MediaMetadata(
         id = videoId,
