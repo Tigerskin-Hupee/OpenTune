@@ -63,14 +63,22 @@ import app.opentune.viewmodels.YouTubeSearchViewModel
 @Composable
 fun YouTubeSearchScreen(
     navController: NavController,
+    initialQuery: String = "",
     viewModel: YouTubeSearchViewModel = hiltViewModel(),
 ) {
     val playerConnection = LocalPlayerConnection.current
     val results by viewModel.results.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val error by viewModel.error.collectAsState()
-    var queryText by remember { mutableStateOf("") }
+    var queryText by remember { mutableStateOf(initialQuery) }
     val keyboard = LocalSoftwareKeyboardController.current
+
+    // Trigger search if launched with a pre-filled query
+    androidx.compose.runtime.LaunchedEffect(initialQuery) {
+        if (initialQuery.isNotBlank()) {
+            viewModel.query.value = initialQuery
+        }
+    }
 
     Column(
         modifier = Modifier

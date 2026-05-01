@@ -85,9 +85,11 @@ fun SearchBarContainer(
         }
     }
 
-    val onSearch: (String) -> Unit = {
-        if (it.isNotEmpty()) {
+    val onSearch: (String) -> Unit = { q ->
+        if (q.isNotEmpty()) {
             focusManager.clearFocus(true)
+            onSearchActiveChange(false)
+            navController.navigate("youtube_search?q=${java.net.URLEncoder.encode(q, "UTF-8")}")
         }
     }
 

@@ -517,8 +517,17 @@ class MainActivity : ComponentActivity() {
                                     composable("history") {
                                         HistoryScreen(navController)
                                     }
-                                    composable("youtube_search") {
-                                        app.opentune.ui.screens.YouTubeSearchScreen(navController)
+                                    composable(
+                                        route = "youtube_search?q={q}",
+                                        arguments = listOf(navArgument("q") {
+                                            type = NavType.StringType
+                                            defaultValue = ""
+                                        })
+                                    ) { backStack ->
+                                        app.opentune.ui.screens.YouTubeSearchScreen(
+                                            navController = navController,
+                                            initialQuery = backStack.arguments?.getString("q") ?: "",
+                                        )
                                     }
                                     composable("stats") {
                                         StatsScreen(navController)

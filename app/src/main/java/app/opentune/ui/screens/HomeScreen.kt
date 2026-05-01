@@ -514,7 +514,8 @@ fun HomeScreen(
                 item {
                     NavigationTitle(
                         title = stringResource(R.string.recommended),
-                        modifier = Modifier.animateItem()
+                        modifier = Modifier.animateItem(),
+                        label = "YouTube · NewPipeExtractor",
                     )
                 }
                 item {
