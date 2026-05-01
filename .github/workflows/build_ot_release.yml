@@ -41,8 +41,8 @@ jobs:
       - name: Extract version info
         id: version
         run: |
-          VERSION_NAME=$(grep 'versionName' app/build.gradle.kts | grep -o '"[^"]*"' | tr -d '"')
-          VERSION_CODE=$(grep 'versionCode' app/build.gradle.kts | grep -o '[0-9]\+' | head -1)
+          VERSION_NAME=$(grep -m 1 'versionName\s*=' app/build.gradle.kts | grep -o '"[^"]*"' | tr -d '"')
+          VERSION_CODE=$(grep -m 1 'versionCode\s*=' app/build.gradle.kts | grep -o '[0-9]\+' | head -1)
           echo "version_name=$VERSION_NAME" >> $GITHUB_OUTPUT
           echo "version_code=$VERSION_CODE" >> $GITHUB_OUTPUT
           echo "Version: $VERSION_NAME ($VERSION_CODE)"
