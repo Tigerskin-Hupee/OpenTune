@@ -141,6 +141,19 @@ class InnertubeApi @Inject constructor() {
         }
     }
 
+    fun searchPlaylists(query: String): List<YtMusicAlbum> {
+        return try {
+            val info = SearchInfo.getInfo(
+                ServiceList.YouTube,
+                ServiceList.YouTube.searchQHFactory.fromQuery(query, listOf("music_playlists"), ""),
+            )
+            info.relatedItems.filterIsInstance<PlaylistInfoItem>().map { it.toAlbum() }
+        } catch (e: Exception) {
+            Log.w(tag, "searchPlaylists('$query') failed: ${e.message}")
+            emptyList()
+        }
+    }
+
     fun getPlaylistSongs(playlistUrl: String): List<YtMusicTrack> {
         return try {
             val info = PlaylistInfo.getInfo(ServiceList.YouTube, playlistUrl)
@@ -152,17 +165,18 @@ class InnertubeApi @Inject constructor() {
     }
 
     /**
-     * Recommendation feed — aggregates results from several popular-music
-     * search terms. Without OAuth we have no personalised feed; this gives
-     * a reasonable global mix without needing a specific playlist URL.
+     * Recommendation feed. If [artistQueries] is provided, uses them as search queries
+     * (personalised based on listen history). Falls back to generic popular-music queries.
      */
-    fun getRecommendations(): List<YtMusicTrack> {
+    fun getRecommendations(artistQueries: List<String> = emptyList()): List<YtMusicTrack> {
         val year = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
-        val queries = listOf(
-            "top hits $year",
-            "popular music $year",
-            "best songs $year",
-        )
+        val fallback = listOf("top hits $year", "popular music $year", "best songs $year")
+        val queries = if (artistQueries.isNotEmpty()) {
+            // Mix top 3 personal artists + 1 fresh pick to keep things varied
+            artistQueries.take(3) + fallback.take(1)
+        } else {
+            fallback
+        }
         val seen = mutableSetOf<String>()
         val results = mutableListOf<YtMusicTrack>()
         for (q in queries) {
@@ -181,7 +195,7 @@ class InnertubeApi @Inject constructor() {
                 Log.w(tag, "getRecommendations '$q' failed: ${e.message}")
             }
         }
-        Log.d(tag, "getRecommendations -> ${results.size} tracks")
+        Log.d(tag, "getRecommendations(${queries.take(2)}...) -> ${results.size} tracks")
         return results.take(30)
     }
 

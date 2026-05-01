@@ -22,7 +22,7 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-enum class SearchTab { SONGS, ARTISTS, ALBUMS }
+enum class SearchTab { SONGS, ARTISTS, ALBUMS, PLAYLISTS }
 
 @OptIn(FlowPreview::class)
 @HiltViewModel
@@ -36,12 +36,14 @@ class YouTubeSearchViewModel @Inject constructor(
     val songResults: StateFlow<List<YtMusicTrack>> get() = _songResults
     val artistResults: StateFlow<List<YtMusicArtist>> get() = _artistResults
     val albumResults: StateFlow<List<YtMusicAlbum>> get() = _albumResults
+    val playlistResults: StateFlow<List<YtMusicAlbum>> get() = _playlistResults
     val isLoading: StateFlow<Boolean> get() = _isLoading
     val error: StateFlow<String?> get() = _error
 
     private val _songResults = MutableStateFlow<List<YtMusicTrack>>(emptyList())
     private val _artistResults = MutableStateFlow<List<YtMusicArtist>>(emptyList())
     private val _albumResults = MutableStateFlow<List<YtMusicAlbum>>(emptyList())
+    private val _playlistResults = MutableStateFlow<List<YtMusicAlbum>>(emptyList())
     private val _isLoading = MutableStateFlow(false)
     private val _error = MutableStateFlow<String?>(null)
 
@@ -63,6 +65,7 @@ class YouTubeSearchViewModel @Inject constructor(
                 _songResults.value = api.search(q)
                 _artistResults.value = api.searchArtists(q)
                 _albumResults.value = api.searchAlbums(q)
+                _playlistResults.value = api.searchPlaylists(q)
             } catch (e: Exception) {
                 _error.value = e.message
             } finally {
