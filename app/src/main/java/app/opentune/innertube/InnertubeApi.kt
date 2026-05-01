@@ -13,6 +13,7 @@ import android.util.Log
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.playlist.PlaylistInfo
 import org.schabi.newpipe.extractor.search.SearchInfo
+import org.schabi.newpipe.extractor.stream.DeliveryMethod
 import org.schabi.newpipe.extractor.stream.StreamInfo
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
 import javax.inject.Inject
@@ -35,13 +36,20 @@ class InnertubeApi @Inject constructor() {
         val url = "https://www.youtube.com/watch?v=$videoId"
         val info = StreamInfo.getInfo(ServiceList.YouTube, url)
         val streams = info.audioStreams
-            ?: error("no audioStreams for $videoId")
-        if (streams.isEmpty()) error("audioStreams empty for $videoId")
-        val best = streams.maxByOrNull { s ->
+        if (streams.isNullOrEmpty()) error("audioStreams empty for $videoId")
+
+        // Prefer PROGRESSIVE_HTTP — direct CDN URLs ExoPlayer can use without
+        // a manifest. Fall back to all streams if none are progressive.
+        val candidates = streams.filter {
+            it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP
+        }.ifEmpty { streams }
+
+        val best = candidates.maxByOrNull { s ->
             s.averageBitrate.takeIf { it > 0 } ?: s.bitrate
-        } ?: error("no best audio stream for $videoId")
-        val streamUrl = best.content ?: error("audio stream had null content url for $videoId")
-        Log.d(tag, "getAudioStreamUrl($videoId) ok format=${best.format?.name} bitrate=${best.averageBitrate}")
+        } ?: error("no audio stream for $videoId")
+
+        val streamUrl = best.content ?: error("audio stream had null url for $videoId")
+        Log.d(tag, "getAudioStreamUrl($videoId) ok delivery=${best.deliveryMethod} bitrate=${best.averageBitrate}")
         return streamUrl
     }
 
