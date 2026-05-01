@@ -201,7 +201,7 @@ fun YouTubeSearchScreen(
                                     album = album,
                                     onClick = {
                                         keyboard?.hide()
-                                        viewModel.loadPlaylistSongs(album.url) { songs ->
+                                        viewModel.loadPlaylistSongs(album.playlistId) { songs ->
                                             if (songs.isNotEmpty()) {
                                                 playerConnection?.playQueue(
                                                     ListQueue(
