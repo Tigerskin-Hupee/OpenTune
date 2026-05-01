@@ -94,7 +94,12 @@ class HomeViewModel @Inject constructor(
     init {
         refresh()
         viewModelScope.launch(Dispatchers.IO) {
-            ytRecommendations.value = innertube.getRecommendations()
+            // Build personalised queries from most-played artists.
+            // Falls back to generic queries if there's no history yet.
+            val topArtists = database.mostPlayedArtists(fromYear = 0, fromMonth = 0, limit = 5).first()
+                .map { it.artist.name }
+                .filter { it.isNotBlank() }
+            ytRecommendations.value = innertube.getRecommendations(topArtists)
         }
     }
 }

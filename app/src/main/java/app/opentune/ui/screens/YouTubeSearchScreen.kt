@@ -79,6 +79,7 @@ fun YouTubeSearchScreen(
     val songResults by viewModel.songResults.collectAsState()
     val artistResults by viewModel.artistResults.collectAsState()
     val albumResults by viewModel.albumResults.collectAsState()
+    val playlistResults by viewModel.playlistResults.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val error by viewModel.error.collectAsState()
     val selectedTab by viewModel.selectedTab.collectAsState()
@@ -123,6 +124,7 @@ fun YouTubeSearchScreen(
             stringResource(R.string.songs),
             stringResource(R.string.artists),
             stringResource(R.string.albums),
+            stringResource(R.string.playlists),
         )
         TabRow(selectedTabIndex = selectedTab.ordinal) {
             tabs.forEachIndexed { index, title ->
@@ -204,6 +206,32 @@ fun YouTubeSearchScreen(
                                                 playerConnection?.playQueue(
                                                     ListQueue(
                                                         title = album.title,
+                                                        items = songs.map { it.toMediaMetadata() },
+                                                    )
+                                                )
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+                SearchTab.PLAYLISTS -> {
+                    if (playlistResults.isEmpty() && queryText.isNotBlank()) {
+                        EmptyResults()
+                    } else {
+                        LazyColumn(Modifier.fillMaxSize()) {
+                            items(playlistResults) { playlist ->
+                                YouTubeAlbumItem(
+                                    album = playlist,
+                                    onClick = {
+                                        keyboard?.hide()
+                                        viewModel.loadPlaylistSongs(playlist.url) { songs ->
+                                            if (songs.isNotEmpty()) {
+                                                playerConnection?.playQueue(
+                                                    ListQueue(
+                                                        title = playlist.title,
                                                         items = songs.map { it.toMediaMetadata() },
                                                     )
                                                 )
