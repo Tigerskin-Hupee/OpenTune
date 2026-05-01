@@ -71,29 +71,19 @@ android {
         buildConfig = true
     }
 
-// build variants and stuff
+    // Single universal APK per build type — no per-ABI splitting.
     splits {
         abi {
-            isEnable = true
-            reset()
-
-            include("x86_64", "x86", "armeabi-v7a", "arm64-v8a")
-            isUniversalApk = true
+            isEnable = false
         }
     }
 
-    flavorDimensions.add("abi")
-
+    // Single product flavour — FFmpeg metadata (full) removed, core only.
+    flavorDimensions.add("variant")
     productFlavors {
-        // main version
         create("core") {
             isDefault = true
-            dimension = "abi"
-        }
-
-        // fully featured version, large file size
-        create("full") {
-            dimension = "abi"
+            dimension = "variant"
         }
     }
 
@@ -102,8 +92,8 @@ android {
         variant.outputs
             .map { it as com.android.build.gradle.internal.api.BaseVariantOutputImpl }
             .forEach { output ->
-                var outputFileName = "OuterTune-${variant.versionName}-${output.baseName}-${output.versionCode}.apk"
-                output.outputFileName = outputFileName
+                output.outputFileName =
+                    "OpenTune-${variant.versionName}-${variant.buildType.name}.apk"
             }
     }
 
@@ -117,20 +107,14 @@ android {
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_21)
             freeCompilerArgs.add("-Xannotation-default-target=param-property")
-
         }
     }
 
+    // Exclude FFmpeg-full scanner; always use the stub (core behaviour).
     tasks.withType<KotlinCompile> {
-        if (!name.substringAfter("compile").lowercase().startsWith("full")) {
-            exclude("**/*FFmpegScanner.kt")
-            exclude("**/*NextRendersFactory.kt")
-        } else {
-            exclude("**/*FFmpegScannerDud.kt")
-            exclude("**/*ffdecoderDud.kt")
-        }
+        exclude("**/*FFmpegScanner.kt")
+        exclude("**/*NextRendersFactory.kt")
     }
-
 
     aboutLibraries {
         offlineMode = true
@@ -142,18 +126,24 @@ android {
         }
 
         export {
-            // Remove the "generated" timestamp to allow for reproducible builds
             excludeFields = listOf("generated")
         }
 
         license {
-            // Define the strict mode, will fail if the project uses licenses not allowed
             strictMode = com.mikepenz.aboutlibraries.plugin.StrictMode.FAIL
-            // Allowed set of licenses, this project will be able to use without build failure
-            allowedLicenses.addAll("Apache-2.0", "BSD-3-Clause", "GNU LESSER GENERAL PUBLIC LICENSE, Version 2.1", "GPL-3.0-only", "GPL-3.0 license", "GNU GENERAL PUBLIC LICENSE, Version 3", "EPL-2.0", "MIT", "MPL-2.0", "Public Domain")
-
-            // Full license text for license IDs mentioned here will be included, even if no detected dependency uses them.
-             additionalLicenses.addAll("apache_2_0", "gpl_2_1") // taglib, ffMpeg in ffMetadataEx
+            allowedLicenses.addAll(
+                "Apache-2.0",
+                "BSD-3-Clause",
+                "GNU LESSER GENERAL PUBLIC LICENSE, Version 2.1",
+                "GPL-3.0-only",
+                "GPL-3.0 license",
+                "GNU GENERAL PUBLIC LICENSE, Version 3",
+                "EPL-2.0",
+                "MIT",
+                "MPL-2.0",
+                "Public Domain",
+            )
+            additionalLicenses.addAll("apache_2_0", "gpl_2_1")
         }
 
         library {
@@ -162,11 +152,8 @@ android {
         }
     }
 
-    // for RB
     dependenciesInfo {
-        // Disables dependency metadata when building APKs.
         includeInApk = false
-        // Disables dependency metadata when building Android App Bundles.
         includeInBundle = false
     }
 
@@ -235,29 +222,18 @@ dependencies {
     implementation(libs.hilt)
     ksp(libs.hilt.compiler)
 
-    // WorkManager + Hilt-Work (kept for future periodic background tasks)
     implementation(libs.workmanager)
     implementation(libs.hilt.work)
     ksp(libs.hilt.work.compiler)
     implementation(libs.okhttp)
 
     // NewPipeExtractor — pure-JVM YouTube extraction. Handles PoToken,
-    // signature ciphers, n-parameter throttling. Same library used by NewPipe.
+    // signature ciphers, n-parameter throttling.
     implementation(libs.newpipe.extractor)
 
     coreLibraryDesugaring(libs.desugaring)
 
-    // misc
     implementation(libs.aboutlibraries.compose.m3)
 
-    // modules
     implementation(project(":material-color-utilities"))
-
-}
-
-afterEvaluate {
-    dependencies {
-//        add("fullImplementation", "wah.mikooomich:ffmetadataex")
-        add("fullImplementation", files("../prebuilt/ffMetadataEx-release.aar"))
-    }
 }
