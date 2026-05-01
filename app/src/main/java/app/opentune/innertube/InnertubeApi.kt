@@ -155,11 +155,17 @@ class InnertubeApi @Inject constructor() {
     }
 
     fun getPlaylistSongs(playlistId: String): List<YtMusicTrack> {
-        if (playlistId.isBlank()) return emptyList()
+        if (playlistId.isBlank()) {
+            Log.w(tag, "getPlaylistSongs: playlistId is blank")
+            return emptyList()
+        }
         val url = "https://www.youtube.com/playlist?list=$playlistId"
+        Log.d(tag, "getPlaylistSongs: fetching $url")
         return try {
             val info = PlaylistInfo.getInfo(ServiceList.YouTube, url)
-            info.relatedItems.filterIsInstance<StreamInfoItem>().mapNotNull { it.toTrack() }
+            val tracks = info.relatedItems.filterIsInstance<StreamInfoItem>().mapNotNull { it.toTrack() }
+            Log.d(tag, "getPlaylistSongs('$playlistId'): ${tracks.size} tracks")
+            tracks
         } catch (e: Exception) {
             Log.w(tag, "getPlaylistSongs('$playlistId') failed: ${e.message}")
             emptyList()
@@ -228,17 +234,23 @@ class InnertubeApi @Inject constructor() {
 
     private fun PlaylistInfoItem.toAlbum(): YtMusicAlbum {
         val thumb = thumbnails.maxByOrNull { it.width }?.url?.takeIf { it.isNotBlank() }
-        val playlistId = url?.let { u ->
-            val idx = u.indexOf("list=")
-            if (idx >= 0) u.substring(idx + 5).substringBefore("&") else u.substringAfterLast("/")
-        } ?: ""
+        val rawUrl = url ?: ""
+        Log.d(tag, "toAlbum: rawUrl=$rawUrl name=$name")
+        val playlistId = rawUrl.let { u ->
+            when {
+                u.contains("list=") -> u.substringAfter("list=").substringBefore("&")
+                u.contains("/playlist/") -> u.substringAfterLast("/playlist/").substringBefore("?")
+                else -> u.substringAfterLast("/").substringBefore("?")
+            }
+        }
+        Log.d(tag, "toAlbum: playlistId=$playlistId")
         return YtMusicAlbum(
             playlistId = playlistId,
             title = name ?: "",
             artistName = uploaderName ?: "",
             thumbnailUrl = thumb,
             streamCount = streamCount,
-            url = url ?: "",
+            url = rawUrl,
         )
     }
 

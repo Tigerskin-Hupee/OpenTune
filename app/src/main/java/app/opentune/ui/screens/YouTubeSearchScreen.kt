@@ -55,9 +55,11 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import android.widget.Toast
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.navigation.NavController
 import coil3.compose.AsyncImage
+import androidx.compose.ui.platform.LocalContext
 import app.opentune.LocalPlayerConnection
 import app.opentune.R
 import app.opentune.innertube.YtMusicAlbum
@@ -85,6 +87,7 @@ fun YouTubeSearchScreen(
     val selectedTab by viewModel.selectedTab.collectAsState()
     var queryText by remember { mutableStateOf(initialQuery) }
     val keyboard = LocalSoftwareKeyboardController.current
+    val context = LocalContext.current
 
     LaunchedEffect(initialQuery) {
         if (initialQuery.isNotBlank()) {
@@ -209,6 +212,8 @@ fun YouTubeSearchScreen(
                                                         items = songs.map { it.toMediaMetadata() },
                                                     )
                                                 )
+                                            } else {
+                                                Toast.makeText(context, "No songs found (id=${album.playlistId})", Toast.LENGTH_LONG).show()
                                             }
                                         }
                                     }
@@ -227,7 +232,7 @@ fun YouTubeSearchScreen(
                                     album = playlist,
                                     onClick = {
                                         keyboard?.hide()
-                                        viewModel.loadPlaylistSongs(playlist.url) { songs ->
+                                        viewModel.loadPlaylistSongs(playlist.playlistId) { songs ->
                                             if (songs.isNotEmpty()) {
                                                 playerConnection?.playQueue(
                                                     ListQueue(
@@ -235,6 +240,8 @@ fun YouTubeSearchScreen(
                                                         items = songs.map { it.toMediaMetadata() },
                                                     )
                                                 )
+                                            } else {
+                                                Toast.makeText(context, "No songs found (id=${playlist.playlistId})", Toast.LENGTH_LONG).show()
                                             }
                                         }
                                     }
