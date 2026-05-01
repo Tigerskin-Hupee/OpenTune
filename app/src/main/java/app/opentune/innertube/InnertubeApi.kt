@@ -10,6 +10,7 @@
 package app.opentune.innertube
 
 import android.util.Log
+import org.schabi.newpipe.extractor.InfoItem
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.search.SearchInfo
 import org.schabi.newpipe.extractor.stream.DeliveryMethod
@@ -117,6 +118,25 @@ class InnertubeApi @Inject constructor() {
         }
         Log.d(tag, "getRecommendations -> ${results.size} tracks")
         return results.take(30)
+    }
+
+    /**
+     * Fetch related/recommended songs for a given videoId using StreamInfo.relatedItems.
+     * Used by RadioQueue to extend the queue when it runs low.
+     */
+    fun getRelatedSongs(videoId: String): List<YtMusicTrack> {
+        return try {
+            val url = "https://www.youtube.com/watch?v=$videoId"
+            val info = StreamInfo.getInfo(ServiceList.YouTube, url)
+            val tracks = (info.relatedItems ?: emptyList<InfoItem>())
+                .filterIsInstance<StreamInfoItem>()
+                .mapNotNull { it.toTrack() }
+            Log.d(tag, "getRelatedSongs($videoId) -> ${tracks.size} tracks")
+            tracks
+        } catch (e: Exception) {
+            Log.w(tag, "getRelatedSongs($videoId) failed: ${e.message}")
+            emptyList()
+        }
     }
 
     private fun StreamInfoItem.toTrack(): YtMusicTrack? {

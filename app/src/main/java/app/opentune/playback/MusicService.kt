@@ -172,6 +172,9 @@ class MusicService : MediaLibraryService(),
     @Inject
     lateinit var streamResolver: StreamResolver
 
+    @Inject
+    lateinit var innertube: app.opentune.innertube.InnertubeApi
+
     lateinit var player: ExoPlayer
     private lateinit var mediaSession: MediaLibrarySession
 
@@ -346,10 +349,12 @@ class MusicService : MediaLibraryService(),
         }
     }
 
-    // TODO: local library radio playback
     fun toggleStartRadio() {
         val mediaMetadata = player.currentMetadata ?: return
-//        playQueue(YouTubeQueue.radio(mediaMetadata), isRadio = true)
+        playQueue(
+            app.opentune.playback.queues.RadioQueue(mediaMetadata, innertube),
+            isRadio = true,
+        )
     }
 
 
@@ -835,29 +840,39 @@ class MusicService : MediaLibraryService(),
             player.play()
         }
 
-        // TODO: auto load more can be used for local radio
-        // Auto load more songs
-//        val q = queueBoard.value.getCurrentQueue()
-//        val songCount = q?.getSize() ?: -1
-//        val playlistId = q?.playlistId
-//        if (dataStore.get(AutoLoadMoreKey, true) &&
-//            reason != Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT &&
-//            player.mediaItemCount - player.currentMediaItemIndex <= 5 &&
-//            playlistId != null // aka "hasNext"
-//        ) {
-//            Log.d(TAG, "onMediaItemTransition: Triggering queue auto load more")
-//            scope.launch(SilentHandler) {
-//                val endpoint = playlistId // playlistId.substringBefore("\n")
-//                val continuation = null // playlistId.substringAfter("\n")
-//                val yq = YouTubeQueue(WatchEndpoint(endpoint, continuation))
-//                val mediaItems = yq.nextPage()
-//                q.playlistId = mediaItems.takeLast(4).shuffled().first().id // yq.getContinuationEndpoint()
-//                Log.d(TAG, "onMediaItemTransition: Got ${mediaItems.size} songs from radio")
-//                if (player.playbackState != STATE_IDLE && songCount > 1) { // initial radio loading is handled by playQueue()
-//                    queueBoard.value.enqueueEnd(mediaItems.drop(1))
-//                }
-//            }
-//        }
+        // Auto-load more songs when queue is running low (radio/continuation)
+        val q = queueBoard.value.getCurrentQueue()
+        val songCount = q?.getSize() ?: -1
+        val seedVideoId = q?.playlistId
+        if (dataStore.get(app.opentune.constants.AutoLoadMoreKey, true) &&
+            reason != Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT &&
+            player.mediaItemCount - player.currentMediaItemIndex <= 5 &&
+            seedVideoId != null
+        ) {
+            Log.d(TAG, "onMediaItemTransition: auto-load from seed=$seedVideoId")
+            scope.launch(SilentHandler) {
+                val related = withContext(Dispatchers.IO) {
+                    innertube.getRelatedSongs(seedVideoId)
+                }
+                if (related.isNotEmpty()) {
+                    val mediaItems = related.map { track ->
+                        app.opentune.models.MediaMetadata(
+                            id = track.videoId,
+                            title = track.title,
+                            artists = listOf(app.opentune.models.MediaMetadata.Artist(id = null, name = track.artistName)),
+                            duration = 0,
+                            thumbnailUrl = track.thumbnailUrl,
+                            genre = null,
+                        )
+                    }
+                    q.playlistId = mediaItems.last().id
+                    Log.d(TAG, "onMediaItemTransition: auto-load added ${mediaItems.size} songs")
+                    if (player.playbackState != STATE_IDLE && songCount > 1) {
+                        queueBoard.value.enqueueEnd(mediaItems)
+                    }
+                }
+            }
+        }
 
         queueBoard.value.setCurrQueuePosIndex(player.currentMediaItemIndex)
 
