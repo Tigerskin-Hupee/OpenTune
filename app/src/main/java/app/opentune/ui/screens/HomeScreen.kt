@@ -166,8 +166,10 @@ fun HomeScreen(
                                         )
                                     )
                                 } else {
-                                    // TODO: local library radio playback
-
+                                    playerConnection.playQueue(
+                                        app.opentune.playback.queues.RadioQueue(song, playerConnection.service.innertube),
+                                        isRadio = true,
+                                    )
                                 }
                             }
                         },
