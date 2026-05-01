@@ -204,7 +204,7 @@ fun YouTubeSearchScreen(
                                     album = album,
                                     onClick = {
                                         keyboard?.hide()
-                                        viewModel.loadPlaylistSongs(album.playlistId) { songs ->
+                                        viewModel.loadPlaylistSongs(album.playlistId) { songs, error ->
                                             if (songs.isNotEmpty()) {
                                                 playerConnection?.playQueue(
                                                     ListQueue(
@@ -213,7 +213,7 @@ fun YouTubeSearchScreen(
                                                     )
                                                 )
                                             } else {
-                                                Toast.makeText(context, "No songs found (id=${album.playlistId})", Toast.LENGTH_LONG).show()
+                                                Toast.makeText(context, error ?: "No songs found", Toast.LENGTH_LONG).show()
                                             }
                                         }
                                     }
@@ -232,7 +232,7 @@ fun YouTubeSearchScreen(
                                     album = playlist,
                                     onClick = {
                                         keyboard?.hide()
-                                        viewModel.loadPlaylistSongs(playlist.playlistId) { songs ->
+                                        viewModel.loadPlaylistSongs(playlist.playlistId) { songs, error ->
                                             if (songs.isNotEmpty()) {
                                                 playerConnection?.playQueue(
                                                     ListQueue(
@@ -241,7 +241,7 @@ fun YouTubeSearchScreen(
                                                     )
                                                 )
                                             } else {
-                                                Toast.makeText(context, "No songs found (id=${playlist.playlistId})", Toast.LENGTH_LONG).show()
+                                                Toast.makeText(context, error ?: "No songs found", Toast.LENGTH_LONG).show()
                                             }
                                         }
                                     }

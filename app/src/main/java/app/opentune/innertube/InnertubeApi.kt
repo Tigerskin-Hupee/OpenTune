@@ -155,21 +155,13 @@ class InnertubeApi @Inject constructor() {
     }
 
     fun getPlaylistSongs(playlistId: String): List<YtMusicTrack> {
-        if (playlistId.isBlank()) {
-            Log.w(tag, "getPlaylistSongs: playlistId is blank")
-            return emptyList()
-        }
+        if (playlistId.isBlank()) throw IllegalArgumentException("playlistId is blank")
         val url = "https://www.youtube.com/playlist?list=$playlistId"
         Log.d(tag, "getPlaylistSongs: fetching $url")
-        return try {
-            val info = PlaylistInfo.getInfo(ServiceList.YouTube, url)
-            val tracks = info.relatedItems.filterIsInstance<StreamInfoItem>().mapNotNull { it.toTrack() }
-            Log.d(tag, "getPlaylistSongs('$playlistId'): ${tracks.size} tracks")
-            tracks
-        } catch (e: Exception) {
-            Log.w(tag, "getPlaylistSongs('$playlistId') failed: ${e.message}")
-            emptyList()
-        }
+        val info = PlaylistInfo.getInfo(ServiceList.YouTube, url)
+        val tracks = info.relatedItems.filterIsInstance<StreamInfoItem>().mapNotNull { it.toTrack() }
+        Log.d(tag, "getPlaylistSongs('$playlistId'): ${tracks.size} tracks")
+        return tracks
     }
 
     /**
