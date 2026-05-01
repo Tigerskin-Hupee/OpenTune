@@ -867,7 +867,7 @@ class MusicService : MediaLibraryService(),
                     }
                     q.playlistId = mediaItems.last().id
                     Log.d(TAG, "onMediaItemTransition: auto-load added ${mediaItems.size} songs")
-                    if (player.playbackState != STATE_IDLE && songCount > 1) {
+                    if (player.playbackState != Player.STATE_IDLE && songCount > 1) {
                         queueBoard.value.enqueueEnd(mediaItems)
                     }
                 }
