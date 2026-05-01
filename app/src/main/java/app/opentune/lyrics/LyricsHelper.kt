@@ -10,7 +10,9 @@ import app.opentune.models.MediaMetadata
 import app.opentune.utils.dataStore
 import app.opentune.utils.get
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import org.akanework.gramophone.logic.utils.LrcUtils
 import org.akanework.gramophone.logic.utils.SemanticLyrics
 import org.akanework.gramophone.logic.utils.parseLrc
@@ -64,24 +66,22 @@ class LyricsHelper @Inject constructor(
         // Online fallback via lrclib.net (free, no auth required)
         val onlineLyrics = fetchOnlineLyrics(mediaMetadata)
         if (onlineLyrics != null) {
-            database.upsert(app.opentune.db.entities.LyricsEntity(mediaMetadata.id, onlineLyrics))
+            database.query { upsert(app.opentune.db.entities.LyricsEntity(mediaMetadata.id, onlineLyrics)) }
             return parseLrc(onlineLyrics, trim, multiline)
         }
 
         return null
     }
 
-    private suspend fun fetchOnlineLyrics(mediaMetadata: MediaMetadata): String? {
-        val title = mediaMetadata.title
-        val artist = mediaMetadata.artists.firstOrNull()?.name.orEmpty()
-        val duration = mediaMetadata.duration
-        return LrcLibLyricsProvider.getLyrics(
-            id = mediaMetadata.id,
-            title = title,
-            artist = artist,
-            duration = duration,
-        ).getOrNull()
-    }
+    private suspend fun fetchOnlineLyrics(mediaMetadata: MediaMetadata): String? =
+        withContext(Dispatchers.IO) {
+            LrcLibLyricsProvider.getLyrics(
+                id = mediaMetadata.id,
+                title = mediaMetadata.title,
+                artist = mediaMetadata.artists.firstOrNull()?.name.orEmpty(),
+                duration = mediaMetadata.duration,
+            ).getOrNull()
+        }
 
     /**
      * Lookup lyrics from local disk (.lrc) file

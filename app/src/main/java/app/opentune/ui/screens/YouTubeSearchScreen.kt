@@ -37,6 +37,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -74,7 +75,7 @@ fun YouTubeSearchScreen(
     val keyboard = LocalSoftwareKeyboardController.current
 
     // Trigger search if launched with a pre-filled query
-    androidx.compose.runtime.LaunchedEffect(initialQuery) {
+    LaunchedEffect(initialQuery) {
         if (initialQuery.isNotBlank()) {
             viewModel.query.value = initialQuery
         }
