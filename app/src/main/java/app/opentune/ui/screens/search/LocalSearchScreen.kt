@@ -5,6 +5,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -47,6 +50,7 @@ import app.opentune.constants.SwipeToQueueKey
 import app.opentune.db.entities.Album
 import app.opentune.db.entities.Artist
 import app.opentune.db.entities.Playlist
+import app.opentune.db.entities.SearchHistory
 import app.opentune.db.entities.Song
 import app.opentune.models.toMediaMetadata
 import app.opentune.playback.queues.ListQueue
@@ -60,6 +64,7 @@ import app.opentune.ui.component.items.SongListItem
 import app.opentune.utils.rememberPreference
 import app.opentune.viewmodels.LocalFilter
 import app.opentune.viewmodels.LocalSearchViewModel
+import androidx.compose.material3.IconButton
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
@@ -72,6 +77,7 @@ fun LocalSearchScreen(
     query: String,
     navController: NavController,
     onDismiss: () -> Unit,
+    onSearch: (String) -> Unit = {},
     viewModel: LocalSearchViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
@@ -86,6 +92,7 @@ fun LocalSearchScreen(
 
     val searchFilter by viewModel.filter.collectAsState()
     val result by viewModel.result.collectAsState()
+    val searchHistory by viewModel.searchHistory.collectAsState()
 
     val lazyListState = rememberLazyListState()
     val snackbarHostState = LocalSnackbarHostState.current
@@ -108,6 +115,17 @@ fun LocalSearchScreen(
         modifier = Modifier
             .windowInsetsPadding(LocalPlayerAwareWindowInsets.current.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
     ) {
+        if (query.isEmpty()) {
+            LazyColumn(modifier = Modifier.weight(1f)) {
+                items(searchHistory, key = { it.id }) { item ->
+                    SearchHistoryItem(
+                        item = item,
+                        onClick = { onSearch(item.query) },
+                        onDelete = { viewModel.deleteHistory(item) },
+                    )
+                }
+            }
+        } else {
         ChipsRow(
             chips = listOf(
                 LocalFilter.ALL to stringResource(R.string.filter_all),
@@ -245,6 +263,7 @@ fun LocalSearchScreen(
                 }
             }
         }
+        } // end else (query not empty)
     }
     LazyColumnScrollbar(
         state = lazyListState,
@@ -259,5 +278,43 @@ fun LocalSearchScreen(
                 .windowInsetsPadding(LocalPlayerAwareWindowInsets.current)
                 .align(Alignment.BottomCenter)
         )
+    }
+}
+
+@Composable
+private fun SearchHistoryItem(
+    item: SearchHistory,
+    onClick: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(start = 16.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.History,
+            contentDescription = null,
+            modifier = Modifier.size(20.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = item.query,
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier
+                .weight(1f)
+                .padding(vertical = 14.dp),
+        )
+        IconButton(onClick = onDelete) {
+            Icon(
+                imageVector = Icons.Rounded.Delete,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }

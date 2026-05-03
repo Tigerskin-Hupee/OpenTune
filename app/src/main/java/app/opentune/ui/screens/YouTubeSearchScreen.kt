@@ -22,7 +22,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -33,7 +40,6 @@ import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -48,8 +54,10 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -92,6 +100,13 @@ fun YouTubeSearchScreen(
     val keyboard = LocalSoftwareKeyboardController.current
     val context = LocalContext.current
     val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+
+    // Bottom sheet state for album/playlist song preview
+    var sheetAlbum by remember { mutableStateOf<YtMusicAlbum?>(null) }
+    var sheetSongs by remember { mutableStateOf<List<YtMusicTrack>>(emptyList()) }
+    var isLoadingSheet by remember { mutableStateOf(false) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     LaunchedEffect(listState, selectedTab) {
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index }
@@ -220,17 +235,13 @@ fun YouTubeSearchScreen(
                                     album = album,
                                     onClick = {
                                         keyboard?.hide()
-                                        viewModel.loadPlaylistSongs(album.playlistId, "${album.title} ${album.artistName}".trim()) { songs, error ->
-                                            if (songs.isNotEmpty()) {
-                                                playerConnection?.playQueue(
-                                                    ListQueue(
-                                                        title = album.title,
-                                                        items = songs.map { it.toMediaMetadata() },
-                                                    )
-                                                )
-                                            } else {
-                                                Toast.makeText(context, error ?: "No songs found", Toast.LENGTH_LONG).show()
-                                            }
+                                        sheetAlbum = album
+                                        sheetSongs = emptyList()
+                                        isLoadingSheet = true
+                                        scope.launch { sheetState.show() }
+                                        viewModel.loadPlaylistSongs(album.playlistId, "${album.title} ${album.artistName}".trim()) { songs, _ ->
+                                            sheetSongs = songs
+                                            isLoadingSheet = false
                                         }
                                     }
                                 )
@@ -249,22 +260,110 @@ fun YouTubeSearchScreen(
                                     album = playlist,
                                     onClick = {
                                         keyboard?.hide()
-                                        viewModel.loadPlaylistSongs(playlist.playlistId, "${playlist.title} ${playlist.artistName}".trim()) { songs, error ->
-                                            if (songs.isNotEmpty()) {
-                                                playerConnection?.playQueue(
-                                                    ListQueue(
-                                                        title = playlist.title,
-                                                        items = songs.map { it.toMediaMetadata() },
-                                                    )
-                                                )
-                                            } else {
-                                                Toast.makeText(context, error ?: "No songs found", Toast.LENGTH_LONG).show()
-                                            }
+                                        sheetAlbum = playlist
+                                        sheetSongs = emptyList()
+                                        isLoadingSheet = true
+                                        scope.launch { sheetState.show() }
+                                        viewModel.loadPlaylistSongs(playlist.playlistId, "${playlist.title} ${playlist.artistName}".trim()) { songs, _ ->
+                                            sheetSongs = songs
+                                            isLoadingSheet = false
                                         }
                                     }
                                 )
                             }
                             if (isLoadingMore) item { LoadingMoreIndicator() }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Album / playlist song preview bottom sheet
+    if (sheetAlbum != null) {
+        ModalBottomSheet(
+            onDismissRequest = {
+                sheetAlbum = null
+                sheetSongs = emptyList()
+            },
+            sheetState = sheetState,
+        ) {
+            val album = sheetAlbum!!
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(album.title, style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                        if (album.artistName.isNotBlank()) {
+                            Text(
+                                album.artistName,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                    if (sheetSongs.isNotEmpty()) {
+                        Button(
+                            onClick = {
+                                playerConnection?.playQueue(
+                                    ListQueue(
+                                        title = album.title,
+                                        items = sheetSongs.map { it.toMediaMetadata() },
+                                    )
+                                )
+                                sheetAlbum = null
+                            },
+                        ) {
+                            Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(stringResource(R.string.play))
+                        }
+                    }
+                }
+                HorizontalDivider()
+                if (isLoadingSheet) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(32.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator()
+                    }
+                } else if (sheetSongs.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(32.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            stringResource(R.string.no_results_found),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                } else {
+                    LazyColumn {
+                        itemsIndexed(sheetSongs) { index, track ->
+                            YouTubeTrackItem(
+                                track = track,
+                                onClick = {
+                                    playerConnection?.playQueue(
+                                        ListQueue(
+                                            title = album.title,
+                                            items = sheetSongs.map { it.toMediaMetadata() },
+                                            startIndex = index,
+                                        )
+                                    )
+                                    sheetAlbum = null
+                                }
+                            )
                         }
                     }
                 }

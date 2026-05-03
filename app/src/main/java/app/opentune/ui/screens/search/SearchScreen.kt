@@ -38,6 +38,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastAny
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.navigation.NavController
 import androidx.navigation.compose.currentBackStackEntryAsState
 import app.opentune.LocalPlayerAwareWindowInsets
@@ -48,6 +49,7 @@ import app.opentune.ui.component.SearchBar
 import app.opentune.ui.component.button.IconButton
 import app.opentune.ui.screens.Screens
 import app.opentune.utils.rememberPreference
+import app.opentune.viewmodels.LocalSearchViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -60,6 +62,7 @@ fun SearchBarContainer(
 ) {
     Log.v("SearchBarContainer", "SB-1")
     val focusManager = LocalFocusManager.current
+    val searchViewModel: LocalSearchViewModel = hiltViewModel()
 
     val enabledTabs by rememberPreference(EnabledTabsKey, defaultValue = DEFAULT_ENABLED_TABS)
 
@@ -87,6 +90,7 @@ fun SearchBarContainer(
 
     val onSearch: (String) -> Unit = { q ->
         if (q.isNotEmpty()) {
+            searchViewModel.insertHistory(q)
             focusManager.clearFocus(true)
             onSearchActiveChange(false)
             navController.navigate("youtube_search?q=${java.net.URLEncoder.encode(q, "UTF-8")}")
@@ -184,6 +188,7 @@ fun SearchBarContainer(
                 query = query.text,
                 navController = navController,
                 onDismiss = { onSearchActiveChange(false) },
+                onSearch = onSearch,
             )
         }
     }

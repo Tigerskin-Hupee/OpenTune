@@ -7,8 +7,10 @@ import app.opentune.db.entities.Album
 import app.opentune.db.entities.Artist
 import app.opentune.db.entities.LocalItem
 import app.opentune.db.entities.Playlist
+import app.opentune.db.entities.SearchHistory
 import app.opentune.db.entities.Song
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -17,15 +19,19 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class LocalSearchViewModel @Inject constructor(
-    database: MusicDatabase,
+    private val database: MusicDatabase,
 ) : ViewModel() {
     val query = MutableStateFlow("")
     val filter = MutableStateFlow(LocalFilter.ALL)
+
+    val searchHistory = database.searchHistory()
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     val result = combine(query, filter) { query, filter ->
         query to filter
@@ -69,6 +75,19 @@ class LocalSearchViewModel @Inject constructor(
             }
         }
     }.stateIn(viewModelScope, SharingStarted.Lazily, LocalSearchResult("", filter.value, emptyMap()))
+
+    fun insertHistory(query: String) {
+        if (query.isBlank()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            database.insert(SearchHistory(query = query.trim()))
+        }
+    }
+
+    fun deleteHistory(item: SearchHistory) {
+        viewModelScope.launch(Dispatchers.IO) {
+            database.delete(item)
+        }
+    }
 
     companion object {
         const val PREVIEW_SIZE = 3
