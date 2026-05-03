@@ -1,9 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    OpenTune launcher foreground.
-    Open ring (270° arc) merges with the note stem — the gap IS the connection point.
-    Ring = "Open", ring + stem + flag = musical note.
-    Safe zone: 18-90 on the 108x108 viewport.
+    OpenTune launcher icon — Elegant Tech Blue
+    - Deep navy background (#071829)
+    - Thin geometric open ring = note head, suggests "Open"
+    - Near-white stem for contrast and elegance
+    - Electric blue flag (#29B6F6) = tech accent colour
+    - Small filled dot at flag tip = precision / tuning point
+    Safe zone: 18–90 in the 108×108 viewport.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
@@ -11,30 +14,45 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Open ring: center(50,68), radius=18, 270° clockwise arc        -->
-    <!-- Start = top (50,50), End = right (68,68), gap at top-right     -->
+    <!-- Open ring (note head): 270° clockwise arc          -->
+    <!-- Centre (46,72) radius 18; gap at top-right         -->
+    <!-- Start = top (46,54) → End = right (64,72)          -->
     <path
-        android:pathData="M50,50 A18,18 0 1,1 68,68"
+        android:pathData="M46,54 A18,18 0 1,1 64,72"
         android:fillColor="#00000000"
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="7"
+        android:strokeColor="#E8F4FD"
+        android:strokeWidth="4.5"
         android:strokeLineCap="round"/>
 
-    <!-- Stem: from ring's open end straight up -->
+    <!-- Stem: rises from ring's open end to top of icon -->
     <path
-        android:pathData="M68,68 L68,26"
+        android:pathData="M64,72 L64,24"
         android:fillColor="#00000000"
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="6.5"
+        android:strokeColor="#E8F4FD"
+        android:strokeWidth="4.5"
         android:strokeLineCap="round"/>
 
-    <!-- Flag: eighth-note flag curving from stem top -->
+    <!-- Flag: electric blue — the tech accent -->
     <path
-        android:pathData="M68,26 C82,30 86,46 74,58"
+        android:pathData="M64,24 C80,28 84,46 70,58"
         android:fillColor="#00000000"
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="6"
+        android:strokeColor="#29B6F6"
+        android:strokeWidth="5"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"/>
+
+    <!-- Tip dot: precision point at end of flag -->
+    <path
+        android:pathData="M70,58 m-3.5,0 a3.5,3.5 0 1,0 7,0 a3.5,3.5 0 1,0 -7,0"
+        android:fillColor="#29B6F6"/>
+
+    <!-- Subtle inner ring detail: small arc inside note head for depth -->
+    <path
+        android:pathData="M46,61 A11,11 0 1,1 57,72"
+        android:fillColor="#00000000"
+        android:strokeColor="#1E88E5"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="round"
+        android:strokeAlpha="0.6"/>
 
 </vector>
