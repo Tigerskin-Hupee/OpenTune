@@ -3,7 +3,7 @@
 <div align="center">
   <img src="./assets/ic_launcher_round.png" alt="OpenTune" width="100" />
 
-  **v1.0.5** · Material 3 · Android 8+
+  **v1.0.6** · Material 3 · Android 8+
 
   [![License](https://img.shields.io/github/license/OuterTune/OuterTune)](https://www.gnu.org/licenses/gpl-3.0)
   [![Release](https://img.shields.io/github/v/release/Tigerskin-Hupee/OpenTune)](https://github.com/Tigerskin-Hupee/OpenTune/releases/latest)
@@ -103,6 +103,7 @@ No API keys or accounts required.
 
 | Version | Highlights |
 |---|---|
+| **1.0.6** | Fix build: SearchInfo.getMoreItems pagination, playlist fallback type fix |
 | **1.0.5** | Elegant tech blue icon redesign, infinite scroll pagination |
 | **1.0.4** | Icon redesign (open-ring note concept) |
 | **1.0.3** | Infinite scroll for all search tabs |

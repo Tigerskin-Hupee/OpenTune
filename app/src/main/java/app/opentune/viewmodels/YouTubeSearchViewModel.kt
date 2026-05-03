@@ -99,24 +99,25 @@ class YouTubeSearchViewModel @Inject constructor(
         viewModelScope.launch(Dispatchers.IO) {
             _isLoadingMore.value = true
             try {
+                val q = query.value
                 when (selectedTab.value) {
                     SearchTab.SONGS -> songNextPage?.let { next ->
-                        val page = api.searchMoreSongs(next)
+                        val page = api.searchMoreSongs(q, next)
                         _songResults.value = _songResults.value + page.items
                         songNextPage = page.nextPage
                     }
                     SearchTab.ARTISTS -> artistNextPage?.let { next ->
-                        val page = api.searchMoreArtists(next)
+                        val page = api.searchMoreArtists(q, next)
                         _artistResults.value = _artistResults.value + page.items
                         artistNextPage = page.nextPage
                     }
                     SearchTab.ALBUMS -> albumNextPage?.let { next ->
-                        val page = api.searchMoreAlbums(next)
+                        val page = api.searchMoreAlbums(q, next)
                         _albumResults.value = _albumResults.value + page.items
                         albumNextPage = page.nextPage
                     }
                     SearchTab.PLAYLISTS -> playlistNextPage?.let { next ->
-                        val page = api.searchMorePlaylists(next)
+                        val page = api.searchMorePlaylists(q, next)
                         _playlistResults.value = _playlistResults.value + page.items
                         playlistNextPage = page.nextPage
                     }

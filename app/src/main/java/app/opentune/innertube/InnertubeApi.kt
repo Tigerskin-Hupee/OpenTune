@@ -105,9 +105,10 @@ class InnertubeApi @Inject constructor() {
         }
     }
 
-    fun searchMoreSongs(nextPage: Page): SearchResult<YtMusicTrack> {
+    fun searchMoreSongs(query: String, nextPage: Page): SearchResult<YtMusicTrack> {
         return try {
-            val page = SearchInfo.getNextPage(ServiceList.YouTube, nextPage)
+            val qh = ServiceList.YouTube.searchQHFactory.fromQuery(query, listOf("music_songs"), "")
+            val page = SearchInfo.getMoreItems(ServiceList.YouTube, qh, nextPage)
             SearchResult(page.items.filterIsInstance<StreamInfoItem>().mapNotNull { it.toTrack() }, page.nextPage)
         } catch (e: Exception) {
             Log.w(tag, "searchMoreSongs failed: ${e.message}")
@@ -115,9 +116,10 @@ class InnertubeApi @Inject constructor() {
         }
     }
 
-    fun searchMoreArtists(nextPage: Page): SearchResult<YtMusicArtist> {
+    fun searchMoreArtists(query: String, nextPage: Page): SearchResult<YtMusicArtist> {
         return try {
-            val page = SearchInfo.getNextPage(ServiceList.YouTube, nextPage)
+            val qh = ServiceList.YouTube.searchQHFactory.fromQuery(query, listOf("music_artists"), "")
+            val page = SearchInfo.getMoreItems(ServiceList.YouTube, qh, nextPage)
             SearchResult(page.items.filterIsInstance<ChannelInfoItem>().map { it.toArtist() }, page.nextPage)
         } catch (e: Exception) {
             Log.w(tag, "searchMoreArtists failed: ${e.message}")
@@ -125,9 +127,10 @@ class InnertubeApi @Inject constructor() {
         }
     }
 
-    fun searchMoreAlbums(nextPage: Page): SearchResult<YtMusicAlbum> {
+    fun searchMoreAlbums(query: String, nextPage: Page): SearchResult<YtMusicAlbum> {
         return try {
-            val page = SearchInfo.getNextPage(ServiceList.YouTube, nextPage)
+            val qh = ServiceList.YouTube.searchQHFactory.fromQuery(query, listOf("music_albums"), "")
+            val page = SearchInfo.getMoreItems(ServiceList.YouTube, qh, nextPage)
             SearchResult(page.items.filterIsInstance<PlaylistInfoItem>().map { it.toAlbum() }, page.nextPage)
         } catch (e: Exception) {
             Log.w(tag, "searchMoreAlbums failed: ${e.message}")
@@ -135,9 +138,10 @@ class InnertubeApi @Inject constructor() {
         }
     }
 
-    fun searchMorePlaylists(nextPage: Page): SearchResult<YtMusicAlbum> {
+    fun searchMorePlaylists(query: String, nextPage: Page): SearchResult<YtMusicAlbum> {
         return try {
-            val page = SearchInfo.getNextPage(ServiceList.YouTube, nextPage)
+            val qh = ServiceList.YouTube.searchQHFactory.fromQuery(query, listOf("music_playlists"), "")
+            val page = SearchInfo.getMoreItems(ServiceList.YouTube, qh, nextPage)
             SearchResult(page.items.filterIsInstance<PlaylistInfoItem>().map { it.toAlbum() }, page.nextPage)
         } catch (e: Exception) {
             Log.w(tag, "searchMorePlaylists failed: ${e.message}")
@@ -200,7 +204,7 @@ class InnertubeApi @Inject constructor() {
         }
         if (fallbackQuery.isBlank()) return emptyList()
         Log.d(tag, "getPlaylistSongs: fallback search '$fallbackQuery'")
-        return search(fallbackQuery)
+        return search(fallbackQuery).items
     }
 
     /**
