@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
     OpenTune launcher foreground.
-    Stylized eighth note with the flag detached from the stem to suggest "open"/unlocked.
-    Drawn over a 108x108 viewport; visible content stays inside the central 72x72 safe zone.
+    Open ring (270° arc) merges with the note stem — the gap IS the connection point.
+    Ring = "Open", ring + stem + flag = musical note.
+    Safe zone: 18-90 on the 108x108 viewport.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
@@ -10,37 +11,30 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Note head -->
+    <!-- Open ring: center(50,68), radius=18, 270° clockwise arc        -->
+    <!-- Start = top (50,50), End = right (68,68), gap at top-right     -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M 38,72
-                          m -11,4
-                          a 11,8 -20 1,0 22,-8
-                          a 11,8 -20 1,0 -22,8 z"/>
+        android:pathData="M50,50 A18,18 0 1,1 68,68"
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="7"
+        android:strokeLineCap="round"/>
 
-    <!-- Note stem -->
+    <!-- Stem: from ring's open end straight up -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M 49,68
-                          L 49,32
-                          L 53,32
-                          L 53,68 Z"/>
+        android:pathData="M68,68 L68,26"
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="6.5"
+        android:strokeLineCap="round"/>
 
-    <!-- Detached flag — separated from stem, suggesting "open" -->
+    <!-- Flag: eighth-note flag curving from stem top -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M 56,30
-                          C 65,34 72,40 72,48
-                          C 72,52 70,55 67,57
-                          C 71,52 69,46 56,42 Z"/>
-
-    <!-- Accent dot above the flag -->
-    <path
-        android:fillColor="#FFFFFF"
-        android:fillAlpha="0.85"
-        android:pathData="M 75,28
-                          m -3,0
-                          a 3,3 0 1,0 6,0
-                          a 3,3 0 1,0 -6,0 z"/>
+        android:pathData="M68,26 C82,30 86,46 74,58"
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
 
 </vector>
