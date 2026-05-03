@@ -17,10 +17,13 @@ import org.schabi.newpipe.extractor.playlist.PlaylistInfo
 import org.schabi.newpipe.extractor.playlist.PlaylistInfoItem
 import org.schabi.newpipe.extractor.search.SearchInfo
 import org.schabi.newpipe.extractor.stream.DeliveryMethod
+import org.schabi.newpipe.extractor.Page
 import org.schabi.newpipe.extractor.stream.StreamInfo
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
 import javax.inject.Inject
 import javax.inject.Singleton
+
+data class SearchResult<T>(val items: List<T>, val nextPage: Page? = null)
 
 data class YtMusicTrack(
     val videoId: String,
@@ -82,75 +85,102 @@ class InnertubeApi @Inject constructor() {
         }
     }
 
-    fun search(query: String): List<YtMusicTrack> {
+    fun search(query: String): SearchResult<YtMusicTrack> {
         return try {
             val info = SearchInfo.getInfo(
                 ServiceList.YouTube,
-                ServiceList.YouTube.searchQHFactory.fromQuery(
-                    query,
-                    listOf("music_songs"),
-                    "",
-                ),
+                ServiceList.YouTube.searchQHFactory.fromQuery(query, listOf("music_songs"), ""),
             )
-            val tracks = info.relatedItems
-                .filterIsInstance<StreamInfoItem>()
-                .mapNotNull { it.toTrack() }
+            val tracks = info.relatedItems.filterIsInstance<StreamInfoItem>().mapNotNull { it.toTrack() }
             Log.d(tag, "search('$query') -> ${tracks.size} tracks")
-            tracks
+            SearchResult(tracks, info.nextPage)
         } catch (e: Exception) {
             Log.w(tag, "search('$query') failed [${e.javaClass.simpleName}]: ${e.message}")
-            // Fallback: untyped search if music_songs filter fails
             try {
-                val info = SearchInfo.getInfo(
-                    ServiceList.YouTube,
-                    ServiceList.YouTube.searchQHFactory.fromQuery(query),
-                )
-                info.relatedItems
-                    .filterIsInstance<StreamInfoItem>()
-                    .mapNotNull { it.toTrack() }
+                val info = SearchInfo.getInfo(ServiceList.YouTube, ServiceList.YouTube.searchQHFactory.fromQuery(query))
+                SearchResult(info.relatedItems.filterIsInstance<StreamInfoItem>().mapNotNull { it.toTrack() }, info.nextPage)
             } catch (e2: Exception) {
-                Log.w(tag, "search('$query') fallback also failed: ${e2.message}")
-                emptyList()
+                SearchResult(emptyList())
             }
         }
     }
 
-    fun searchArtists(query: String): List<YtMusicArtist> {
+    fun searchMoreSongs(nextPage: Page): SearchResult<YtMusicTrack> {
+        return try {
+            val page = SearchInfo.getNextPage(ServiceList.YouTube, nextPage)
+            SearchResult(page.items.filterIsInstance<StreamInfoItem>().mapNotNull { it.toTrack() }, page.nextPage)
+        } catch (e: Exception) {
+            Log.w(tag, "searchMoreSongs failed: ${e.message}")
+            SearchResult(emptyList())
+        }
+    }
+
+    fun searchMoreArtists(nextPage: Page): SearchResult<YtMusicArtist> {
+        return try {
+            val page = SearchInfo.getNextPage(ServiceList.YouTube, nextPage)
+            SearchResult(page.items.filterIsInstance<ChannelInfoItem>().map { it.toArtist() }, page.nextPage)
+        } catch (e: Exception) {
+            Log.w(tag, "searchMoreArtists failed: ${e.message}")
+            SearchResult(emptyList())
+        }
+    }
+
+    fun searchMoreAlbums(nextPage: Page): SearchResult<YtMusicAlbum> {
+        return try {
+            val page = SearchInfo.getNextPage(ServiceList.YouTube, nextPage)
+            SearchResult(page.items.filterIsInstance<PlaylistInfoItem>().map { it.toAlbum() }, page.nextPage)
+        } catch (e: Exception) {
+            Log.w(tag, "searchMoreAlbums failed: ${e.message}")
+            SearchResult(emptyList())
+        }
+    }
+
+    fun searchMorePlaylists(nextPage: Page): SearchResult<YtMusicAlbum> {
+        return try {
+            val page = SearchInfo.getNextPage(ServiceList.YouTube, nextPage)
+            SearchResult(page.items.filterIsInstance<PlaylistInfoItem>().map { it.toAlbum() }, page.nextPage)
+        } catch (e: Exception) {
+            Log.w(tag, "searchMorePlaylists failed: ${e.message}")
+            SearchResult(emptyList())
+        }
+    }
+
+    fun searchArtists(query: String): SearchResult<YtMusicArtist> {
         return try {
             val info = SearchInfo.getInfo(
                 ServiceList.YouTube,
                 ServiceList.YouTube.searchQHFactory.fromQuery(query, listOf("music_artists"), ""),
             )
-            info.relatedItems.filterIsInstance<ChannelInfoItem>().map { it.toArtist() }
+            SearchResult(info.relatedItems.filterIsInstance<ChannelInfoItem>().map { it.toArtist() }, info.nextPage)
         } catch (e: Exception) {
             Log.w(tag, "searchArtists('$query') failed: ${e.message}")
-            emptyList()
+            SearchResult(emptyList())
         }
     }
 
-    fun searchAlbums(query: String): List<YtMusicAlbum> {
+    fun searchAlbums(query: String): SearchResult<YtMusicAlbum> {
         return try {
             val info = SearchInfo.getInfo(
                 ServiceList.YouTube,
                 ServiceList.YouTube.searchQHFactory.fromQuery(query, listOf("music_albums"), ""),
             )
-            info.relatedItems.filterIsInstance<PlaylistInfoItem>().map { it.toAlbum() }
+            SearchResult(info.relatedItems.filterIsInstance<PlaylistInfoItem>().map { it.toAlbum() }, info.nextPage)
         } catch (e: Exception) {
             Log.w(tag, "searchAlbums('$query') failed: ${e.message}")
-            emptyList()
+            SearchResult(emptyList())
         }
     }
 
-    fun searchPlaylists(query: String): List<YtMusicAlbum> {
+    fun searchPlaylists(query: String): SearchResult<YtMusicAlbum> {
         return try {
             val info = SearchInfo.getInfo(
                 ServiceList.YouTube,
                 ServiceList.YouTube.searchQHFactory.fromQuery(query, listOf("music_playlists"), ""),
             )
-            info.relatedItems.filterIsInstance<PlaylistInfoItem>().map { it.toAlbum() }
+            SearchResult(info.relatedItems.filterIsInstance<PlaylistInfoItem>().map { it.toAlbum() }, info.nextPage)
         } catch (e: Exception) {
             Log.w(tag, "searchPlaylists('$query') failed: ${e.message}")
-            emptyList()
+            SearchResult(emptyList())
         }
     }
 

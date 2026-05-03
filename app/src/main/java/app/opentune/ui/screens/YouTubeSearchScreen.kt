@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -48,6 +49,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -83,11 +85,23 @@ fun YouTubeSearchScreen(
     val albumResults by viewModel.albumResults.collectAsState()
     val playlistResults by viewModel.playlistResults.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+    val isLoadingMore by viewModel.isLoadingMore.collectAsState()
     val error by viewModel.error.collectAsState()
     val selectedTab by viewModel.selectedTab.collectAsState()
     var queryText by remember { mutableStateOf(initialQuery) }
     val keyboard = LocalSoftwareKeyboardController.current
     val context = LocalContext.current
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(listState, selectedTab) {
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index }
+            .collect { lastIndex ->
+                val total = listState.layoutInfo.totalItemsCount
+                if (lastIndex != null && total > 0 && lastIndex >= total - 3) {
+                    viewModel.loadMore()
+                }
+            }
+    }
 
     LaunchedEffect(initialQuery) {
         if (initialQuery.isNotBlank()) {
@@ -156,7 +170,7 @@ fun YouTubeSearchScreen(
                     if (songResults.isEmpty() && queryText.isNotBlank()) {
                         EmptyResults()
                     } else {
-                        LazyColumn(Modifier.fillMaxSize()) {
+                        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                             items(songResults) { track ->
                                 YouTubeTrackItem(
                                     track = track,
@@ -172,6 +186,7 @@ fun YouTubeSearchScreen(
                                     }
                                 )
                             }
+                            if (isLoadingMore) item { LoadingMoreIndicator() }
                         }
                     }
                 }
@@ -179,7 +194,7 @@ fun YouTubeSearchScreen(
                     if (artistResults.isEmpty() && queryText.isNotBlank()) {
                         EmptyResults()
                     } else {
-                        LazyColumn(Modifier.fillMaxSize()) {
+                        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                             items(artistResults) { artist ->
                                 YouTubeArtistItem(
                                     artist = artist,
@@ -191,6 +206,7 @@ fun YouTubeSearchScreen(
                                     }
                                 )
                             }
+                            if (isLoadingMore) item { LoadingMoreIndicator() }
                         }
                     }
                 }
@@ -198,7 +214,7 @@ fun YouTubeSearchScreen(
                     if (albumResults.isEmpty() && queryText.isNotBlank()) {
                         EmptyResults()
                     } else {
-                        LazyColumn(Modifier.fillMaxSize()) {
+                        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                             items(albumResults) { album ->
                                 YouTubeAlbumItem(
                                     album = album,
@@ -219,6 +235,7 @@ fun YouTubeSearchScreen(
                                     }
                                 )
                             }
+                            if (isLoadingMore) item { LoadingMoreIndicator() }
                         }
                     }
                 }
@@ -226,7 +243,7 @@ fun YouTubeSearchScreen(
                     if (playlistResults.isEmpty() && queryText.isNotBlank()) {
                         EmptyResults()
                     } else {
-                        LazyColumn(Modifier.fillMaxSize()) {
+                        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                             items(playlistResults) { playlist ->
                                 YouTubeAlbumItem(
                                     album = playlist,
@@ -247,11 +264,22 @@ fun YouTubeSearchScreen(
                                     }
                                 )
                             }
+                            if (isLoadingMore) item { LoadingMoreIndicator() }
                         }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun LoadingMoreIndicator() {
+    Box(
+        modifier = Modifier.fillMaxWidth().padding(16.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
     }
 }
 
