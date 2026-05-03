@@ -2,11 +2,14 @@
 
 <div align="center">
   <img src="./assets/ic_launcher_round.png" alt="OpenTune" width="100" />
+
+  **v1.0.5** · Material 3 · Android 8+
+
+  [![License](https://img.shields.io/github/license/OuterTune/OuterTune)](https://www.gnu.org/licenses/gpl-3.0)
+  [![Release](https://img.shields.io/github/v/release/Tigerskin-Hupee/OpenTune)](https://github.com/Tigerskin-Hupee/OpenTune/releases/latest)
 </div>
 
 A Material 3 music player for Android — streams YouTube audio **without** the YouTube Music API.
-
-[![License](https://img.shields.io/github/license/OuterTune/OuterTune)](https://www.gnu.org/licenses/gpl-3.0)
 
 ---
 
@@ -22,34 +25,26 @@ This means:
 
 ---
 
-## Architecture
+## Download
 
-| Layer | Technology | Purpose |
-|---|---|---|
-| **Audio Streaming** | [NewPipeExtractor v0.26.1](https://github.com/TeamNewPipe/NewPipeExtractor) | Resolves YouTube video IDs to direct CDN audio URLs (handles PoToken, signature ciphers, n-parameter throttling) |
-| **Search** | NewPipeExtractor `SearchInfo` | Songs, Artists, Albums/Playlists via `music_songs` / `music_artists` / `music_albums` content filters |
-| **Recommendations** | NewPipeExtractor `SearchInfo` | Aggregates popular music search terms for a global feed |
-| **Radio / Related** | NewPipeExtractor `StreamInfo.relatedItems` | Seeds a continuous radio queue from any track; auto-extends when queue runs low |
-| **Lyrics** | [lrclib.net](https://lrclib.net) | Free, no-auth synced/plain lyrics API; results cached in local Room DB |
-| **Local Lyrics** | `.lrc` file lookup | Reads sidecar `.lrc` files next to local audio files |
-| **Image Loading** | [Coil 3](https://coil-kt.github.io/coil/) + OkHttp | Network thumbnails via `coil-network-okhttp`; local audio embedded art via `MediaMetadataRetriever` |
-| **Local Playback** | [Gramophone](https://github.com/FoedusProgramme/Gramophone) tag extractor | Parses ID3/FLAC/OGG tags; handles `\\`-delimited multi-value fields correctly |
-| **Player** | ExoPlayer (Media3) | Background playback, notification controls, Android Auto |
-| **Database** | Room | Stores songs, playlists, lyrics cache, play history, queue persistence |
-| **DI** | Hilt | Dependency injection throughout |
+Get the latest APK from [**Releases**](https://github.com/Tigerskin-Hupee/OpenTune/releases/latest).
+
+Install directly — no need to uninstall previous versions (consistent release signing).
 
 ---
 
 ## Features
 
-- **YouTube streaming** — search songs, browse recommendations, start radio from any track
-- **Tabbed search** — Songs / Artists / Albums tabs powered by NewPipeExtractor
+- **YouTube streaming** — search and stream any song from YouTube
+- **Tabbed search** — Songs / Artists / Albums / Playlists with infinite scroll
+- **Personalised recommendations** — home feed based on your listening history
 - **Infinite radio** — auto-fetches related songs when the queue runs low
-- **Synced lyrics** — fetched from lrclib.net, displayed word-by-word with the Gramophone parser
+- **Album & Playlist playback** — tap any album or playlist to play its songs
+- **Synced lyrics** — fetched from lrclib.net, displayed word-by-word
 - **Local audio playback** — MP3, FLAC, OGG, Opus, and more
-- **Multiple queues** — manage several queues simultaneously
-- **Download** — cache YouTube audio for offline playback
+- **Download** — cache YouTube audio for offline playback (fixed in v1.0.2)
 - **Library** — like, save, and organize songs into playlists
+- **Playback Diagnostics** — Settings → About, for quick debugging
 - **Play history & statistics**
 - **Audio effects** — normalization, equalizer, tempo/pitch adjustment
 - **Material 3 design** — dynamic color, dark mode
@@ -58,15 +53,35 @@ This means:
 
 ---
 
+## Architecture
+
+| Layer | Technology | Purpose |
+|---|---|---|
+| **Audio Streaming** | [NewPipeExtractor v0.26.1](https://github.com/TeamNewPipe/NewPipeExtractor) | Resolves YouTube video IDs to direct CDN audio URLs (handles PoToken, signature ciphers, n-parameter throttling) |
+| **Search** | NewPipeExtractor `SearchInfo` | Songs / Artists / Albums / Playlists via content filters; paginated with infinite scroll |
+| **Recommendations** | NewPipeExtractor `SearchInfo` | Personalised from play history (top artists); falls back to popular music |
+| **Radio / Related** | NewPipeExtractor `StreamInfo.relatedItems` | Seeds a continuous radio queue from any track; auto-extends when queue runs low |
+| **Lyrics** | [lrclib.net](https://lrclib.net) | Free, no-auth synced/plain lyrics API; results cached in local Room DB |
+| **Local Lyrics** | `.lrc` file lookup | Reads sidecar `.lrc` files next to local audio files |
+| **Image Loading** | [Coil 3](https://coil-kt.github.io/coil/) + OkHttp | Network thumbnails via `coil-network-okhttp`; local audio embedded art via `MediaMetadataRetriever` |
+| **Download** | ExoPlayer DownloadManager | Resolves `youtube:<id>` URIs to real audio stream URLs at download time |
+| **Player** | ExoPlayer (Media3) | Background playback, notification controls, Android Auto |
+| **Database** | Room | Songs, playlists, lyrics cache, play history, queue persistence |
+| **DI** | Hilt | Dependency injection throughout |
+
+---
+
 ## Key Differences from OuterTune
 
 | | OuterTune | OpenTune |
 |---|---|---|
 | Streaming backend | YouTube Music API (requires auth) | NewPipeExtractor (no auth) |
-| Search | YouTube Music search | YouTube search via NewPipeExtractor |
+| Search | YouTube Music search | YouTube search with 4 tabs + infinite scroll |
+| Recommendations | Personalised YTM feed | Personalised via play history |
+| Album / Playlist playback | Full API-based | Fallback search when playlist API unavailable |
 | Lyrics | KuGou, LrcLib, local | LrcLib, local |
 | Account sync | YouTube Music account | — (local only) |
-| Recommendations | Personalised YTM feed | Global popular music feed |
+| Diagnostics | — | Playback Diagnostics in Settings |
 
 ---
 
@@ -75,12 +90,28 @@ This means:
 ```bash
 git clone https://github.com/Tigerskin-Hupee/OpenTune.git
 cd OpenTune
-./gradlew assembleDebug
+./gradlew assembleCoreRelease
 ```
 
-APK output: `app/build/outputs/apk/core/debug/OpenTune-1.0.0-alpha1-debug.apk`
+APK output: `app/build/outputs/apk/core/release/OpenTune-<version>-release.apk`
 
 No API keys or accounts required.
+
+---
+
+## Version History
+
+| Version | Highlights |
+|---|---|
+| **1.0.5** | Elegant tech blue icon redesign, infinite scroll pagination |
+| **1.0.4** | Icon redesign (open-ring note concept) |
+| **1.0.3** | Infinite scroll for all search tabs |
+| **1.0.2** | Download fixed (youtube: URI resolution) |
+| **1.0.1** | Album/playlist fallback search when PlaylistInfo API unavailable |
+| **1.0.0** | First stable release |
+| 1.0.0-alpha3 | Playback Diagnostics, CI/CD auto-release |
+| 1.0.0-alpha2 | Personalised recommendations, Playlists search tab |
+| 1.0.0-alpha1 | Initial release |
 
 ---
 
