@@ -28,6 +28,7 @@ import app.opentune.playback.DownloadUtil.Companion.STATE_DOWNLOADING
 import app.opentune.playback.DownloadUtil.Companion.STATE_INVALID
 import app.opentune.playback.downloadManager.DownloadDirectoryManagerOt
 import app.opentune.playback.downloadManager.DownloadManagerOt
+import app.opentune.innertube.InnertubeApi
 import app.opentune.utils.dataStore
 import app.opentune.utils.dlCoroutine
 import app.opentune.utils.get
@@ -64,14 +65,22 @@ class DownloadUtil @Inject constructor(
     val databaseProvider: DatabaseProvider,
     @DownloadCache val downloadCache: SimpleCache,
     @PlayerCache val playerCache: SimpleCache,
+    private val innertube: InnertubeApi,
 ) {
     val TAG = DownloadUtil::class.simpleName.toString()
 
     private val dataSourceFactory = ResolvingDataSource.Factory(
         CacheDataSource.Factory()
-            .setCache(playerCache)
+            .setCache(downloadCache)
     ) { dataSpec ->
-        dataSpec
+        val uri = dataSpec.uri
+        if (uri.scheme == "youtube") {
+            val videoId = uri.schemeSpecificPart
+            val streamUrl = innertube.getAudioStreamUrl(videoId)
+            dataSpec.withUri(streamUrl.toUri())
+        } else {
+            dataSpec
+        }
     }
     val downloadNotificationHelper = DownloadNotificationHelper(context, ExoDownloadService.CHANNEL_ID)
     val downloadManager: DownloadManager =
@@ -111,7 +120,7 @@ class DownloadUtil @Inject constructor(
 
     private fun downloadSong(id: String, title: String) {
         if (downloads.value[id] != null) return
-        val downloadRequest = DownloadRequest.Builder(id, id.toUri())
+        val downloadRequest = DownloadRequest.Builder(id, "youtube:$id".toUri())
             .setCustomCacheKey(id)
             .setData(title.toByteArray())
             .build()
