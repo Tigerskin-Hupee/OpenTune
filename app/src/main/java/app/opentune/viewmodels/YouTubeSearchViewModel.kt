@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
+import org.schabi.newpipe.extractor.Page
 import javax.inject.Inject
 
 enum class SearchTab { SONGS, ARTISTS, ALBUMS, PLAYLISTS }
@@ -39,6 +40,7 @@ class YouTubeSearchViewModel @Inject constructor(
     val albumResults: StateFlow<List<YtMusicAlbum>> get() = _albumResults
     val playlistResults: StateFlow<List<YtMusicAlbum>> get() = _playlistResults
     val isLoading: StateFlow<Boolean> get() = _isLoading
+    val isLoadingMore: StateFlow<Boolean> get() = _isLoadingMore
     val error: StateFlow<String?> get() = _error
 
     private val _songResults = MutableStateFlow<List<YtMusicTrack>>(emptyList())
@@ -46,7 +48,13 @@ class YouTubeSearchViewModel @Inject constructor(
     private val _albumResults = MutableStateFlow<List<YtMusicAlbum>>(emptyList())
     private val _playlistResults = MutableStateFlow<List<YtMusicAlbum>>(emptyList())
     private val _isLoading = MutableStateFlow(false)
+    private val _isLoadingMore = MutableStateFlow(false)
     private val _error = MutableStateFlow<String?>(null)
+
+    private var songNextPage: Page? = null
+    private var artistNextPage: Page? = null
+    private var albumNextPage: Page? = null
+    private var playlistNextPage: Page? = null
 
     init {
         viewModelScope.launch {
@@ -63,14 +71,60 @@ class YouTubeSearchViewModel @Inject constructor(
             _isLoading.value = true
             _error.value = null
             try {
-                _songResults.value = api.search(q)
-                _artistResults.value = api.searchArtists(q)
-                _albumResults.value = api.searchAlbums(q)
-                _playlistResults.value = api.searchPlaylists(q)
+                val songs = api.search(q)
+                _songResults.value = songs.items
+                songNextPage = songs.nextPage
+
+                val artists = api.searchArtists(q)
+                _artistResults.value = artists.items
+                artistNextPage = artists.nextPage
+
+                val albums = api.searchAlbums(q)
+                _albumResults.value = albums.items
+                albumNextPage = albums.nextPage
+
+                val playlists = api.searchPlaylists(q)
+                _playlistResults.value = playlists.items
+                playlistNextPage = playlists.nextPage
             } catch (e: Exception) {
                 _error.value = e.message
             } finally {
                 _isLoading.value = false
+            }
+        }
+    }
+
+    fun loadMore() {
+        if (_isLoadingMore.value || _isLoading.value) return
+        viewModelScope.launch(Dispatchers.IO) {
+            _isLoadingMore.value = true
+            try {
+                when (selectedTab.value) {
+                    SearchTab.SONGS -> songNextPage?.let { next ->
+                        val page = api.searchMoreSongs(next)
+                        _songResults.value = _songResults.value + page.items
+                        songNextPage = page.nextPage
+                    }
+                    SearchTab.ARTISTS -> artistNextPage?.let { next ->
+                        val page = api.searchMoreArtists(next)
+                        _artistResults.value = _artistResults.value + page.items
+                        artistNextPage = page.nextPage
+                    }
+                    SearchTab.ALBUMS -> albumNextPage?.let { next ->
+                        val page = api.searchMoreAlbums(next)
+                        _albumResults.value = _albumResults.value + page.items
+                        albumNextPage = page.nextPage
+                    }
+                    SearchTab.PLAYLISTS -> playlistNextPage?.let { next ->
+                        val page = api.searchMorePlaylists(next)
+                        _playlistResults.value = _playlistResults.value + page.items
+                        playlistNextPage = page.nextPage
+                    }
+                }
+            } catch (e: Exception) {
+                // silently ignore pagination errors
+            } finally {
+                _isLoadingMore.value = false
             }
         }
     }
@@ -85,4 +139,5 @@ class YouTubeSearchViewModel @Inject constructor(
             }
         }
     }
+
 }
