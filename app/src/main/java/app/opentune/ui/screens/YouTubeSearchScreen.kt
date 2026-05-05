@@ -242,7 +242,7 @@ fun YouTubeSearchScreen(
                                         sheetSongs = emptyList()
                                         isLoadingSheet = true
                                         scope.launch { sheetState.show() }
-                                        viewModel.loadPlaylistSongs(album.playlistId, "${album.title} ${album.artistName}".trim()) { songs, _ ->
+                                        viewModel.loadPlaylistSongs(album.playlistId) { songs, _ ->
                                             sheetSongs = songs
                                             isLoadingSheet = false
                                         }
@@ -267,7 +267,7 @@ fun YouTubeSearchScreen(
                                         sheetSongs = emptyList()
                                         isLoadingSheet = true
                                         scope.launch { sheetState.show() }
-                                        viewModel.loadPlaylistSongs(playlist.playlistId, "${playlist.title} ${playlist.artistName}".trim()) { songs, _ ->
+                                        viewModel.loadPlaylistSongs(playlist.playlistId) { songs, _ ->
                                             sheetSongs = songs
                                             isLoadingSheet = false
                                         }
