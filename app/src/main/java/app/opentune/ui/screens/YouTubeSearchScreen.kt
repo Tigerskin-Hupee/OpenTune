@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
@@ -110,6 +111,7 @@ fun YouTubeSearchScreen(
     var sheetSongs by remember { mutableStateOf<List<YtMusicTrack>>(emptyList()) }
     var isLoadingSheet by remember { mutableStateOf(false) }
     var sheetLoadFailed by remember { mutableStateOf(false) }
+    var sheetErrorDetail by remember { mutableStateOf("") }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     LaunchedEffect(listState, selectedTab) {
@@ -242,11 +244,13 @@ fun YouTubeSearchScreen(
                                         sheetAlbum = album
                                         sheetSongs = emptyList()
                                         sheetLoadFailed = false
+                                        sheetErrorDetail = ""
                                         isLoadingSheet = true
                                         scope.launch { sheetState.show() }
                                         viewModel.loadPlaylistSongs(album.playlistId, album.url) { songs, err ->
                                             sheetSongs = songs
                                             sheetLoadFailed = err != null
+                                            sheetErrorDetail = err ?: ""
                                             isLoadingSheet = false
                                         }
                                     }
@@ -269,11 +273,13 @@ fun YouTubeSearchScreen(
                                         sheetAlbum = playlist
                                         sheetSongs = emptyList()
                                         sheetLoadFailed = false
+                                        sheetErrorDetail = ""
                                         isLoadingSheet = true
                                         scope.launch { sheetState.show() }
                                         viewModel.loadPlaylistSongs(playlist.playlistId, playlist.url) { songs, err ->
                                             sheetSongs = songs
                                             sheetLoadFailed = err != null
+                                            sheetErrorDetail = err ?: ""
                                             isLoadingSheet = false
                                         }
                                     }
@@ -362,17 +368,25 @@ fun YouTubeSearchScreen(
                         CircularProgressIndicator()
                     }
                 } else if (sheetSongs.isEmpty()) {
-                    Box(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(32.dp),
-                        contentAlignment = Alignment.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         Text(
                             stringResource(if (sheetLoadFailed) R.string.playlist_load_failed else R.string.no_results_found),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        if (sheetErrorDetail.isNotBlank()) {
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                sheetErrorDetail,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
+                            )
+                        }
                     }
                 } else {
                     LazyColumn {
