@@ -25,8 +25,7 @@ import app.opentune.models.toMediaMetadata
 import app.opentune.playback.queues.ListQueue
 import app.opentune.ui.utils.getNSongsString
 import app.opentune.utils.getDownloadState
-import app.opentune.utils.joinByBullet
-import kotlinx.coroutines.CoroutineScope
+import app.opentune.utils.joinByBulletimport kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -134,7 +133,13 @@ fun AlbumGridItem(
     fillMaxWidth: Boolean = false,
 ) = GridItem(
     title = album.album.title,
-    subtitle = album.artists.joinToString { it.name },
+    subtitle = joinByBullet(
+        album.artists.joinToString { it.name },
+        album.takeIf { it.album.songCount != 0 }?.let {
+            getNSongsString(it.album.songCount, it.downloadCount)
+        },
+        album.album.year?.toString()
+    ),
     badges = badges,
     thumbnailContent = {
         val database = LocalDatabase.current
