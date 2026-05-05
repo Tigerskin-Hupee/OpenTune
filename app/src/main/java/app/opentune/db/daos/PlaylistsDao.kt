@@ -104,10 +104,13 @@ interface PlaylistsDao {
             else -> ""
         }
 
-        val where = when (variant) {
-            1 -> "WHERE p.isLocal AND p.bookmarkedAt IS NOT NULL"
-            2 -> "WHERE p.isEditable AND p.bookmarkedAt IS NOT NULL"
-            else -> "WHERE p.bookmarkedAt IS NOT NULL OR p.isLocal = 1"
+        val where = when (filter) {
+            PlaylistFilter.LIKED -> "WHERE p.bookmarkedAt IS NOT NULL"
+            else -> when (variant) {
+                1 -> "WHERE p.isLocal AND p.bookmarkedAt IS NOT NULL"
+                2 -> "WHERE p.isEditable AND p.bookmarkedAt IS NOT NULL"
+                else -> "WHERE p.bookmarkedAt IS NOT NULL OR p.isLocal = 1"
+            }
         }
 
         val query = SimpleSQLiteQuery("""
