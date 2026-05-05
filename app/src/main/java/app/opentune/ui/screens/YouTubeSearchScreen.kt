@@ -244,7 +244,7 @@ fun YouTubeSearchScreen(
                                         sheetLoadFailed = false
                                         isLoadingSheet = true
                                         scope.launch { sheetState.show() }
-                                        viewModel.loadPlaylistSongs(album.playlistId) { songs, err ->
+                                        viewModel.loadPlaylistSongs(album.playlistId, album.url) { songs, err ->
                                             sheetSongs = songs
                                             sheetLoadFailed = err != null
                                             isLoadingSheet = false
@@ -271,7 +271,7 @@ fun YouTubeSearchScreen(
                                         sheetLoadFailed = false
                                         isLoadingSheet = true
                                         scope.launch { sheetState.show() }
-                                        viewModel.loadPlaylistSongs(playlist.playlistId) { songs, err ->
+                                        viewModel.loadPlaylistSongs(playlist.playlistId, playlist.url) { songs, err ->
                                             sheetSongs = songs
                                             sheetLoadFailed = err != null
                                             isLoadingSheet = false

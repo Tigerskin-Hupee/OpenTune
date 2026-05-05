@@ -185,9 +185,21 @@ class InnertubeApi @Inject constructor() {
         }
     }
 
-    fun getPlaylistSongs(playlistId: String): List<YtMusicTrack> {
+    fun getPlaylistSongs(playlistId: String, originalUrl: String = ""): List<YtMusicTrack> {
         if (playlistId.isBlank()) return emptyList()
-        val url = "https://www.youtube.com/playlist?list=$playlistId"
+        // Normalise to a youtube.com playlist URL.
+        // originalUrl may be music.youtube.com or watch?list= (Mix) — map those to playlist?list=
+        val resolvedUrl = when {
+            originalUrl.contains("youtube.com") ->
+                originalUrl
+                    .replace("music.youtube.com", "www.youtube.com")
+                    .let { u ->
+                        if (u.contains("/playlist?")) u
+                        else "https://www.youtube.com/playlist?list=$playlistId"
+                    }
+            else -> "https://www.youtube.com/playlist?list=$playlistId"
+        }
+        val url = resolvedUrl
         val info = PlaylistInfo.getInfo(ServiceList.YouTube, url)
         val tracks = mutableListOf<YtMusicTrack>()
         tracks.addAll(info.relatedItems.filterIsInstance<StreamInfoItem>().mapNotNull { it.toTrack() })
