@@ -266,6 +266,9 @@ interface SongsDao {
         }.map { it.reversed(descending) }
     // endregion
 
+    @Query("SELECT COUNT(1) FROM song WHERE isLocal = 0 AND dateDownload IS NOT NULL AND dateDownload IS NOT 0")
+    fun downloadedSongsCount(): Flow<Int>
+
     // region downloaded Songs utils
     @Transaction
     @Query("SELECT * FROM song WHERE isLocal = 0 AND dateDownload IS NOT NULL AND dateDownload IS NOT 0")

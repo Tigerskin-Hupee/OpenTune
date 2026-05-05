@@ -190,9 +190,21 @@ class InnertubeApi @Inject constructor() {
             val url = "https://www.youtube.com/playlist?list=$playlistId"
             try {
                 val info = PlaylistInfo.getInfo(ServiceList.YouTube, url)
-                val tracks = info.relatedItems.filterIsInstance<StreamInfoItem>().mapNotNull { it.toTrack() }
+                val tracks = mutableListOf<YtMusicTrack>()
+                tracks.addAll(info.relatedItems.filterIsInstance<StreamInfoItem>().mapNotNull { it.toTrack() })
+                var nextPage = info.nextPage
+                while (nextPage != null) {
+                    try {
+                        val page = PlaylistInfo.getMoreItems(ServiceList.YouTube, url, nextPage)
+                        tracks.addAll(page.items.filterIsInstance<StreamInfoItem>().mapNotNull { it.toTrack() })
+                        nextPage = page.nextPage
+                    } catch (e: Exception) {
+                        Log.w(tag, "getPlaylistSongs page fetch failed: ${e.message}")
+                        break
+                    }
+                }
                 if (tracks.isNotEmpty()) {
-                    Log.d(tag, "getPlaylistSongs('$playlistId'): ${tracks.size} tracks")
+                    Log.d(tag, "getPlaylistSongs('$playlistId'): ${tracks.size} tracks total")
                     return tracks
                 }
             } catch (e: Exception) {

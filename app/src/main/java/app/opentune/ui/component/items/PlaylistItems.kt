@@ -51,10 +51,11 @@ fun AutoPlaylistListItem(
     playlist: PlaylistEntity,
     thumbnail: ImageVector,
     modifier: Modifier = Modifier,
+    songCount: Int? = null,
     trailingContent: @Composable RowScope.() -> Unit = {},
 ) = ListItem(
     title = playlist.name,
-    subtitle = stringResource(id = R.string.auto_playlist),
+    subtitle = songCount?.let { getNSongsString(it) } ?: stringResource(id = R.string.auto_playlist),
     thumbnailContent = {
         Box(
             modifier = Modifier
@@ -82,10 +83,11 @@ fun AutoPlaylistGridItem(
     playlist: PlaylistEntity,
     thumbnail: ImageVector,
     modifier: Modifier = Modifier,
+    songCount: Int? = null,
     fillMaxWidth: Boolean = false,
 ) = GridItem(
     title = playlist.name,
-    subtitle = stringResource(id = R.string.auto_playlist),
+    subtitle = songCount?.let { getNSongsString(it) } ?: stringResource(id = R.string.auto_playlist),
     thumbnailContent = {
         val width = maxWidth
         Box(
