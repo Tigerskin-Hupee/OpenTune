@@ -8,7 +8,11 @@ package app.opentune.viewmodels
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.opentune.db.MusicDatabase
+import app.opentune.db.entities.ArtistEntity
 import app.opentune.db.entities.PlaylistEntity
+import app.opentune.db.entities.PlaylistSongMap
+import app.opentune.db.entities.SongArtistMap
+import app.opentune.db.entities.SongEntity
 import app.opentune.innertube.InnertubeApi
 import app.opentune.innertube.YtMusicAlbum
 import app.opentune.innertube.YtMusicArtist
@@ -151,11 +155,11 @@ class YouTubeSearchViewModel @Inject constructor(
     fun bookmarkStateFlow(playlistId: String): Flow<Boolean> =
         database.playlist(playlistId).map { it?.playlist?.bookmarkedAt != null }
 
-    fun toggleBookmark(album: YtMusicAlbum) {
+    fun toggleBookmark(album: YtMusicAlbum, songs: List<YtMusicTrack> = emptyList()) {
         viewModelScope.launch(Dispatchers.IO) {
             val existing = database.playlist(album.playlistId).first()?.playlist
             if (existing == null) {
-                database.query {
+                database.transaction {
                     insert(
                         PlaylistEntity(
                             id = album.playlistId,
@@ -164,6 +168,15 @@ class YouTubeSearchViewModel @Inject constructor(
                             bookmarkedAt = LocalDateTime.now(),
                         )
                     )
+                    songs.forEachIndexed { index, track ->
+                        insert(SongEntity(id = track.videoId, title = track.title, thumbnailUrl = track.thumbnailUrl, localPath = null))
+                        if (track.artistName.isNotBlank()) {
+                            val artistId = "YTA_${track.artistName.hashCode()}"
+                            insert(ArtistEntity(id = artistId, name = track.artistName))
+                            insert(SongArtistMap(songId = track.videoId, artistId = artistId, position = 0))
+                        }
+                        insert(PlaylistSongMap(playlistId = album.playlistId, songId = track.videoId, position = index))
+                    }
                 }
             } else {
                 database.query { update(existing.toggleLike()) }

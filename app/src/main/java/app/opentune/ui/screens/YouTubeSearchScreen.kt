@@ -311,7 +311,7 @@ fun YouTubeSearchScreen(
                             )
                         }
                     }
-                    IconButton(onClick = { viewModel.toggleBookmark(album) }) {
+                    IconButton(onClick = { viewModel.toggleBookmark(album, sheetSongs) }) {
                         Icon(
                             imageVector = if (isBookmarked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                             contentDescription = null,
