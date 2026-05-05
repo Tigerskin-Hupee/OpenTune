@@ -10,6 +10,12 @@
 package app.opentune.innertube
 
 import android.util.Log
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
+import org.json.JSONObject
 import org.schabi.newpipe.extractor.InfoItem
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.channel.ChannelInfoItem
@@ -20,6 +26,7 @@ import org.schabi.newpipe.extractor.stream.DeliveryMethod
 import org.schabi.newpipe.extractor.Page
 import org.schabi.newpipe.extractor.stream.StreamInfo
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -52,6 +59,11 @@ data class YtMusicAlbum(
 @Singleton
 class InnertubeApi @Inject constructor() {
     private val tag = "InnertubeApi"
+
+    private val httpClient = OkHttpClient.Builder()
+        .connectTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .build()
 
     /** Resolve a video id to a direct audio CDN URL (highest-bitrate audio stream). */
     fun getAudioStreamUrl(videoId: String): String {
@@ -187,35 +199,113 @@ class InnertubeApi @Inject constructor() {
 
     fun getPlaylistSongs(playlistId: String, originalUrl: String = ""): List<YtMusicTrack> {
         if (playlistId.isBlank()) return emptyList()
-        // Normalise to a youtube.com playlist URL.
-        // originalUrl may be music.youtube.com or watch?list= (Mix) — map those to playlist?list=
-        val resolvedUrl = when {
-            originalUrl.contains("youtube.com") ->
-                originalUrl
-                    .replace("music.youtube.com", "www.youtube.com")
-                    .let { u ->
-                        if (u.contains("/playlist?")) u
-                        else "https://www.youtube.com/playlist?list=$playlistId"
-                    }
-            else -> "https://www.youtube.com/playlist?list=$playlistId"
-        }
-        val url = resolvedUrl
-        val info = PlaylistInfo.getInfo(ServiceList.YouTube, url)
+        // NewPipeExtractor v0.26.1 PlaylistInfo is broken with current YouTube
+        // (RuntimeException: Field browseId_ for ux3 not found).
+        // Use the Innertube browse API directly instead.
+        return fetchPlaylistViaInnertube(playlistId)
+    }
+
+    // Fetch playlist songs via YouTube's internal Innertube /browse API.
+    // This bypasses NewPipeExtractor's broken PlaylistExtractor.
+    private fun fetchPlaylistViaInnertube(playlistId: String): List<YtMusicTrack> {
         val tracks = mutableListOf<YtMusicTrack>()
-        tracks.addAll(info.relatedItems.filterIsInstance<StreamInfoItem>().mapNotNull { it.toTrack() })
-        var nextPage = info.nextPage
-        while (nextPage != null) {
-            try {
-                val page = PlaylistInfo.getMoreItems(ServiceList.YouTube, url, nextPage)
-                tracks.addAll(page.items.filterIsInstance<StreamInfoItem>().mapNotNull { it.toTrack() })
-                nextPage = page.nextPage
-            } catch (e: Exception) {
-                Log.w(tag, "getPlaylistSongs page fetch failed: ${e.message}")
+        var continuation: String? = null
+        var pageCount = 0
+        val json = "application/json; charset=utf-8".toMediaType()
+
+        do {
+            val body = if (continuation == null) {
+                """{"browseId":"VL$playlistId","context":{"client":{"clientName":"WEB","clientVersion":"2.20230101.00.00","hl":"en","gl":"US"}}}"""
+            } else {
+                """{"continuation":"$continuation","context":{"client":{"clientName":"WEB","clientVersion":"2.20230101.00.00","hl":"en","gl":"US"}}}"""
+            }
+
+            val response = httpClient.newCall(
+                Request.Builder()
+                    .url("https://www.youtube.com/youtubei/v1/browse")
+                    .post(body.toRequestBody(json))
+                    .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .addHeader("X-YouTube-Client-Name", "1")
+                    .addHeader("X-YouTube-Client-Version", "2.20230101.00.00")
+                    .addHeader("Origin", "https://www.youtube.com")
+                    .addHeader("Referer", "https://www.youtube.com/playlist?list=$playlistId")
+                    .build()
+            ).execute()
+
+            val responseBody = response.body?.string()
+            if (!response.isSuccessful || responseBody.isNullOrBlank()) {
+                Log.w(tag, "fetchPlaylistViaInnertube('$playlistId') HTTP ${response.code} on page $pageCount")
                 break
             }
-        }
-        Log.d(tag, "getPlaylistSongs('$playlistId'): ${tracks.size} tracks")
+
+            val root = JSONObject(responseBody)
+            tracks.addAll(extractPlaylistVideoRenderers(root))
+            continuation = extractContinuationToken(root)
+            pageCount++
+
+        } while (continuation != null && pageCount < 20 && tracks.size < 500)
+
+        Log.d(tag, "fetchPlaylistViaInnertube('$playlistId'): ${tracks.size} tracks in $pageCount pages")
         return tracks
+    }
+
+    // Recursively find every playlistVideoRenderer in the Innertube response.
+    // This handles any nesting depth and is immune to YouTube layout changes.
+    private fun extractPlaylistVideoRenderers(node: Any?): List<YtMusicTrack> {
+        val tracks = mutableListOf<YtMusicTrack>()
+        when (node) {
+            is JSONObject -> {
+                val renderer = node.optJSONObject("playlistVideoRenderer")
+                if (renderer != null) {
+                    val videoId = renderer.optString("videoId").takeIf { it.isNotBlank() }
+                    if (videoId != null) {
+                        val title = renderer.optJSONObject("title")
+                            ?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")
+                            ?: renderer.optJSONObject("title")?.optString("simpleText")
+                            ?: videoId
+                        val artist = renderer.optJSONObject("shortBylineText")
+                            ?.optJSONArray("runs")?.optJSONObject(0)?.optString("text") ?: ""
+                        val duration = renderer.optJSONObject("lengthText")
+                            ?.optString("simpleText")?.takeIf { it.isNotBlank() }
+                        tracks.add(YtMusicTrack(
+                            videoId = videoId,
+                            title = title,
+                            artistName = artist,
+                            thumbnailUrl = "https://i.ytimg.com/vi/$videoId/hqdefault.jpg",
+                            durationText = duration,
+                        ))
+                    }
+                } else {
+                    for (key in node.keys()) tracks.addAll(extractPlaylistVideoRenderers(node.opt(key)))
+                }
+            }
+            is JSONArray -> {
+                for (i in 0 until node.length()) tracks.addAll(extractPlaylistVideoRenderers(node.opt(i)))
+            }
+        }
+        return tracks
+    }
+
+    // Extract the continuation token for the next page from an Innertube response.
+    private fun extractContinuationToken(node: Any?): String? {
+        when (node) {
+            is JSONObject -> {
+                // Common locations for continuation tokens
+                node.optJSONObject("nextContinuationData")?.optString("continuation")
+                    ?.takeIf { it.isNotBlank() }?.let { return it }
+                node.optJSONObject("continuationCommand")?.optString("token")
+                    ?.takeIf { it.isNotBlank() }?.let { return it }
+                for (key in node.keys()) {
+                    extractContinuationToken(node.opt(key))?.let { return it }
+                }
+            }
+            is JSONArray -> {
+                for (i in 0 until node.length()) {
+                    extractContinuationToken(node.opt(i))?.let { return it }
+                }
+            }
+        }
+        return null
     }
 
     /**
