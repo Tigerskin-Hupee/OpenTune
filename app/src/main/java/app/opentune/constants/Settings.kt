@@ -30,7 +30,7 @@ enum class LyricsPosition {
 }
 
 const val DEFAULT_ENABLED_TABS = "HSFM"
-const val DEFAULT_ENABLED_FILTERS = "ARP"
+const val DEFAULT_ENABLED_FILTERS = "ARPS"
 
 
 enum class KeepScreenOn {

@@ -3,7 +3,7 @@
 <div align="center">
   <img src="./assets/ic_launcher_round.png" alt="OpenTune" width="100" />
 
-  **v1.0.9** · Material 3 · Android 8+
+  **v1.1.0** · Material 3 · Android 8+
 
   [![License](https://img.shields.io/github/license/OuterTune/OuterTune)](https://www.gnu.org/licenses/gpl-3.0)
   [![Release](https://img.shields.io/github/v/release/Tigerskin-Hupee/OpenTune)](https://github.com/Tigerskin-Hupee/OpenTune/releases/latest)
@@ -103,6 +103,7 @@ No API keys or accounts required.
 
 | Version | Highlights |
 |---|---|
+| **1.1.0** | Fix Library visibility: enable Songs tab by default; Albums/Artists default to Library filter; playlist bookmark toggle |
 | **1.0.9** | Fix favourites lag: DB indices on liked/likedDate/inLibrary (migration 23→24) |
 | **1.0.8** | Playlist bookmark toggle; Liked filter for playlists in Library |
 | **1.0.7** | Search history, album/playlist song preview bottom sheet |
