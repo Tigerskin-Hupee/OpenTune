@@ -42,6 +42,7 @@
     <string name="filter_featured_playlists">精選播放清單</string>
     <string name="filter_bookmarked">收藏</string>
     <string name="no_results_found">找不到結果</string>
+    <string name="playlist_load_failed">無法載入此清單</string>
     <string name="library_song_empty">媒體庫的歌曲會顯示在這裡</string>
     <string name="library_artist_empty">媒體庫的藝人會顯示在這裡</string>
     <string name="library_album_empty">媒體庫的專輯會顯示在這裡</string>

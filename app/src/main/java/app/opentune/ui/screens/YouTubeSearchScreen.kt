@@ -109,6 +109,7 @@ fun YouTubeSearchScreen(
     var sheetAlbum by remember { mutableStateOf<YtMusicAlbum?>(null) }
     var sheetSongs by remember { mutableStateOf<List<YtMusicTrack>>(emptyList()) }
     var isLoadingSheet by remember { mutableStateOf(false) }
+    var sheetLoadFailed by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     LaunchedEffect(listState, selectedTab) {
@@ -240,10 +241,12 @@ fun YouTubeSearchScreen(
                                         keyboard?.hide()
                                         sheetAlbum = album
                                         sheetSongs = emptyList()
+                                        sheetLoadFailed = false
                                         isLoadingSheet = true
                                         scope.launch { sheetState.show() }
-                                        viewModel.loadPlaylistSongs(album.playlistId) { songs, _ ->
+                                        viewModel.loadPlaylistSongs(album.playlistId) { songs, err ->
                                             sheetSongs = songs
+                                            sheetLoadFailed = err != null
                                             isLoadingSheet = false
                                         }
                                     }
@@ -265,10 +268,12 @@ fun YouTubeSearchScreen(
                                         keyboard?.hide()
                                         sheetAlbum = playlist
                                         sheetSongs = emptyList()
+                                        sheetLoadFailed = false
                                         isLoadingSheet = true
                                         scope.launch { sheetState.show() }
-                                        viewModel.loadPlaylistSongs(playlist.playlistId) { songs, _ ->
+                                        viewModel.loadPlaylistSongs(playlist.playlistId) { songs, err ->
                                             sheetSongs = songs
+                                            sheetLoadFailed = err != null
                                             isLoadingSheet = false
                                         }
                                     }
@@ -364,7 +369,7 @@ fun YouTubeSearchScreen(
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
-                            stringResource(R.string.no_results_found),
+                            stringResource(if (sheetLoadFailed) R.string.playlist_load_failed else R.string.no_results_found),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
