@@ -145,10 +145,29 @@ class YouTubeSearchViewModel @Inject constructor(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val songs = api.getPlaylistSongs(playlistId, originalUrl)
+                if (songs.isNotEmpty()) {
+                    val existing = database.playlist(playlistId).first()
+                    if (existing?.playlist?.bookmarkedAt != null) {
+                        syncPlaylistSongs(playlistId, songs)
+                    }
+                }
                 withContext(Dispatchers.Main) { onResult(songs, null) }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { onResult(emptyList(), e.javaClass.simpleName + ": " + e.message?.take(100)) }
             }
+        }
+    }
+
+    private suspend fun syncPlaylistSongs(playlistId: String, songs: List<YtMusicTrack>) {
+        database.clearPlaylist(playlistId)
+        songs.forEachIndexed { index, track ->
+            database.insert(SongEntity(id = track.videoId, title = track.title, thumbnailUrl = track.thumbnailUrl, localPath = null))
+            if (track.artistName.isNotBlank()) {
+                val artistId = "YTA_${track.artistName.hashCode()}"
+                database.insert(ArtistEntity(id = artistId, name = track.artistName))
+                database.insert(SongArtistMap(songId = track.videoId, artistId = artistId, position = 0))
+            }
+            database.insert(PlaylistSongMap(playlistId = playlistId, songId = track.videoId, position = index))
         }
     }
 
