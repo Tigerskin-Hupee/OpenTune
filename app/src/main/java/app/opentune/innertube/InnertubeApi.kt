@@ -202,7 +202,14 @@ class InnertubeApi @Inject constructor() {
         // NewPipeExtractor v0.26.1 PlaylistInfo is broken with current YouTube
         // (RuntimeException: Field browseId_ for ux3 not found).
         // Use the Innertube browse API directly instead.
-        return fetchPlaylistViaInnertube(playlistId)
+        val result = fetchPlaylistViaInnertube(playlistId)
+        if (result.isEmpty()) {
+            // YouTube occasionally returns an empty response on the first request;
+            // a single retry after a short delay is enough to recover.
+            Thread.sleep(800)
+            return fetchPlaylistViaInnertube(playlistId)
+        }
+        return result
     }
 
     // Fetch playlist songs via YouTube's internal Innertube /browse API.
