@@ -79,6 +79,7 @@ import app.opentune.innertube.YtMusicArtist
 import app.opentune.innertube.YtMusicTrack
 import app.opentune.models.MediaMetadata
 import app.opentune.playback.queues.ListQueue
+import app.opentune.ui.utils.getNSongsString
 import app.opentune.viewmodels.SearchTab
 import app.opentune.viewmodels.YouTubeSearchViewModel
 
@@ -302,9 +303,15 @@ fun YouTubeSearchScreen(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(album.title, style = MaterialTheme.typography.titleMedium, maxLines = 1)
-                        if (album.artistName.isNotBlank()) {
+                        val sheetSubtitle = listOfNotNull(
+                            album.artistName.takeIf { it.isNotBlank() },
+                            if (sheetSongs.isNotEmpty()) getNSongsString(sheetSongs.size)
+                            else if (album.streamCount > 0) getNSongsString(album.streamCount.toInt())
+                            else null,
+                        ).joinToString(" · ")
+                        if (sheetSubtitle.isNotBlank()) {
                             Text(
-                                album.artistName,
+                                sheetSubtitle,
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
@@ -502,9 +509,13 @@ private fun YouTubeAlbumItem(album: YtMusicAlbum, onClick: () -> Unit) {
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(album.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1)
-            if (album.artistName.isNotBlank()) {
+            val subtitle = listOfNotNull(
+                album.artistName.takeIf { it.isNotBlank() },
+                if (album.streamCount > 0) getNSongsString(album.streamCount.toInt()) else null,
+            ).joinToString(" · ")
+            if (subtitle.isNotBlank()) {
                 Text(
-                    album.artistName,
+                    subtitle,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
