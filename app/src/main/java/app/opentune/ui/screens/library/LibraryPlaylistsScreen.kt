@@ -58,6 +58,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.navigation.NavController
+import app.opentune.LocalDatabase
 import app.opentune.LocalMenuState
 import app.opentune.LocalPlayerAwareWindowInsets
 import app.opentune.MainActivity
@@ -107,8 +108,12 @@ fun LibraryPlaylistsScreen(
 ) {
     Log.v("LibraryPlaylistsScreen", "LP_RC-1")
     val context = LocalContext.current
+    val database = LocalDatabase.current
     val menuState = LocalMenuState.current
     val coroutineScope = rememberCoroutineScope()
+
+    val likedSongCount by database.likedSongsCount().collectAsState(initial = null)
+    val downloadedSongCount by database.downloadedSongsCount().collectAsState(initial = null)
 
     var filter by rememberEnumPreference(PlaylistFilterKey, PlaylistFilter.LIBRARY)
     libraryFilterContent?.let { filter = PlaylistFilter.LIBRARY }
@@ -292,6 +297,7 @@ fun LibraryPlaylistsScreen(
                             AutoPlaylistListItem(
                                 playlist = likedPlaylist,
                                 thumbnail = Icons.Rounded.Favorite,
+                                songCount = likedSongCount,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable {
@@ -308,6 +314,7 @@ fun LibraryPlaylistsScreen(
                             AutoPlaylistListItem(
                                 playlist = downloadedPlaylist,
                                 thumbnail = Icons.Rounded.CloudDownload,
+                                songCount = downloadedSongCount,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable {
@@ -429,6 +436,7 @@ fun LibraryPlaylistsScreen(
                             AutoPlaylistGridItem(
                                 playlist = likedPlaylist,
                                 thumbnail = Icons.Rounded.Favorite,
+                                songCount = likedSongCount,
                                 fillMaxWidth = true,
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -446,6 +454,7 @@ fun LibraryPlaylistsScreen(
                             AutoPlaylistGridItem(
                                 playlist = downloadedPlaylist,
                                 thumbnail = Icons.Rounded.CloudDownload,
+                                songCount = downloadedSongCount,
                                 fillMaxWidth = true,
                                 modifier = Modifier
                                     .fillMaxWidth()
