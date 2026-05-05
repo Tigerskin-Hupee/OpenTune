@@ -24,6 +24,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -281,6 +283,9 @@ fun YouTubeSearchScreen(
 
     // Album / playlist song preview bottom sheet
     if (sheetAlbum != null) {
+        val album = sheetAlbum!!
+        val isBookmarked by viewModel.bookmarkStateFlow(album.playlistId).collectAsState(initial = false)
+
         ModalBottomSheet(
             onDismissRequest = {
                 sheetAlbum = null
@@ -288,7 +293,6 @@ fun YouTubeSearchScreen(
             },
             sheetState = sheetState,
         ) {
-            val album = sheetAlbum!!
             Column(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier
@@ -306,6 +310,13 @@ fun YouTubeSearchScreen(
                                 maxLines = 1,
                             )
                         }
+                    }
+                    IconButton(onClick = { viewModel.toggleBookmark(album) }) {
+                        Icon(
+                            imageVector = if (isBookmarked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                            contentDescription = null,
+                            tint = if (isBookmarked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                     if (sheetSongs.isNotEmpty()) {
                         Button(

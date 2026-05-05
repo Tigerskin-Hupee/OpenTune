@@ -7,6 +7,8 @@ package app.opentune.viewmodels
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.opentune.db.MusicDatabase
+import app.opentune.db.entities.PlaylistEntity
 import app.opentune.innertube.InnertubeApi
 import app.opentune.innertube.YtMusicAlbum
 import app.opentune.innertube.YtMusicArtist
@@ -14,6 +16,9 @@ import app.opentune.innertube.YtMusicTrack
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,6 +27,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import org.schabi.newpipe.extractor.Page
+import java.time.LocalDateTime
 import javax.inject.Inject
 
 enum class SearchTab { SONGS, ARTISTS, ALBUMS, PLAYLISTS }
@@ -30,6 +36,7 @@ enum class SearchTab { SONGS, ARTISTS, ALBUMS, PLAYLISTS }
 @HiltViewModel
 class YouTubeSearchViewModel @Inject constructor(
     private val api: InnertubeApi,
+    private val database: MusicDatabase,
 ) : ViewModel() {
 
     val query = MutableStateFlow("")
@@ -137,6 +144,29 @@ class YouTubeSearchViewModel @Inject constructor(
                 withContext(Dispatchers.Main) { onResult(songs, null) }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { onResult(emptyList(), e.javaClass.simpleName + ": " + e.message?.take(100)) }
+            }
+        }
+    }
+
+    fun bookmarkStateFlow(playlistId: String): Flow<Boolean> =
+        database.playlist(playlistId).map { it?.playlist?.bookmarkedAt != null }
+
+    fun toggleBookmark(album: YtMusicAlbum) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val existing = database.playlist(album.playlistId).first()?.playlist
+            if (existing == null) {
+                database.query {
+                    insert(
+                        PlaylistEntity(
+                            id = album.playlistId,
+                            name = album.title,
+                            thumbnailUrl = album.thumbnailUrl,
+                            bookmarkedAt = LocalDateTime.now(),
+                        )
+                    )
+                }
+            } else {
+                database.query { update(existing.toggleLike()) }
             }
         }
     }
