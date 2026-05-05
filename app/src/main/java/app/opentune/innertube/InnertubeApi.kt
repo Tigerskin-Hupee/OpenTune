@@ -185,7 +185,7 @@ class InnertubeApi @Inject constructor() {
         }
     }
 
-    fun getPlaylistSongs(playlistId: String, fallbackQuery: String = ""): List<YtMusicTrack> {
+    fun getPlaylistSongs(playlistId: String): List<YtMusicTrack> {
         if (playlistId.isNotBlank()) {
             val url = "https://www.youtube.com/playlist?list=$playlistId"
             try {
@@ -211,9 +211,7 @@ class InnertubeApi @Inject constructor() {
                 Log.w(tag, "PlaylistInfo failed for '$playlistId', using search fallback: ${e.message}")
             }
         }
-        if (fallbackQuery.isBlank()) return emptyList()
-        Log.d(tag, "getPlaylistSongs: fallback search '$fallbackQuery'")
-        return search(fallbackQuery).items
+        return emptyList()
     }
 
     /**
