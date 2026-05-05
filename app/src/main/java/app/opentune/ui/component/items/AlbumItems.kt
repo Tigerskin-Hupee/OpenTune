@@ -25,7 +25,8 @@ import app.opentune.models.toMediaMetadata
 import app.opentune.playback.queues.ListQueue
 import app.opentune.ui.utils.getNSongsString
 import app.opentune.utils.getDownloadState
-import app.opentune.utils.joinByBulletimport kotlinx.coroutines.CoroutineScope
+import app.opentune.utils.joinByBullet
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
