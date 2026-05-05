@@ -159,27 +159,26 @@ class YouTubeSearchViewModel @Inject constructor(
         viewModelScope.launch(Dispatchers.IO) {
             val existing = database.playlist(album.playlistId).first()?.playlist
             if (existing == null) {
-                database.transaction {
-                    insert(
-                        PlaylistEntity(
-                            id = album.playlistId,
-                            name = album.title,
-                            thumbnailUrl = album.thumbnailUrl,
-                            bookmarkedAt = LocalDateTime.now(),
-                        )
+                // Insert playlist directly on IO dispatcher (Room allows background-thread DAO calls)
+                database.insert(
+                    PlaylistEntity(
+                        id = album.playlistId,
+                        name = album.title,
+                        thumbnailUrl = album.thumbnailUrl,
+                        bookmarkedAt = LocalDateTime.now(),
                     )
-                    songs.forEachIndexed { index, track ->
-                        insert(SongEntity(id = track.videoId, title = track.title, thumbnailUrl = track.thumbnailUrl, localPath = null))
-                        if (track.artistName.isNotBlank()) {
-                            val artistId = "YTA_${track.artistName.hashCode()}"
-                            insert(ArtistEntity(id = artistId, name = track.artistName))
-                            insert(SongArtistMap(songId = track.videoId, artistId = artistId, position = 0))
-                        }
-                        insert(PlaylistSongMap(playlistId = album.playlistId, songId = track.videoId, position = index))
+                )
+                songs.forEachIndexed { index, track ->
+                    database.insert(SongEntity(id = track.videoId, title = track.title, thumbnailUrl = track.thumbnailUrl, localPath = null))
+                    if (track.artistName.isNotBlank()) {
+                        val artistId = "YTA_${track.artistName.hashCode()}"
+                        database.insert(ArtistEntity(id = artistId, name = track.artistName))
+                        database.insert(SongArtistMap(songId = track.videoId, artistId = artistId, position = 0))
                     }
+                    database.insert(PlaylistSongMap(playlistId = album.playlistId, songId = track.videoId, position = index))
                 }
             } else {
-                database.query { update(existing.toggleLike()) }
+                database.update(existing.toggleLike())
             }
         }
     }
