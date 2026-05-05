@@ -87,27 +87,24 @@ class InnertubeApi @Inject constructor() {
 
     fun search(query: String): SearchResult<YtMusicTrack> {
         return try {
+            // Use unfiltered YouTube search — music_songs filter has no nextPage token,
+            // so infinite scroll never works with it.
             val info = SearchInfo.getInfo(
                 ServiceList.YouTube,
-                ServiceList.YouTube.searchQHFactory.fromQuery(query, listOf("music_songs"), ""),
+                ServiceList.YouTube.searchQHFactory.fromQuery(query),
             )
             val tracks = info.relatedItems.filterIsInstance<StreamInfoItem>().mapNotNull { it.toTrack() }
-            Log.d(tag, "search('$query') -> ${tracks.size} tracks")
+            Log.d(tag, "search('$query') -> ${tracks.size} tracks, hasNext=${info.nextPage != null}")
             SearchResult(tracks, info.nextPage)
         } catch (e: Exception) {
             Log.w(tag, "search('$query') failed [${e.javaClass.simpleName}]: ${e.message}")
-            try {
-                val info = SearchInfo.getInfo(ServiceList.YouTube, ServiceList.YouTube.searchQHFactory.fromQuery(query))
-                SearchResult(info.relatedItems.filterIsInstance<StreamInfoItem>().mapNotNull { it.toTrack() }, info.nextPage)
-            } catch (e2: Exception) {
-                SearchResult(emptyList())
-            }
+            SearchResult(emptyList())
         }
     }
 
     fun searchMoreSongs(query: String, nextPage: Page): SearchResult<YtMusicTrack> {
         return try {
-            val qh = ServiceList.YouTube.searchQHFactory.fromQuery(query, listOf("music_songs"), "")
+            val qh = ServiceList.YouTube.searchQHFactory.fromQuery(query)
             val page = SearchInfo.getMoreItems(ServiceList.YouTube, qh, nextPage)
             SearchResult(page.items.filterIsInstance<StreamInfoItem>().mapNotNull { it.toTrack() }, page.nextPage)
         } catch (e: Exception) {
