@@ -20,9 +20,12 @@ import androidx.compose.material.icons.rounded.PlaylistRemove
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.ui.res.painterResource
+import app.opentune.ui.component.button.IconButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -81,6 +84,8 @@ fun PlaylistMenu(
     val downloadUtil = LocalDownloadUtil.current
     val playerConnection = LocalPlayerConnection.current ?: return
     val queueBoard by playerConnection.queueBoard.collectAsState()
+    val livePlaylist by database.playlist(playlist.playlist.id).collectAsState(initial = playlist)
+    val currentPlaylist = livePlaylist ?: playlist
     var songs by remember {
         mutableStateOf(emptyList<Song>())
     }
@@ -183,11 +188,32 @@ fun PlaylistMenu(
 
 
     PlaylistListItem(
-        playlist = playlist,
+        playlist = currentPlaylist,
         subtitle = joinByBullet(
-            getNSongsString(playlist.songCount, playlist.downloadCount),
-            playlist.playlist.path.trimEnd { it == '/' }),
-        showBadges = true
+            getNSongsString(currentPlaylist.songCount, currentPlaylist.downloadCount),
+            currentPlaylist.playlist.path.trimEnd { it == '/' }),
+        showBadges = true,
+        trailingContent = {
+            IconButton(
+                onClick = {
+                    database.query {
+                        update(currentPlaylist.playlist.toggleLike())
+                    }
+                }
+            ) {
+                Icon(
+                    painter = painterResource(
+                        if (currentPlaylist.playlist.bookmarkedAt != null) R.drawable.favorite
+                        else R.drawable.favorite_border
+                    ),
+                    tint = if (currentPlaylist.playlist.bookmarkedAt != null)
+                        MaterialTheme.colorScheme.error
+                    else
+                        LocalContentColor.current,
+                    contentDescription = null
+                )
+            }
+        }
     )
 
     HorizontalDivider()

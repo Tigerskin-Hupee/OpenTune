@@ -150,7 +150,7 @@ enum class AlbumFilter {
 }
 
 enum class PlaylistFilter {
-    LIBRARY, DOWNLOADED
+    LIBRARY, LIKED, DOWNLOADED
 }
 
 enum class Speed {

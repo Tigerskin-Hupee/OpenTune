@@ -169,6 +169,7 @@ fun LibraryPlaylistsScreen(
                 ChipsRow(
                     chips = listOf(
                         PlaylistFilter.LIBRARY to stringResource(R.string.filter_library),
+                        PlaylistFilter.LIKED to stringResource(R.string.filter_liked),
                         PlaylistFilter.DOWNLOADED to stringResource(R.string.filter_downloaded)
                     ),
                     currentValue = filter,
@@ -226,6 +227,11 @@ fun LibraryPlaylistsScreen(
                                         title = stringResource(R.string.filter_library),
                                         leadingIcon = null,
                                         action = { filter = PlaylistFilter.LIBRARY }
+                                    ),
+                                    DropdownItem(
+                                        title = stringResource(R.string.filter_liked),
+                                        leadingIcon = null,
+                                        action = { filter = PlaylistFilter.LIKED }
                                     ),
                                     DropdownItem(
                                         title = stringResource(R.string.filter_downloaded),
