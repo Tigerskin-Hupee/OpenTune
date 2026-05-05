@@ -12,16 +12,24 @@ package app.opentune.ui.component
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.navigation.NavController
+import app.opentune.LocalDatabase
 import app.opentune.db.entities.Album
 import app.opentune.db.entities.Artist
 import app.opentune.db.entities.Playlist
@@ -36,8 +44,9 @@ import app.opentune.ui.menu.ArtistMenu
 import app.opentune.ui.menu.MenuState
 import app.opentune.ui.menu.PlaylistMenu
 
-
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 @Composable
 fun LibraryArtistListItem(
@@ -184,35 +193,49 @@ fun LibraryPlaylistListItem(
     coroutineScope: CoroutineScope,
     playlist: Playlist,
     modifier: Modifier = Modifier
-) = PlaylistListItem(
-    playlist = playlist,
-    trailingContent = {
-        val haptic = LocalHapticFeedback.current
-        IconButton(
-            onClick = {
-                menuState.show {
-                    PlaylistMenu(
-                        navController = navController,
-                        playlist = playlist,
-                        coroutineScope = coroutineScope,
-                        onDismiss = menuState::dismiss
-                    )
+) {
+    val database = LocalDatabase.current
+    val livePlaylist by database.playlist(playlist.id).collectAsState(initial = playlist)
+    val isBookmarked = livePlaylist?.playlist?.bookmarkedAt != null
+
+    PlaylistListItem(
+        playlist = playlist,
+        trailingContent = {
+            val haptic = LocalHapticFeedback.current
+            IconButton(
+                onClick = {
+                    coroutineScope.launch(Dispatchers.IO) {
+                        livePlaylist?.playlist?.let { database.update(it.toggleLike()) }
+                    }
                 }
-                haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+            ) {
+                Icon(
+                    imageVector = if (isBookmarked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                    contentDescription = null,
+                    tint = if (isBookmarked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
-        ) {
-            Icon(
-                Icons.Rounded.MoreVert,
-                contentDescription = null
-            )
-        }
-    },
-    modifier = modifier
-        .fillMaxWidth()
-        .clickable {
-            navController.navigate("local_playlist/${playlist.id}")
-        }
-)
+            IconButton(
+                onClick = {
+                    menuState.show {
+                        PlaylistMenu(
+                            navController = navController,
+                            playlist = playlist,
+                            coroutineScope = coroutineScope,
+                            onDismiss = menuState::dismiss
+                        )
+                    }
+                    haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+                }
+            ) {
+                Icon(Icons.Rounded.MoreVert, contentDescription = null)
+            }
+        },
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable { navController.navigate("local_playlist/${playlist.id}") }
+    )
+}
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -222,24 +245,44 @@ fun LibraryPlaylistGridItem(
     coroutineScope: CoroutineScope,
     playlist: Playlist,
     modifier: Modifier = Modifier
-) = PlaylistGridItem(
-    playlist = playlist,
-    fillMaxWidth = true,
-    modifier = modifier
-        .fillMaxWidth()
-        .combinedClickable(
-            onClick = {
-                navController.navigate("local_playlist/${playlist.id}")
-            },
-            onLongClick = {
-                menuState.show {
-                    PlaylistMenu(
-                        navController = navController,
-                        playlist = playlist,
-                        coroutineScope = coroutineScope,
-                        onDismiss = menuState::dismiss
-                    )
-                }
-            }
+) {
+    val database = LocalDatabase.current
+    val livePlaylist by database.playlist(playlist.id).collectAsState(initial = playlist)
+    val isBookmarked = livePlaylist?.playlist?.bookmarkedAt != null
+
+    Box {
+        PlaylistGridItem(
+            playlist = playlist,
+            fillMaxWidth = true,
+            modifier = modifier
+                .fillMaxWidth()
+                .combinedClickable(
+                    onClick = { navController.navigate("local_playlist/${playlist.id}") },
+                    onLongClick = {
+                        menuState.show {
+                            PlaylistMenu(
+                                navController = navController,
+                                playlist = playlist,
+                                coroutineScope = coroutineScope,
+                                onDismiss = menuState::dismiss
+                            )
+                        }
+                    }
+                )
         )
-)
+        IconButton(
+            onClick = {
+                coroutineScope.launch(Dispatchers.IO) {
+                    livePlaylist?.playlist?.let { database.update(it.toggleLike()) }
+                }
+            },
+            modifier = Modifier.align(Alignment.TopEnd)
+        ) {
+            Icon(
+                imageVector = if (isBookmarked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                contentDescription = null,
+                tint = if (isBookmarked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
