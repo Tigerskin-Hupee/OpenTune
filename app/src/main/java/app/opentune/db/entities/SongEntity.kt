@@ -15,9 +15,10 @@ import java.time.ZoneOffset
 @Entity(
     tableName = "song",
     indices = [
-        Index(
-            value = ["albumId"]
-        )
+        Index(value = ["albumId"]),
+        Index(value = ["liked"]),
+        Index(value = ["likedDate"]),
+        Index(value = ["inLibrary"]),
     ]
 )
 data class SongEntity(
