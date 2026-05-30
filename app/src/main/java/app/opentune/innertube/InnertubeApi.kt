@@ -85,17 +85,16 @@ class InnertubeApi @Inject constructor() {
 
     private fun fetchAudioStreamViaPlayerApi(videoId: String): String {
         val json = "application/json; charset=utf-8".toMediaType()
-        // ANDROID client returns direct (unencrypted) stream URLs without needing
-        // JavaScript cipher decryption, unlike the WEB client.
-        val body = """{"videoId":"$videoId","context":{"client":{"clientName":"ANDROID","clientVersion":"17.31.35","androidSdkVersion":30,"hl":"en","gl":"US"}}}"""
+        val clientVersion = "19.09.37"
+        val body = """{"videoId":"$videoId","contentCheckOk":true,"racyCheckOk":true,"context":{"client":{"clientName":"ANDROID","clientVersion":"$clientVersion","androidSdkVersion":30,"hl":"en","gl":"US"}}}"""
 
         val response = httpClient.newCall(
             Request.Builder()
-                .url("https://www.youtube.com/youtubei/v1/player")
+                .url("https://www.youtube.com/youtubei/v1/player?key=AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w")
                 .post(body.toRequestBody(json))
-                .addHeader("User-Agent", "com.google.android.youtube/17.31.35 (Linux; U; Android 11) gzip")
+                .addHeader("User-Agent", "com.google.android.youtube/$clientVersion (Linux; U; Android 11) gzip")
                 .addHeader("X-YouTube-Client-Name", "3")
-                .addHeader("X-YouTube-Client-Version", "17.31.35")
+                .addHeader("X-YouTube-Client-Version", clientVersion)
                 .addHeader("Origin", "https://www.youtube.com")
                 .build()
         ).execute()
