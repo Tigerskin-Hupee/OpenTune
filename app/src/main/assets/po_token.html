@@ -1,5 +1,26 @@
 <!DOCTYPE html>
 <html lang="en"><head><title></title><script>
+// Make WebView appear as Chrome to BotGuard environment checks.
+// Without window.chrome BotGuard detects a non-browser and produces invalid tokens.
+if (!window.chrome) {
+  window.chrome = {
+    runtime: {},
+    loadTimes: function() { return {}; },
+    csi: function() { return {}; },
+    app: {}
+  };
+}
+try {
+  Object.defineProperty(navigator, 'plugins', {
+    get: function() {
+      var p = [{name:'Chrome PDF Plugin',filename:'internal-pdf-viewer',description:'Portable Document Format'},
+               {name:'Chrome PDF Viewer',filename:'mhjfbmdgcfjbbpaeojofohoefgiehjai',description:''},
+               {name:'Native Client',filename:'internal-nacl-plugin',description:'Native Client'}];
+      p.item = function(i){return this[i]||null;}; p.namedItem = function(n){return null;}; p.refresh = function(){};
+      return p;
+    }, configurable: true
+  });
+} catch(e) {}
 function loadBotGuard(challengeData) {
   this.vm = this[challengeData.globalName];
   this.program = challengeData.program;

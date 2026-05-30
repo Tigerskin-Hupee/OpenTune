@@ -45,7 +45,8 @@ class PoTokenWebView private constructor(private val context: Context) {
             webView.settings.apply {
                 @Suppress("SetJavaScriptEnabled")
                 javaScriptEnabled = true
-                blockNetworkLoads = true
+                // Allow BotGuard to make validation network requests — blocking them
+                // causes BotGuard to produce lower-quality tokens that YouTube rejects.
                 userAgentString = USER_AGENT
             }
             webView.addJavascriptInterface(this@PoTokenWebView, JS_INTERFACE)
