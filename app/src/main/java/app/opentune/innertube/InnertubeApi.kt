@@ -85,22 +85,23 @@ class InnertubeApi @Inject constructor() {
 
     private fun fetchAudioStreamViaPlayerApi(videoId: String): String {
         val json = "application/json; charset=utf-8".toMediaType()
-        val clientVersion = "19.09.37"
-        val body = """{"videoId":"$videoId","contentCheckOk":true,"racyCheckOk":true,"context":{"client":{"clientName":"ANDROID","clientVersion":"$clientVersion","androidSdkVersion":30,"hl":"en","gl":"US"}}}"""
+        // IOS client reliably returns direct (unencrypted) stream URLs.
+        val clientVersion = "19.09.2"
+        val body = """{"videoId":"$videoId","contentCheckOk":true,"racyCheckOk":true,"context":{"client":{"clientName":"IOS","clientVersion":"$clientVersion","deviceModel":"iPhone16,2","osVersion":"17.4.1.21E237","hl":"en","gl":"US"}}}"""
 
         val response = httpClient.newCall(
             Request.Builder()
-                .url("https://www.youtube.com/youtubei/v1/player?key=AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w")
+                .url("https://www.youtube.com/youtubei/v1/player")
                 .post(body.toRequestBody(json))
-                .addHeader("User-Agent", "com.google.android.youtube/$clientVersion (Linux; U; Android 11) gzip")
-                .addHeader("X-YouTube-Client-Name", "3")
+                .addHeader("User-Agent", "com.google.ios.youtube/$clientVersion (iPhone16,2; U; CPU iOS 17_4_1 like Mac OS X; en_US)")
+                .addHeader("X-YouTube-Client-Name", "5")
                 .addHeader("X-YouTube-Client-Version", clientVersion)
-                .addHeader("Origin", "https://www.youtube.com")
                 .build()
         ).execute()
 
         val responseBody = response.body?.string()
         if (!response.isSuccessful || responseBody.isNullOrBlank()) {
+            Log.w(tag, "Player API HTTP ${response.code} body=${responseBody?.take(200)}")
             error("Player API HTTP ${response.code} for $videoId")
         }
 
