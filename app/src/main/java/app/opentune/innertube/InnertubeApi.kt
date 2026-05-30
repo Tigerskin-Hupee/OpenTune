@@ -77,23 +77,31 @@ class InnertubeApi @Inject constructor() {
     /** Resolve a video id to a direct audio CDN URL (highest-bitrate audio stream). */
     fun getAudioStreamUrl(videoId: String): String {
         val start = System.currentTimeMillis()
-        return try {
-            // Primary: NewPipeExtractor (handles cipher, n-param, visitor data).
-            val url = "https://www.youtube.com/watch?v=$videoId"
-            val info = StreamInfo.getInfo(ServiceList.YouTube, url)
+        var npeError: String? = null
+
+        // Primary: NewPipeExtractor — handles cipher, n-param, visitor data.
+        // Use a separate try so that NPE exceptions still fall through to the iOS fallback.
+        try {
+            val info = StreamInfo.getInfo(ServiceList.YouTube, "https://www.youtube.com/watch?v=$videoId")
             val allAudio = info.audioStreams
             val withUrl = allAudio.filter { it.content != null }
-            Log.d(tag, "getAudioStreamUrl($videoId) npe: total=${allAudio.size} withUrl=${withUrl.size}" +
-                allAudio.take(3).joinToString { " [${it.averageBitrate}bps content=${it.content?.take(30)} method=${it.deliveryMethod}]" })
-            val audioStream = withUrl.maxByOrNull { it.averageBitrate }
-            if (audioStream != null) {
+            Log.d(tag, "getAudioStreamUrl($videoId) npe: total=${allAudio.size} withUrl=${withUrl.size}")
+            val best = withUrl.maxByOrNull { it.averageBitrate }
+            if (best != null) {
                 val elapsed = System.currentTimeMillis() - start
-                Log.d(tag, "getAudioStreamUrl($videoId) ok via NPE ${elapsed}ms bitrate=${audioStream.averageBitrate}")
+                Log.d(tag, "getAudioStreamUrl($videoId) ok via NPE ${elapsed}ms bitrate=${best.averageBitrate}")
                 app.opentune.utils.DiagnosticsLogger.logStream(videoId, true, elapsed)
-                return audioStream.content!!
+                return best.content!!
             }
-            // All NPE streams have no direct URL — PoToken required. Fall back to iOS player API.
-            Log.w(tag, "getAudioStreamUrl($videoId) NPE streams empty/null-content, trying iOS fallback")
+            npeError = "NPE: ${allAudio.size} streams, none with direct URL"
+            Log.w(tag, "getAudioStreamUrl($videoId) $npeError — trying iOS fallback")
+        } catch (e: Exception) {
+            npeError = "NPE ${e.javaClass.simpleName}: ${e.message?.take(100)}"
+            Log.w(tag, "getAudioStreamUrl($videoId) NPE failed — trying iOS fallback: $npeError")
+        }
+
+        // Fallback: iOS player API (clientId=5) — does not require PoToken.
+        return try {
             val iosUrl = fetchAudioStreamIos(videoId)
             val elapsed = System.currentTimeMillis() - start
             Log.d(tag, "getAudioStreamUrl($videoId) ok via iOS fallback ${elapsed}ms")
@@ -101,88 +109,53 @@ class InnertubeApi @Inject constructor() {
             iosUrl
         } catch (e: Exception) {
             val elapsed = System.currentTimeMillis() - start
-            Log.w(tag, "getAudioStreamUrl($videoId) FAILED ${elapsed}ms: ${e.message}")
-            app.opentune.utils.DiagnosticsLogger.logStream(videoId, false, elapsed, e.javaClass.simpleName + ": " + e.message?.take(600))
-            throw e
+            val combined = "$npeError | iOS ${e.javaClass.simpleName}: ${e.message?.take(300)}"
+            Log.w(tag, "getAudioStreamUrl($videoId) BOTH FAILED ${elapsed}ms: $combined")
+            app.opentune.utils.DiagnosticsLogger.logStream(videoId, false, elapsed, combined.take(600))
+            throw Exception(combined)
         }
     }
 
-    /**
-     * iOS YouTube client fallback for audio stream resolution.
-     * The iOS client (clientId=5) does not require a PoToken, unlike web clients.
-     * Requires the correct API key and body structure to return direct audio URLs.
-     */
+    // iOS YouTube client (clientId=5) — does not require PoToken unlike web/Android clients.
     private fun fetchAudioStreamIos(videoId: String): String {
         val json = "application/json; charset=utf-8".toMediaType()
-        // iOS YouTube API key — embedded in the official iOS app, public/stable.
         val apiKey = "AIzaSyB-63vPrdThhKuerbB2N_WhIe4"
-        val clientVersion = "19.29.1"
-        val body = """
-            {
-              "videoId": "$videoId",
-              "contentCheckOk": true,
-              "racyCheckOk": true,
-              "context": {
-                "client": {
-                  "clientName": "IOS",
-                  "clientVersion": "$clientVersion",
-                  "deviceModel": "iPhone16,2",
-                  "userAgent": "com.google.ios.youtube/$clientVersion (iPhone16,2; U; CPU iOS 17_5 like Mac OS X;en_US) gzip",
-                  "hl": "en",
-                  "gl": "US",
-                  "timeZone": "UTC",
-                  "utcOffsetMinutes": 0,
-                  "platform": "MOBILE"
-                }
-              },
-              "playbackContext": {
-                "contentPlaybackContext": {
-                  "html5Preference": "HTML5_PREF_WANTS"
-                }
-              }
-            }
-        """.trimIndent()
+        val v = "19.29.1"
+        val body = """{"videoId":"$videoId","contentCheckOk":true,"racyCheckOk":true,"context":{"client":{"clientName":"IOS","clientVersion":"$v","deviceModel":"iPhone16,2","userAgent":"com.google.ios.youtube/$v (iPhone16,2; U; CPU iOS 17_5 like Mac OS X;en_US) gzip","hl":"en","gl":"US","timeZone":"UTC","utcOffsetMinutes":0,"platform":"MOBILE"}},"playbackContext":{"contentPlaybackContext":{"html5Preference":"HTML5_PREF_WANTS"}}}"""
 
         val response = httpClient.newCall(
             Request.Builder()
                 .url("https://www.youtube.com/youtubei/v1/player?key=$apiKey&prettyPrint=false")
                 .post(body.toRequestBody(json))
-                .addHeader("User-Agent", "com.google.ios.youtube/$clientVersion (iPhone16,2; U; CPU iOS 17_5 like Mac OS X;en_US) gzip")
+                .addHeader("User-Agent", "com.google.ios.youtube/$v (iPhone16,2; U; CPU iOS 17_5 like Mac OS X;en_US) gzip")
                 .addHeader("X-YouTube-Client-Name", "5")
-                .addHeader("X-YouTube-Client-Version", clientVersion)
+                .addHeader("X-YouTube-Client-Version", v)
                 .addHeader("Origin", "https://www.youtube.com")
                 .addHeader("Content-Type", "application/json")
                 .build()
         ).execute()
 
-        val responseBody = response.body?.string()
-        if (!response.isSuccessful || responseBody.isNullOrBlank()) {
-            error("iOS player API HTTP ${response.code}: ${responseBody?.take(200)}")
-        }
+        val rb = response.body?.string()
+        if (!response.isSuccessful || rb.isNullOrBlank()) error("HTTP ${response.code}: ${rb?.take(200)}")
 
-        val root = JSONObject(responseBody)
+        val root = JSONObject(rb)
         val playability = root.optJSONObject("playabilityStatus")
-        val status = playability?.optString("status")
-        if (status != null && status != "OK") {
-            val reason = playability?.optString("reason") ?: ""
-            error("iOS player API $status: $reason")
-        }
+        val status = playability?.optString("status") ?: "?"
+        if (status != "OK") error("$status: ${playability?.optString("reason") ?: ""} (streamingData=${root.has("streamingData")})")
 
-        val adaptiveFormats = root.optJSONObject("streamingData")
-            ?.optJSONArray("adaptiveFormats")
-            ?: error("iOS player API: no adaptiveFormats (streamingData=${root.has("streamingData")})")
+        val formats = root.optJSONObject("streamingData")?.optJSONArray("adaptiveFormats")
+            ?: error("no adaptiveFormats")
 
         var bestUrl: String? = null
         var bestBitrate = 0
-        for (i in 0 until adaptiveFormats.length()) {
-            val fmt = adaptiveFormats.getJSONObject(i)
+        for (i in 0 until formats.length()) {
+            val fmt = formats.getJSONObject(i)
             if (!fmt.optString("mimeType", "").startsWith("audio/")) continue
             val u = fmt.optString("url", "").takeIf { it.isNotBlank() } ?: continue
             val br = fmt.optInt("averageBitrate", 0).takeIf { it > 0 } ?: fmt.optInt("bitrate", 0)
             if (br > bestBitrate) { bestBitrate = br; bestUrl = u }
         }
-
-        return bestUrl ?: error("iOS player API: no direct audio URL in ${adaptiveFormats.length()} formats")
+        return bestUrl ?: error("no direct audio URL in ${formats.length()} formats")
     }
 
     fun search(query: String): SearchResult<YtMusicTrack> {
