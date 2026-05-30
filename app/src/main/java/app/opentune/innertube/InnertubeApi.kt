@@ -59,10 +59,47 @@ data class YtMusicAlbum(
 class InnertubeApi @Inject constructor() {
     private val tag = "InnertubeApi"
 
+    private val cookieManager = java.net.CookieManager().apply {
+        setCookiePolicy(java.net.CookiePolicy.ACCEPT_ALL)
+    }
+
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
+        .cookieJar(okhttp3.JavaNetCookieJar(cookieManager))
         .build()
+
+    // Cached visitorData from YouTube — YouTube requires this for content to be playable.
+    @Volatile private var visitorData: String? = null
+    @Volatile private var visitorDataExpiry: Long = 0
+
+    private fun ensureVisitorContext() {
+        val now = System.currentTimeMillis()
+        if (visitorData != null && now < visitorDataExpiry) return
+        try {
+            val html = httpClient.newCall(
+                Request.Builder()
+                    .url("https://www.youtube.com/")
+                    .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .addHeader("Accept-Language", "en-US,en;q=0.9")
+                    .build()
+            ).execute().use { it.body?.string() } ?: return
+            // Extract VISITOR_DATA token embedded in the page config
+            val marker = "\"VISITOR_DATA\":\""
+            val s = html.indexOf(marker)
+            if (s != -1) {
+                val vs = s + marker.length
+                val ve = html.indexOf('"', vs)
+                if (ve != -1) {
+                    visitorData = html.substring(vs, ve)
+                    visitorDataExpiry = now + 30 * 60 * 1000L
+                    Log.d(tag, "visitorData fetched (${visitorData?.length} chars)")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(tag, "ensureVisitorContext failed: ${e.message}")
+        }
+    }
 
     /** Resolve a video id to a direct audio CDN URL (highest-bitrate audio stream). */
     fun getAudioStreamUrl(videoId: String): String {
@@ -131,8 +168,12 @@ class InnertubeApi @Inject constructor() {
         val json = "application/json; charset=utf-8".toMediaType()
         val errors = mutableListOf<String>()
 
+        ensureVisitorContext()
+        val vd = visitorData
+
         for (client in playerClients) {
-            val body = """{"videoId":"$videoId","context":{"client":{"clientName":"${client.name}","clientVersion":"${client.version}"}}${client.extraBody}}"""
+            val visitorField = if (vd != null) ""","visitorData":"$vd"""" else ""
+            val body = """{"videoId":"$videoId","context":{"client":{"clientName":"${client.name}","clientVersion":"${client.version}"$visitorField}}${client.extraBody}}"""
             try {
                 val response = httpClient.newCall(
                     Request.Builder()
