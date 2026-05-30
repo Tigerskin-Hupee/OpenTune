@@ -3,6 +3,7 @@ package app.opentune.utils
 import android.content.Context
 import android.os.Build
 import app.opentune.BuildConfig
+import app.opentune.utils.potoken.OpenTunePoTokenProvider
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -35,6 +36,8 @@ object DiagnosticsLogger {
         sb.appendLine("App    : ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) ${BuildConfig.BUILD_TYPE}")
         sb.appendLine("Device : ${Build.BRAND} ${Build.MODEL} (Android ${Build.VERSION.SDK_INT})")
         sb.appendLine("Time   : ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())}")
+        val poErr = OpenTunePoTokenProvider.lastError
+        sb.appendLine("PoToken: ${if (poErr == null) "OK" else "FAIL($poErr)"}")
         sb.appendLine()
 
         sb.appendLine("--- Stream Resolution Log (last ${events.size}) ---")

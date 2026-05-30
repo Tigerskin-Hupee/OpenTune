@@ -207,7 +207,6 @@ class PoTokenWebView private constructor(private val context: Context) {
             .post(body.toRequestBody("application/json+protobuf".toMediaType()))
             .addHeader("User-Agent", USER_AGENT)
             .addHeader("Accept", "application/json")
-            .addHeader("Content-Type", "application/json+protobuf")
             .addHeader("x-goog-api-key", GOOGLE_API_KEY)
             .addHeader("x-user-agent", "grpc-web-javascript/0.1")
             .build()
