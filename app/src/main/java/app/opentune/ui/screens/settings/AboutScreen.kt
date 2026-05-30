@@ -14,7 +14,14 @@ import android.os.Build
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.foundation.Image
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -275,6 +282,51 @@ fun AboutScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                SettingsClickToReveal("Stream Extractor (NewPipeExtractor)") {
+                    var checkStatus by remember { mutableStateOf<String?>(null) }
+                    var checking by remember { mutableStateOf(false) }
+                    val scope = rememberCoroutineScope()
+
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "Current commit: ${app.opentune.utils.NewPipeVersionChecker.currentCommit.take(10)}",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Button(
+                            onClick = {
+                                checking = true
+                                checkStatus = null
+                                scope.launch(Dispatchers.IO) {
+                                    val latest = app.opentune.utils.NewPipeVersionChecker.fetchLatestDevCommit()
+                                    checkStatus = when {
+                                        latest == null -> "Check failed (no network?)"
+                                        app.opentune.utils.NewPipeVersionChecker.isUpToDate(latest) ->
+                                            "Up to date (latest: ${latest.take(10)})"
+                                        else ->
+                                            "Update available — latest: ${latest.take(10)}, current: ${app.opentune.utils.NewPipeVersionChecker.currentCommit.take(10)}"
+                                    }
+                                    checking = false
+                                }
+                            },
+                            enabled = !checking,
+                        ) {
+                            Text(if (checking) "Checking..." else "Check for Updates")
+                        }
+                        if (checkStatus != null) {
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                text = checkStatus!!,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (checkStatus!!.startsWith("Update"))
+                                    MaterialTheme.colorScheme.error
+                                else
+                                    MaterialTheme.colorScheme.secondary,
+                            )
+                        }
+                    }
+                }
+
                 SettingsClickToReveal("Playback Diagnostics") {
                     val report = app.opentune.utils.DiagnosticsLogger.getReport(context)
                     val clipboardManager = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
