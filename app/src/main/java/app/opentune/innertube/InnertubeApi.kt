@@ -83,58 +83,105 @@ class InnertubeApi @Inject constructor() {
         }
     }
 
+    private data class PlayerClient(
+        val name: String,
+        val version: String,
+        val clientId: String,
+        val url: String,
+        val userAgent: String,
+        val origin: String,
+        val extraBody: String = "",
+    )
+
+    private val playerClients = listOf(
+        PlayerClient(
+            name = "WEB_REMIX", version = "1.20230501.01.00", clientId = "67",
+            url = "https://music.youtube.com/youtubei/v1/player",
+            userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            origin = "https://music.youtube.com",
+        ),
+        PlayerClient(
+            name = "WEB", version = "2.20230101.00.00", clientId = "1",
+            url = "https://www.youtube.com/youtubei/v1/player",
+            userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            origin = "https://www.youtube.com",
+        ),
+        PlayerClient(
+            name = "MWEB", version = "2.20230101.00.00", clientId = "2",
+            url = "https://www.youtube.com/youtubei/v1/player",
+            userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
+            origin = "https://www.youtube.com",
+        ),
+        PlayerClient(
+            name = "TVHTML5", version = "7.20230516.00.00", clientId = "7",
+            url = "https://www.youtube.com/youtubei/v1/player",
+            userAgent = "Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version",
+            origin = "https://www.youtube.com",
+        ),
+    )
+
     private fun fetchAudioStreamViaPlayerApi(videoId: String): String {
         val json = "application/json; charset=utf-8".toMediaType()
-        // TVHTML5_SIMPLY_EMBEDDED_PLAYER is designed for third-party embeds and
-        // does not require a PoToken, unlike ANDROID/IOS clients since 2025.
-        val body = """{"videoId":"$videoId","context":{"client":{"clientName":"TVHTML5_SIMPLY_EMBEDDED_PLAYER","clientVersion":"2.0","hl":"en","gl":"US"},"thirdParty":{"embedUrl":"https://www.youtube.com/"}}}"""
+        val errors = mutableListOf<String>()
 
-        val response = httpClient.newCall(
-            Request.Builder()
-                .url("https://www.youtube.com/youtubei/v1/player")
-                .post(body.toRequestBody(json))
-                .addHeader("User-Agent", "Mozilla/5.0 (SMART-TV; Linux; Tizen 6.0) AppleWebKit/538.1 (KHTML, like Gecko) Version/6.0 TV Safari/538.1")
-                .addHeader("X-YouTube-Client-Name", "85")
-                .addHeader("X-YouTube-Client-Version", "2.0")
-                .addHeader("Origin", "https://www.youtube.com")
-                .build()
-        ).execute()
+        for (client in playerClients) {
+            val body = """{"videoId":"$videoId","context":{"client":{"clientName":"${client.name}","clientVersion":"${client.version}","hl":"en","gl":"US"}}${client.extraBody}}"""
+            try {
+                val response = httpClient.newCall(
+                    Request.Builder()
+                        .url(client.url)
+                        .post(body.toRequestBody(json))
+                        .addHeader("User-Agent", client.userAgent)
+                        .addHeader("X-YouTube-Client-Name", client.clientId)
+                        .addHeader("X-YouTube-Client-Version", client.version)
+                        .addHeader("Origin", client.origin)
+                        .addHeader("Referer", "${client.origin}/")
+                        .build()
+                ).execute()
 
-        val responseBody = response.body?.string()
-        if (!response.isSuccessful || responseBody.isNullOrBlank()) {
-            error("Player API HTTP ${response.code} for $videoId | body=${responseBody?.take(300)}")
-        }
+                val responseBody = response.body?.string()
+                if (!response.isSuccessful || responseBody.isNullOrBlank()) {
+                    errors += "${client.name}: HTTP ${response.code} | ${responseBody?.take(120)}"
+                    continue
+                }
 
-        val root = JSONObject(responseBody)
+                val root = JSONObject(responseBody)
+                val status = root.optJSONObject("playabilityStatus")?.optString("status")
+                if (status == "ERROR" || status == "LOGIN_REQUIRED" || status == "UNPLAYABLE") {
+                    val reason = root.optJSONObject("playabilityStatus")?.optString("reason") ?: status
+                    errors += "${client.name}: $status — $reason"
+                    continue
+                }
 
-        val status = root.optJSONObject("playabilityStatus")?.optString("status")
-        if (status == "ERROR" || status == "LOGIN_REQUIRED" || status == "UNPLAYABLE") {
-            val reason = root.optJSONObject("playabilityStatus")?.optString("reason") ?: status
-            error("Video $videoId not playable: $reason")
-        }
+                val adaptiveFormats = root.optJSONObject("streamingData")
+                    ?.optJSONArray("adaptiveFormats")
+                if (adaptiveFormats == null) {
+                    errors += "${client.name}: no adaptiveFormats"
+                    continue
+                }
 
-        val streamingData = root.optJSONObject("streamingData")
-            ?: error("No streamingData for $videoId")
+                var bestUrl: String? = null
+                var bestBitrate = 0
+                for (i in 0 until adaptiveFormats.length()) {
+                    val fmt = adaptiveFormats.getJSONObject(i)
+                    if (!fmt.optString("mimeType", "").startsWith("audio/")) continue
+                    val url = fmt.optString("url", "").takeIf { it.isNotBlank() } ?: continue
+                    val bitrate = fmt.optInt("averageBitrate", 0).takeIf { it > 0 } ?: fmt.optInt("bitrate", 0)
+                    if (bitrate > bestBitrate) { bestBitrate = bitrate; bestUrl = url }
+                }
 
-        val adaptiveFormats = streamingData.optJSONArray("adaptiveFormats")
-            ?: error("No adaptiveFormats for $videoId")
+                if (bestUrl != null) {
+                    Log.d(tag, "fetchAudioStreamViaPlayerApi($videoId) success via ${client.name}")
+                    return bestUrl
+                }
+                errors += "${client.name}: no direct audio URL (cipher?)"
 
-        var bestUrl: String? = null
-        var bestBitrate = 0
-
-        for (i in 0 until adaptiveFormats.length()) {
-            val format = adaptiveFormats.getJSONObject(i)
-            if (!format.optString("mimeType", "").startsWith("audio/")) continue
-            val url = format.optString("url", "").takeIf { it.isNotBlank() } ?: continue
-            val bitrate = format.optInt("averageBitrate", 0).takeIf { it > 0 }
-                ?: format.optInt("bitrate", 0)
-            if (bitrate > bestBitrate) {
-                bestBitrate = bitrate
-                bestUrl = url
+            } catch (e: Exception) {
+                errors += "${client.name}: ${e.message?.take(80)}"
             }
         }
 
-        return bestUrl ?: error("No direct audio URL in adaptiveFormats for $videoId")
+        error("All clients failed for $videoId: ${errors.joinToString(" | ")}")
     }
 
     fun search(query: String): SearchResult<YtMusicTrack> {
