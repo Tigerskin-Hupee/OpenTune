@@ -85,18 +85,20 @@ class InnertubeApi @Inject constructor() {
 
     private fun fetchAudioStreamViaPlayerApi(videoId: String): String {
         val json = "application/json; charset=utf-8".toMediaType()
-        // TVHTML5_SIMPLY_EMBEDDED_PLAYER is designed for third-party embeds and
-        // does not require a PoToken, unlike ANDROID/IOS clients since 2025.
-        val body = """{"videoId":"$videoId","context":{"client":{"clientName":"TVHTML5_SIMPLY_EMBEDDED_PLAYER","clientVersion":"2.0","hl":"en","gl":"US"},"thirdParty":{"embedUrl":"https://www.youtube.com/"}}}"""
+        // WEB_REMIX is the YouTube Music web client — same client the music.youtube.com
+        // browser app uses, fewer playability restrictions than native app clients.
+        val clientVersion = "1.20230501.01.00"
+        val body = """{"videoId":"$videoId","context":{"client":{"clientName":"WEB_REMIX","clientVersion":"$clientVersion","hl":"en","gl":"US"}}}"""
 
         val response = httpClient.newCall(
             Request.Builder()
-                .url("https://www.youtube.com/youtubei/v1/player")
+                .url("https://music.youtube.com/youtubei/v1/player")
                 .post(body.toRequestBody(json))
-                .addHeader("User-Agent", "Mozilla/5.0 (SMART-TV; Linux; Tizen 6.0) AppleWebKit/538.1 (KHTML, like Gecko) Version/6.0 TV Safari/538.1")
-                .addHeader("X-YouTube-Client-Name", "85")
-                .addHeader("X-YouTube-Client-Version", "2.0")
-                .addHeader("Origin", "https://www.youtube.com")
+                .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                .addHeader("X-YouTube-Client-Name", "67")
+                .addHeader("X-YouTube-Client-Version", clientVersion)
+                .addHeader("Origin", "https://music.youtube.com")
+                .addHeader("Referer", "https://music.youtube.com/")
                 .build()
         ).execute()
 
