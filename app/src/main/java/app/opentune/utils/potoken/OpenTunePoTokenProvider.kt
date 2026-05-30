@@ -24,9 +24,10 @@ object OpenTunePoTokenProvider : PoTokenProvider {
 
     private const val TAG = "OpenTunePoTokenProvider"
 
-    /** Exposed for diagnostics — last error from getWebClientPoToken, or null if OK. */
+    /** Exposed for diagnostics — null = OK/success, non-null = last error message.
+     *  Initial value "not_called" means getWebClientPoToken has never been invoked. */
     @Volatile
-    var lastError: String? = null
+    var lastError: String? = "not_called"
         private set
 
     private val httpClient = OkHttpClient.Builder()
@@ -85,9 +86,12 @@ object OpenTunePoTokenProvider : PoTokenProvider {
         return PoTokenResult(visitorData!!, playerPot, streamingPot)
     }
 
-    override fun getWebEmbedClientPoToken(videoId: String): PoTokenResult? = null
-    override fun getAndroidClientPoToken(videoId: String): PoTokenResult? = null
-    override fun getIosClientPoToken(videoId: String): PoTokenResult? = null
+    // Reuse the WebView-based PoToken for Android/iOS clients as well — NPE calls these
+    // and without a PoToken the requests return HTTP 400. The WEB BotGuard token is valid
+    // BotGuard output; YouTube may accept it across client types.
+    override fun getWebEmbedClientPoToken(videoId: String): PoTokenResult? = getWebClientPoToken(videoId)
+    override fun getAndroidClientPoToken(videoId: String): PoTokenResult? = getWebClientPoToken(videoId)
+    override fun getIosClientPoToken(videoId: String): PoTokenResult? = getWebClientPoToken(videoId)
 
     private fun fetchVisitorData(): String {
         val clientCtx = """{"client":{"clientName":"WEB","clientVersion":"2.20241030.09.00","hl":"en","gl":"US"}}"""
