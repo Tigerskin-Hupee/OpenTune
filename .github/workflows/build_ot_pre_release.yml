@@ -5,6 +5,9 @@ on:
     branches:
       - 'claude/**'
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -47,6 +50,13 @@ jobs:
       - name: Build core release APK
         run: ./gradlew assembleCoreRelease
 
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenTune-${{ env.date_tag }}
+          path: app/build/outputs/apk/core/release/*.apk
+          retention-days: 7
+
       - name: Create github release draft
         uses: softprops/action-gh-release@v2
         with:
@@ -56,4 +66,4 @@ jobs:
           files: |
             app/build/outputs/apk/core/release/*.apk
         env:
-          GITHUB_TOKEN: ${{ secrets.REL_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.REL_TOKEN || secrets.GITHUB_TOKEN }}
