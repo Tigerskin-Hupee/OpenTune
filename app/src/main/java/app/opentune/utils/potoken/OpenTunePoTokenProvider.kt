@@ -24,23 +24,27 @@ object OpenTunePoTokenProvider : PoTokenProvider {
 
     private const val TAG = "OpenTunePoTokenProvider"
 
+    /** Exposed for diagnostics — last error from getWebClientPoToken, or null if OK. */
+    @Volatile
+    var lastError: String? = null
+        private set
+
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
 
-    @GuardedBy("this")
-    private var webView: PoTokenWebView? = null
-    @GuardedBy("this")
-    private var visitorData: String? = null
-    @GuardedBy("this")
-    private var streamingPot: String? = null
+    @Volatile private var webView: PoTokenWebView? = null
+    @Volatile private var visitorData: String? = null
+    @Volatile private var streamingPot: String? = null
 
     override fun getWebClientPoToken(videoId: String): PoTokenResult? {
         return try {
             getWebClientPoTokenInternal(videoId, forceRecreate = false)
         } catch (e: Exception) {
-            Log.e(TAG, "getWebClientPoToken($videoId) failed: ${e.message}")
+            val msg = "${e.javaClass.simpleName}: ${e.message?.take(200)}"
+            Log.e(TAG, "getWebClientPoToken($videoId) FAILED: $msg")
+            lastError = msg
             null
         }
     }
@@ -57,55 +61,71 @@ object OpenTunePoTokenProvider : PoTokenProvider {
 
             runBlocking {
                 val vd = withContext(Dispatchers.IO) { fetchVisitorData() }
+                Log.d(TAG, "visitorData fetched: ${vd.take(20)}...")
                 val wv = PoTokenWebView.create(App.instance)
+                Log.d(TAG, "WebView PoToken generator ready")
                 val sp = wv.generatePoToken(vd)
+                Log.d(TAG, "streaming PoToken generated: ${sp.take(20)}...")
                 visitorData = vd
                 webView = wv
                 streamingPot = sp
-                Log.d(TAG, "Initialized WebView PoToken provider, visitorData=$vd")
             }
+            lastError = null
         }
 
         val playerPot = try {
             runBlocking { webView!!.generatePoToken(videoId) }
         } catch (e: Exception) {
             if (forceRecreate) throw e
-            Log.w(TAG, "generatePoToken failed, retrying with fresh WebView: ${e.message}")
+            Log.w(TAG, "generatePoToken failed, retrying: ${e.message}")
             return getWebClientPoTokenInternal(videoId, forceRecreate = true)
         }
 
+        Log.d(TAG, "PoToken ok for $videoId: player=${playerPot.take(20)}...")
         return PoTokenResult(visitorData!!, playerPot, streamingPot)
     }
 
-    // Returns null for all other clients — BotGuard (WEB) tokens are sufficient.
     override fun getWebEmbedClientPoToken(videoId: String): PoTokenResult? = null
     override fun getAndroidClientPoToken(videoId: String): PoTokenResult? = null
     override fun getIosClientPoToken(videoId: String): PoTokenResult? = null
 
     private fun fetchVisitorData(): String {
-        val body = """{"context":{"client":{"clientName":"WEB","clientVersion":"2.20241030.09.00","hl":"en","gl":"US"}}}"""
-        val response = httpClient.newCall(
-            Request.Builder()
-                .url("https://www.youtube.com/youtubei/v1/guide?prettyPrint=false")
-                .post(body.toRequestBody("application/json; charset=utf-8".toMediaType()))
-                .addHeader("Content-Type", "application/json")
-                .addHeader("X-YouTube-Client-Name", "1")
-                .addHeader("X-YouTube-Client-Version", "2.20241030.09.00")
-                .addHeader("User-Agent", PoTokenWebView.USER_AGENT)
-                .addHeader("Origin", "https://www.youtube.com")
-                .addHeader("Referer", "https://www.youtube.com/")
-                .build()
-        ).execute()
+        val clientCtx = """{"client":{"clientName":"WEB","clientVersion":"2.20241030.09.00","hl":"en","gl":"US"}}"""
+        val endpoints = listOf(
+            "https://www.youtube.com/youtubei/v1/guide?prettyPrint=false" to
+                """{"context":$clientCtx}""",
+            "https://www.youtube.com/youtubei/v1/search?prettyPrint=false" to
+                """{"query":"a","context":$clientCtx}""",
+        )
 
-        if (!response.isSuccessful) {
-            throw PoTokenException("fetchVisitorData HTTP ${response.code}")
+        var lastEx: Exception? = null
+        for ((url, body) in endpoints) {
+            try {
+                val response = httpClient.newCall(
+                    Request.Builder()
+                        .url(url)
+                        .post(body.toRequestBody("application/json; charset=utf-8".toMediaType()))
+                        .addHeader("X-YouTube-Client-Name", "1")
+                        .addHeader("X-YouTube-Client-Version", "2.20241030.09.00")
+                        .addHeader("User-Agent", PoTokenWebView.USER_AGENT)
+                        .addHeader("Origin", "https://www.youtube.com")
+                        .build()
+                ).execute()
+
+                if (!response.isSuccessful) {
+                    lastEx = PoTokenException("fetchVisitorData HTTP ${response.code} from $url")
+                    continue
+                }
+                val vd = JSONObject(response.body!!.string())
+                    .getJSONObject("responseContext")
+                    .getString("visitorData")
+                if (vd.isNotBlank()) return vd
+                lastEx = PoTokenException("visitorData blank from $url")
+            } catch (e: Exception) {
+                lastEx = e
+                Log.w(TAG, "fetchVisitorData failed for $url: ${e.message}")
+            }
         }
-        val json = JSONObject(response.body!!.string())
-        return json.getJSONObject("responseContext").getString("visitorData")
+        throw lastEx ?: PoTokenException("fetchVisitorData: all endpoints failed")
     }
 }
-
-// Stub annotation to document the locking contract; not enforced at runtime.
-@Retention(AnnotationRetention.SOURCE)
-@Target(AnnotationTarget.FIELD)
-private annotation class GuardedBy(val value: String)

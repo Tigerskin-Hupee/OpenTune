@@ -93,7 +93,9 @@ class InnertubeApi @Inject constructor() {
                 app.opentune.utils.DiagnosticsLogger.logStream(videoId, true, elapsed)
                 return best.content!!
             }
-            npeError = "NPE: ${allAudio.size} streams, none with direct URL"
+            val potErr = app.opentune.utils.potoken.OpenTunePoTokenProvider.lastError
+            npeError = "NPE: ${allAudio.size} streams, none with direct URL" +
+                if (potErr != null) " [PoToken:$potErr]" else ""
             Log.w(tag, "getAudioStreamUrl($videoId) $npeError — trying iOS fallback")
         } catch (e: Exception) {
             npeError = "NPE ${e.javaClass.simpleName}: ${e.message?.take(100)}"
