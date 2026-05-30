@@ -132,7 +132,7 @@ class InnertubeApi @Inject constructor() {
         val errors = mutableListOf<String>()
 
         for (client in playerClients) {
-            val body = """{"videoId":"$videoId","context":{"client":{"clientName":"${client.name}","clientVersion":"${client.version}","hl":"en","gl":"US"}}${client.extraBody}}"""
+            val body = """{"videoId":"$videoId","context":{"client":{"clientName":"${client.name}","clientVersion":"${client.version}"}}${client.extraBody}}"""
             try {
                 val response = httpClient.newCall(
                     Request.Builder()
@@ -316,9 +316,9 @@ class InnertubeApi @Inject constructor() {
 
         do {
             val body = if (continuation == null) {
-                """{"browseId":"VL$playlistId","context":{"client":{"clientName":"WEB","clientVersion":"2.20230101.00.00","hl":"en","gl":"US"}}}"""
+                """{"browseId":"VL$playlistId","context":{"client":{"clientName":"WEB","clientVersion":"2.20230101.00.00"}}}"""
             } else {
-                """{"continuation":"$continuation","context":{"client":{"clientName":"WEB","clientVersion":"2.20230101.00.00","hl":"en","gl":"US"}}}"""
+                """{"continuation":"$continuation","context":{"client":{"clientName":"WEB","clientVersion":"2.20230101.00.00"}}}"""
             }
 
             val response = httpClient.newCall(

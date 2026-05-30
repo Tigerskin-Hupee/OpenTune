@@ -65,7 +65,7 @@ class StreamResolutionTest {
         var anySuccess = false
 
         for (client in clients) {
-            val body = """{"videoId":"$testVideoId","context":{"client":{"clientName":"${client.name}","clientVersion":"${client.version}","hl":"en","gl":"US"}}}"""
+            val body = """{"videoId":"$testVideoId","context":{"client":{"clientName":"${client.name}","clientVersion":"${client.version}"}}}"""
             try {
                 val response = httpClient.newCall(
                     Request.Builder()
