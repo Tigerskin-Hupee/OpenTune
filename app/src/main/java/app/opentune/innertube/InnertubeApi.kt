@@ -74,169 +74,27 @@ class InnertubeApi @Inject constructor() {
         .cookieJar(cookieJar)
         .build()
 
-    // Cached visitorData from YouTube — YouTube requires this for content to be playable.
-    @Volatile private var visitorData: String? = null
-    @Volatile private var visitorDataExpiry: Long = 0
-
-    private fun ensureVisitorContext() {
-        val now = System.currentTimeMillis()
-        if (visitorData != null && now < visitorDataExpiry) return
-        try {
-            val html = httpClient.newCall(
-                Request.Builder()
-                    .url("https://www.youtube.com/")
-                    .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                    .addHeader("Accept-Language", "en-US,en;q=0.9")
-                    .build()
-            ).execute().use { it.body?.string() } ?: return
-            // Extract VISITOR_DATA token embedded in the page config
-            val marker = "\"VISITOR_DATA\":\""
-            val s = html.indexOf(marker)
-            if (s != -1) {
-                val vs = s + marker.length
-                val ve = html.indexOf('"', vs)
-                if (ve != -1) {
-                    visitorData = html.substring(vs, ve)
-                    visitorDataExpiry = now + 30 * 60 * 1000L
-                    Log.d(tag, "visitorData fetched (${visitorData?.length} chars)")
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(tag, "ensureVisitorContext failed: ${e.message}")
-        }
-    }
-
     /** Resolve a video id to a direct audio CDN URL (highest-bitrate audio stream). */
     fun getAudioStreamUrl(videoId: String): String {
         val start = System.currentTimeMillis()
         return try {
-            // NewPipeExtractor StreamInfo is broken on 2026 YouTube (audioStreams always empty).
-            // Use the Innertube player API directly instead.
-            val url = fetchAudioStreamViaPlayerApi(videoId)
+            val url = "https://www.youtube.com/watch?v=$videoId"
+            val info = StreamInfo.getInfo(ServiceList.YouTube, url)
+            val audioStream = info.audioStreams
+                .filter { it.content != null }
+                .maxByOrNull { it.averageBitrate }
+                ?: throw Exception("audioStreams empty for $videoId")
+            val streamUrl = audioStream.content!!
             val elapsed = System.currentTimeMillis() - start
-            Log.d(tag, "getAudioStreamUrl($videoId) ok ${elapsed}ms")
+            Log.d(tag, "getAudioStreamUrl($videoId) ok ${elapsed}ms bitrate=${audioStream.averageBitrate}")
             app.opentune.utils.DiagnosticsLogger.logStream(videoId, true, elapsed)
-            url
+            streamUrl
         } catch (e: Exception) {
             val elapsed = System.currentTimeMillis() - start
             Log.w(tag, "getAudioStreamUrl($videoId) FAILED ${elapsed}ms: ${e.message}")
             app.opentune.utils.DiagnosticsLogger.logStream(videoId, false, elapsed, e.javaClass.simpleName + ": " + e.message?.take(600))
             throw e
         }
-    }
-
-    private data class PlayerClient(
-        val name: String,
-        val version: String,
-        val clientId: String,
-        val url: String,
-        val userAgent: String,
-        val origin: String,
-        val extraBody: String = "",
-    )
-
-    private val playerClients = listOf(
-        // ANDROID_TESTSUITE: internal YouTube test client, whitelisted to bypass PoToken.
-        PlayerClient(
-            name = "ANDROID_TESTSUITE", version = "1.9", clientId = "30",
-            url = "https://www.youtube.com/youtubei/v1/player",
-            userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 11) gzip",
-            origin = "https://www.youtube.com",
-        ),
-        PlayerClient(
-            name = "WEB_REMIX", version = "1.20230501.01.00", clientId = "67",
-            url = "https://music.youtube.com/youtubei/v1/player",
-            userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            origin = "https://music.youtube.com",
-        ),
-        PlayerClient(
-            name = "WEB", version = "2.20230101.00.00", clientId = "1",
-            url = "https://www.youtube.com/youtubei/v1/player",
-            userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            origin = "https://www.youtube.com",
-        ),
-        PlayerClient(
-            name = "MWEB", version = "2.20230101.00.00", clientId = "2",
-            url = "https://www.youtube.com/youtubei/v1/player",
-            userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
-            origin = "https://www.youtube.com",
-        ),
-        PlayerClient(
-            name = "TVHTML5", version = "7.20230516.00.00", clientId = "7",
-            url = "https://www.youtube.com/youtubei/v1/player",
-            userAgent = "Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version",
-            origin = "https://www.youtube.com",
-        ),
-    )
-
-    private fun fetchAudioStreamViaPlayerApi(videoId: String): String {
-        val json = "application/json; charset=utf-8".toMediaType()
-        val errors = mutableListOf<String>()
-
-        ensureVisitorContext()
-        val vd = visitorData
-
-        for (client in playerClients) {
-            val visitorField = if (vd != null) ""","visitorData":"$vd"""" else ""
-            val body = """{"videoId":"$videoId","context":{"client":{"clientName":"${client.name}","clientVersion":"${client.version}"$visitorField}}${client.extraBody}}"""
-            try {
-                val response = httpClient.newCall(
-                    Request.Builder()
-                        .url(client.url)
-                        .post(body.toRequestBody(json))
-                        .addHeader("User-Agent", client.userAgent)
-                        .addHeader("X-YouTube-Client-Name", client.clientId)
-                        .addHeader("X-YouTube-Client-Version", client.version)
-                        .addHeader("Origin", client.origin)
-                        .addHeader("Referer", "${client.origin}/")
-                        .build()
-                ).execute()
-
-                val responseBody = response.body?.string()
-                if (!response.isSuccessful || responseBody.isNullOrBlank()) {
-                    errors += "${client.name}: HTTP ${response.code} | ${responseBody?.take(120)}"
-                    continue
-                }
-
-                val root = JSONObject(responseBody)
-                val playability = root.optJSONObject("playabilityStatus")
-                val status = playability?.optString("status")
-                if (status == "ERROR" || status == "LOGIN_REQUIRED" || status == "UNPLAYABLE") {
-                    val reason = playability?.optString("reason") ?: "?"
-                    val hasStreaming = root.has("streamingData")
-                    errors += "${client.name}: $status reason=\"$reason\" hasStreamingData=$hasStreaming"
-                    continue
-                }
-
-                val adaptiveFormats = root.optJSONObject("streamingData")
-                    ?.optJSONArray("adaptiveFormats")
-                if (adaptiveFormats == null) {
-                    errors += "${client.name}: no adaptiveFormats"
-                    continue
-                }
-
-                var bestUrl: String? = null
-                var bestBitrate = 0
-                for (i in 0 until adaptiveFormats.length()) {
-                    val fmt = adaptiveFormats.getJSONObject(i)
-                    if (!fmt.optString("mimeType", "").startsWith("audio/")) continue
-                    val url = fmt.optString("url", "").takeIf { it.isNotBlank() } ?: continue
-                    val bitrate = fmt.optInt("averageBitrate", 0).takeIf { it > 0 } ?: fmt.optInt("bitrate", 0)
-                    if (bitrate > bestBitrate) { bestBitrate = bitrate; bestUrl = url }
-                }
-
-                if (bestUrl != null) {
-                    Log.d(tag, "fetchAudioStreamViaPlayerApi($videoId) success via ${client.name}")
-                    return bestUrl
-                }
-                errors += "${client.name}: no direct audio URL (cipher?)"
-
-            } catch (e: Exception) {
-                errors += "${client.name}: ${e.message?.take(80)}"
-            }
-        }
-
-        error("All clients failed for $videoId: ${errors.joinToString(" | ")}")
     }
 
     fun search(query: String): SearchResult<YtMusicTrack> {
