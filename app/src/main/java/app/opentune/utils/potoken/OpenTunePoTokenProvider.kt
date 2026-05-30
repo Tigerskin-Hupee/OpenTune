@@ -86,12 +86,11 @@ object OpenTunePoTokenProvider : PoTokenProvider {
         return PoTokenResult(visitorData!!, playerPot, streamingPot)
     }
 
-    // Reuse the WebView-based PoToken for Android/iOS clients as well — NPE calls these
-    // and without a PoToken the requests return HTTP 400. The WEB BotGuard token is valid
-    // BotGuard output; YouTube may accept it across client types.
+    // WEB_EMBED client: provide WEB PoToken (same BotGuard context applies).
+    // Android/iOS return null — WEB-type PoToken for those clients causes hard rejection.
     override fun getWebEmbedClientPoToken(videoId: String): PoTokenResult? = getWebClientPoToken(videoId)
-    override fun getAndroidClientPoToken(videoId: String): PoTokenResult? = getWebClientPoToken(videoId)
-    override fun getIosClientPoToken(videoId: String): PoTokenResult? = getWebClientPoToken(videoId)
+    override fun getAndroidClientPoToken(videoId: String): PoTokenResult? = null
+    override fun getIosClientPoToken(videoId: String): PoTokenResult? = null
 
     private fun fetchVisitorData(): String {
         val clientCtx = """{"client":{"clientName":"WEB","clientVersion":"2.20241030.09.00","hl":"en","gl":"US"}}"""
