@@ -1,6 +1,9 @@
 name: Build APKs for pre release
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - 'claude/**'
 
 jobs:
   build:
