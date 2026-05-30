@@ -27,10 +27,12 @@ import okio.Path.Companion.toOkioPath
 import app.opentune.innertube.NewPipeDownloader
 import app.opentune.utils.CoilBitmapLoader
 import app.opentune.utils.LocalArtworkPathKeyer
+import app.opentune.utils.potoken.OpenTunePoTokenProvider
 import dagger.hilt.android.HiltAndroidApp
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.localization.ContentCountry
 import org.schabi.newpipe.extractor.localization.Localization
+import org.schabi.newpipe.extractor.services.youtube.extractors.YoutubeStreamExtractor
 import javax.inject.Inject
 
 @HiltAndroidApp
@@ -56,7 +58,8 @@ class App : Application(), SingletonImageLoader.Factory, Configuration.Provider 
         // (no native binary, no disk extraction); safe to call on main thread.
         try {
             NewPipe.init(NewPipeDownloader(), Localization("en", "US"), ContentCountry("US"))
-            Log.i(TAG, "NewPipeExtractor initialised")
+            YoutubeStreamExtractor.setPoTokenProvider(OpenTunePoTokenProvider)
+            Log.i(TAG, "NewPipeExtractor initialised with PoTokenProvider")
         } catch (t: Throwable) {
             Log.e(TAG, "NewPipeExtractor init failed [${t.javaClass.name}]: ${t.message}", t)
         }
