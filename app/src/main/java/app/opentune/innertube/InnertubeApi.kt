@@ -22,7 +22,6 @@ import org.schabi.newpipe.extractor.channel.ChannelInfoItem
 import org.schabi.newpipe.extractor.playlist.PlaylistInfo
 import org.schabi.newpipe.extractor.playlist.PlaylistInfoItem
 import org.schabi.newpipe.extractor.search.SearchInfo
-import org.schabi.newpipe.extractor.stream.DeliveryMethod
 import org.schabi.newpipe.extractor.Page
 import org.schabi.newpipe.extractor.stream.StreamInfo
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
@@ -69,32 +68,73 @@ class InnertubeApi @Inject constructor() {
     fun getAudioStreamUrl(videoId: String): String {
         val start = System.currentTimeMillis()
         return try {
-            val url = "https://www.youtube.com/watch?v=$videoId"
-            val info = StreamInfo.getInfo(ServiceList.YouTube, url)
-            val streams = info.audioStreams
-            if (streams.isNullOrEmpty()) error("audioStreams empty for $videoId")
-
-            // Prefer PROGRESSIVE_HTTP — direct CDN URLs ExoPlayer can use without
-            // a manifest. Fall back to all streams if none are progressive.
-            val candidates = streams.filter {
-                it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP
-            }.ifEmpty { streams }
-
-            val best = candidates.maxByOrNull { s ->
-                s.averageBitrate.takeIf { it > 0 } ?: s.bitrate
-            } ?: error("no audio stream for $videoId")
-
-            val streamUrl = best.content ?: error("audio stream had null url for $videoId")
+            // NewPipeExtractor StreamInfo is broken on 2026 YouTube (audioStreams always empty).
+            // Use the Innertube player API directly instead.
+            val url = fetchAudioStreamViaPlayerApi(videoId)
             val elapsed = System.currentTimeMillis() - start
-            Log.d(tag, "getAudioStreamUrl($videoId) ok ${elapsed}ms delivery=${best.deliveryMethod} bitrate=${best.averageBitrate}")
+            Log.d(tag, "getAudioStreamUrl($videoId) ok ${elapsed}ms")
             app.opentune.utils.DiagnosticsLogger.logStream(videoId, true, elapsed)
-            streamUrl
+            url
         } catch (e: Exception) {
             val elapsed = System.currentTimeMillis() - start
             Log.w(tag, "getAudioStreamUrl($videoId) FAILED ${elapsed}ms: ${e.message}")
             app.opentune.utils.DiagnosticsLogger.logStream(videoId, false, elapsed, e.javaClass.simpleName + ": " + e.message?.take(120))
             throw e
         }
+    }
+
+    private fun fetchAudioStreamViaPlayerApi(videoId: String): String {
+        val json = "application/json; charset=utf-8".toMediaType()
+        // ANDROID client returns direct (unencrypted) stream URLs without needing
+        // JavaScript cipher decryption, unlike the WEB client.
+        val body = """{"videoId":"$videoId","context":{"client":{"clientName":"ANDROID","clientVersion":"17.31.35","androidSdkVersion":30,"hl":"en","gl":"US"}}}"""
+
+        val response = httpClient.newCall(
+            Request.Builder()
+                .url("https://www.youtube.com/youtubei/v1/player")
+                .post(body.toRequestBody(json))
+                .addHeader("User-Agent", "com.google.android.youtube/17.31.35 (Linux; U; Android 11) gzip")
+                .addHeader("X-YouTube-Client-Name", "3")
+                .addHeader("X-YouTube-Client-Version", "17.31.35")
+                .addHeader("Origin", "https://www.youtube.com")
+                .build()
+        ).execute()
+
+        val responseBody = response.body?.string()
+        if (!response.isSuccessful || responseBody.isNullOrBlank()) {
+            error("Player API HTTP ${response.code} for $videoId")
+        }
+
+        val root = JSONObject(responseBody)
+
+        val status = root.optJSONObject("playabilityStatus")?.optString("status")
+        if (status == "ERROR" || status == "LOGIN_REQUIRED" || status == "UNPLAYABLE") {
+            val reason = root.optJSONObject("playabilityStatus")?.optString("reason") ?: status
+            error("Video $videoId not playable: $reason")
+        }
+
+        val streamingData = root.optJSONObject("streamingData")
+            ?: error("No streamingData for $videoId")
+
+        val adaptiveFormats = streamingData.optJSONArray("adaptiveFormats")
+            ?: error("No adaptiveFormats for $videoId")
+
+        var bestUrl: String? = null
+        var bestBitrate = 0
+
+        for (i in 0 until adaptiveFormats.length()) {
+            val format = adaptiveFormats.getJSONObject(i)
+            if (!format.optString("mimeType", "").startsWith("audio/")) continue
+            val url = format.optString("url", "").takeIf { it.isNotBlank() } ?: continue
+            val bitrate = format.optInt("averageBitrate", 0).takeIf { it > 0 }
+                ?: format.optInt("bitrate", 0)
+            if (bitrate > bestBitrate) {
+                bestBitrate = bitrate
+                bestUrl = url
+            }
+        }
+
+        return bestUrl ?: error("No direct audio URL in adaptiveFormats for $videoId")
     }
 
     fun search(query: String): SearchResult<YtMusicTrack> {
