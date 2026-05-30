@@ -119,13 +119,12 @@ class InnertubeApi @Inject constructor() {
     // iOS YouTube client (clientId=5) — does not require PoToken unlike web/Android clients.
     private fun fetchAudioStreamIos(videoId: String): String {
         val json = "application/json; charset=utf-8".toMediaType()
-        val apiKey = "AIzaSyB-63vPrdThhKuerbB2N_WhIe4"
-        val v = "19.29.1"
+        val v = "19.45.4"
         val body = """{"videoId":"$videoId","contentCheckOk":true,"racyCheckOk":true,"context":{"client":{"clientName":"IOS","clientVersion":"$v","deviceModel":"iPhone16,2","userAgent":"com.google.ios.youtube/$v (iPhone16,2; U; CPU iOS 17_5 like Mac OS X;en_US) gzip","hl":"en","gl":"US","timeZone":"UTC","utcOffsetMinutes":0,"platform":"MOBILE"}},"playbackContext":{"contentPlaybackContext":{"html5Preference":"HTML5_PREF_WANTS"}}}"""
 
         val response = httpClient.newCall(
             Request.Builder()
-                .url("https://www.youtube.com/youtubei/v1/player?key=$apiKey&prettyPrint=false")
+                .url("https://www.youtube.com/youtubei/v1/player")
                 .post(body.toRequestBody(json))
                 .addHeader("User-Agent", "com.google.ios.youtube/$v (iPhone16,2; U; CPU iOS 17_5 like Mac OS X;en_US) gzip")
                 .addHeader("X-YouTube-Client-Name", "5")
