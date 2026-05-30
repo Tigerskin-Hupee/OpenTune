@@ -119,33 +119,33 @@ class InnertubeApi @Inject constructor() {
     }
 
     // Multi-client native player API cascade. Tries clients in order, returns first working URL.
-    // Different clients have different PoToken/auth requirements; some embedded/music clients
-    // are more permissive than the main YouTube web client.
     private data class NativeClient(
         val name: String, val version: String, val clientId: String,
         val url: String, val userAgent: String, val origin: String,
         val extraContextJson: String = "",
+        val usePoToken: Boolean = false,
     )
 
     private val nativeClients = listOf(
-        // WEB_EMBEDDED_PLAYER — third-party embed context; PoToken not mandatory per NPE docs.
+        // WEB + PoToken — uses our BotGuard WebView token; most reliable path.
+        // serviceIntegrityDimensions.poToken is added to body when usePoToken=true.
+        NativeClient("WEB", "2.20241030.09.00", "1",
+            "https://www.youtube.com/youtubei/v1/player",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "https://www.youtube.com",
+            usePoToken = true),
+        // WEB_EMBEDDED_PLAYER — third-party embed; lower enforcement, no PoToken needed.
         NativeClient("WEB_EMBEDDED_PLAYER", "1.20241201.00.00", "56",
             "https://www.youtube.com/youtubei/v1/player",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             "https://www.youtube.com",
             extraContextJson = """"thirdParty":{"embedUrl":"https://www.youtube.com"}"""),
-        // TVHTML5 embedded — PlayStation UA; lower PoToken enforcement for embedded contexts.
-        NativeClient("TVHTML5_SIMPLY_EMBEDDED_PLAYER", "2.0", "85",
-            "https://www.youtube.com/youtubei/v1/player",
-            "Mozilla/5.0 (PlayStation; PlayStation 4/7.52) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/11.0 Safari/605.1.15",
-            "https://www.youtube.com",
-            extraContextJson = """"thirdParty":{"embedUrl":"https://www.youtube.com"}"""),
-        // iOS — official mobile endpoint at googleapis.com (NOT www.youtube.com).
+        // iOS — official mobile endpoint.
         NativeClient("IOS", "19.45.4", "5",
             "https://youtubei.googleapis.com/youtubei/v1/player?key=AIzaSyB-63vPrdThhKuerbB2N_WhIe4",
             "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 17_5 like Mac OS X;en_US) gzip",
             "https://www.youtube.com"),
-        // Android Music — YouTube Music for Android; separate auth path from YouTube proper.
+        // Android Music
         NativeClient("ANDROID_MUSIC", "7.27.52", "21",
             "https://music.youtube.com/youtubei/v1/player",
             "com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 11) gzip",
@@ -162,8 +162,19 @@ class InnertubeApi @Inject constructor() {
         val errors = mutableListOf<String>()
 
         for (client in nativeClients) {
+            // Fetch PoToken if this client requires it (WEB client path).
+            val pot = if (client.usePoToken) {
+                try { app.opentune.utils.potoken.OpenTunePoTokenProvider.getWebClientPoToken(videoId) }
+                catch (e: Exception) { errors += "${client.name}(pot): ${e.message?.take(60)}"; null }
+            } else null
+
+            val visitorDataFrag = if (pot?.visitorData != null)
+                ""","visitorData":"${pot.visitorData}"""" else ""
+            val poTokenFrag = if (pot?.playerRequestPoToken != null)
+                ""","serviceIntegrityDimensions":{"poToken":"${pot.playerRequestPoToken}"}""" else ""
+
             val extraCtx = if (client.extraContextJson.isNotBlank()) ",${client.extraContextJson}" else ""
-            val body = """{"videoId":"$videoId","contentCheckOk":true,"racyCheckOk":true,"context":{"client":{"clientName":"${client.name}","clientVersion":"${client.version}","hl":"en","gl":"US","timeZone":"UTC","utcOffsetMinutes":0}$extraCtx},"playbackContext":{"contentPlaybackContext":{"html5Preference":"HTML5_PREF_WANTS"}}}"""
+            val body = """{"videoId":"$videoId","contentCheckOk":true,"racyCheckOk":true,"context":{"client":{"clientName":"${client.name}","clientVersion":"${client.version}","hl":"en","gl":"US","timeZone":"UTC","utcOffsetMinutes":0$visitorDataFrag}$extraCtx}$poTokenFrag,"playbackContext":{"contentPlaybackContext":{"html5Preference":"HTML5_PREF_WANTS"}}}"""
             try {
                 val response = httpClient.newCall(
                     Request.Builder()
