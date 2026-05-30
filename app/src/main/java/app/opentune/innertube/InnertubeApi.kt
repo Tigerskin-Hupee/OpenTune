@@ -10,6 +10,7 @@
 package app.opentune.innertube
 
 import android.util.Log
+import okhttp3.JavaNetCookieJar
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -66,7 +67,7 @@ class InnertubeApi @Inject constructor() {
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
-        .cookieJar(okhttp3.JavaNetCookieJar(cookieManager))
+        .cookieJar(JavaNetCookieJar(cookieManager))
         .build()
 
     // Cached visitorData from YouTube — YouTube requires this for content to be playable.
