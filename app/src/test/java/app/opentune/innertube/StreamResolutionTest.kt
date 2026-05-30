@@ -36,6 +36,10 @@ class StreamResolutionTest {
     )
 
     private val clients = listOf(
+        ClientConfig("ANDROID_TESTSUITE", "1.9", "30",
+            "https://www.youtube.com/youtubei/v1/player",
+            "com.google.android.youtube/1.9 (Linux; U; Android 11) gzip",
+            "https://www.youtube.com"),
         ClientConfig("WEB_REMIX", "1.20230501.01.00", "67",
             "https://music.youtube.com/youtubei/v1/player",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
