@@ -85,17 +85,18 @@ class InnertubeApi @Inject constructor() {
 
     private fun fetchAudioStreamViaPlayerApi(videoId: String): String {
         val json = "application/json; charset=utf-8".toMediaType()
-        // IOS client reliably returns direct (unencrypted) stream URLs.
-        val clientVersion = "19.09.2"
-        val body = """{"videoId":"$videoId","contentCheckOk":true,"racyCheckOk":true,"context":{"client":{"clientName":"IOS","clientVersion":"$clientVersion","deviceModel":"iPhone16,2","osVersion":"17.4.1.21E237","hl":"en","gl":"US"}}}"""
+        // TVHTML5_SIMPLY_EMBEDDED_PLAYER is designed for third-party embeds and
+        // does not require a PoToken, unlike ANDROID/IOS clients since 2025.
+        val body = """{"videoId":"$videoId","context":{"client":{"clientName":"TVHTML5_SIMPLY_EMBEDDED_PLAYER","clientVersion":"2.0","hl":"en","gl":"US"},"thirdParty":{"embedUrl":"https://www.youtube.com/"}}}"""
 
         val response = httpClient.newCall(
             Request.Builder()
                 .url("https://www.youtube.com/youtubei/v1/player")
                 .post(body.toRequestBody(json))
-                .addHeader("User-Agent", "com.google.ios.youtube/$clientVersion (iPhone16,2; U; CPU iOS 17_4_1 like Mac OS X; en_US)")
-                .addHeader("X-YouTube-Client-Name", "5")
-                .addHeader("X-YouTube-Client-Version", clientVersion)
+                .addHeader("User-Agent", "Mozilla/5.0 (SMART-TV; Linux; Tizen 6.0) AppleWebKit/538.1 (KHTML, like Gecko) Version/6.0 TV Safari/538.1")
+                .addHeader("X-YouTube-Client-Name", "85")
+                .addHeader("X-YouTube-Client-Version", "2.0")
+                .addHeader("Origin", "https://www.youtube.com")
                 .build()
         ).execute()
 
