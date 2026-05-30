@@ -10,7 +10,6 @@
 package app.opentune.innertube
 
 import android.util.Log
-import okhttp3.JavaNetCookieJar
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -60,14 +59,19 @@ data class YtMusicAlbum(
 class InnertubeApi @Inject constructor() {
     private val tag = "InnertubeApi"
 
-    private val cookieManager = java.net.CookieManager().apply {
-        setCookiePolicy(java.net.CookiePolicy.ACCEPT_ALL)
+    private val cookieJar = object : okhttp3.CookieJar {
+        private val store = mutableMapOf<String, List<okhttp3.Cookie>>()
+        override fun saveFromResponse(url: okhttp3.HttpUrl, cookies: List<okhttp3.Cookie>) {
+            store[url.host] = (store[url.host] ?: emptyList()) + cookies
+        }
+        override fun loadForRequest(url: okhttp3.HttpUrl): List<okhttp3.Cookie> =
+            store[url.host] ?: emptyList()
     }
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
-        .cookieJar(JavaNetCookieJar(cookieManager))
+        .cookieJar(cookieJar)
         .build()
 
     // Cached visitorData from YouTube — YouTube requires this for content to be playable.
