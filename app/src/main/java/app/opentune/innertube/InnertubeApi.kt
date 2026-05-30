@@ -94,6 +94,13 @@ class InnertubeApi @Inject constructor() {
     )
 
     private val playerClients = listOf(
+        // ANDROID_TESTSUITE: internal YouTube test client, whitelisted to bypass PoToken.
+        PlayerClient(
+            name = "ANDROID_TESTSUITE", version = "1.9", clientId = "30",
+            url = "https://www.youtube.com/youtubei/v1/player",
+            userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 11) gzip",
+            origin = "https://www.youtube.com",
+        ),
         PlayerClient(
             name = "WEB_REMIX", version = "1.20230501.01.00", clientId = "67",
             url = "https://music.youtube.com/youtubei/v1/player",
