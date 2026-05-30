@@ -101,8 +101,7 @@ class InnertubeApi @Inject constructor() {
 
         val responseBody = response.body?.string()
         if (!response.isSuccessful || responseBody.isNullOrBlank()) {
-            Log.w(tag, "Player API HTTP ${response.code} body=${responseBody?.take(200)}")
-            error("Player API HTTP ${response.code} for $videoId")
+            error("Player API HTTP ${response.code} for $videoId | body=${responseBody?.take(300)}")
         }
 
         val root = JSONObject(responseBody)
