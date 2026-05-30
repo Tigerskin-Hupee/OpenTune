@@ -37,7 +37,7 @@ object DiagnosticsLogger {
         sb.appendLine("Device : ${Build.BRAND} ${Build.MODEL} (Android ${Build.VERSION.SDK_INT})")
         sb.appendLine("Time   : ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())}")
         val poErr = OpenTunePoTokenProvider.lastError
-        sb.appendLine("PoToken: ${if (poErr == null) "OK" else "FAIL($poErr)"}")
+        sb.appendLine("PoToken: ${when (poErr) { null -> "OK"; "not_called" -> "not_called"; else -> "FAIL($poErr)" }}")
         sb.appendLine()
 
         sb.appendLine("--- Stream Resolution Log (last ${events.size}) ---")
