@@ -100,61 +100,113 @@ class InnertubeApi @Inject constructor() {
             Log.w(tag, "getAudioStreamUrl($videoId) NPE failed — trying iOS fallback: $npeError")
         }
 
-        // Fallback: iOS player API (clientId=5) — does not require PoToken.
+        // Fallback: native player API cascade (iOS → TV-embed → Android Music → iOS Music).
         return try {
-            val iosUrl = fetchAudioStreamIos(videoId)
+            val nativeUrl = fetchAudioStreamNative(videoId)
             val elapsed = System.currentTimeMillis() - start
-            Log.d(tag, "getAudioStreamUrl($videoId) ok via iOS fallback ${elapsed}ms")
+            Log.d(tag, "getAudioStreamUrl($videoId) ok via native fallback ${elapsed}ms")
             app.opentune.utils.DiagnosticsLogger.logStream(videoId, true, elapsed)
-            iosUrl
+            nativeUrl
         } catch (e: Exception) {
             val elapsed = System.currentTimeMillis() - start
-            val combined = "$npeError | iOS ${e.javaClass.simpleName}: ${e.message?.take(300)}"
-            Log.w(tag, "getAudioStreamUrl($videoId) BOTH FAILED ${elapsed}ms: $combined")
+            val combined = "$npeError | native: ${e.message?.take(400)}"
+            Log.w(tag, "getAudioStreamUrl($videoId) ALL FAILED ${elapsed}ms: $combined")
             app.opentune.utils.DiagnosticsLogger.logStream(videoId, false, elapsed, combined.take(600))
             throw Exception(combined)
         }
     }
 
-    // iOS YouTube client (clientId=5) — does not require PoToken unlike web/Android clients.
-    private fun fetchAudioStreamIos(videoId: String): String {
+    // Multi-client native player API cascade. Tries clients in order, returns first working URL.
+    // Different clients have different PoToken/auth requirements; some embedded/music clients
+    // are more permissive than the main YouTube web client.
+    private data class NativeClient(
+        val name: String, val version: String, val clientId: String,
+        val url: String, val userAgent: String, val origin: String,
+        val extraContextJson: String = "",
+    )
+
+    private val nativeClients = listOf(
+        // iOS — official mobile endpoint at googleapis.com (NOT www.youtube.com).
+        // Mobile clients authenticate differently from web clients.
+        NativeClient("IOS", "19.45.4", "5",
+            "https://youtubei.googleapis.com/youtubei/v1/player?key=AIzaSyB-63vPrdThhKuerbB2N_WhIe4",
+            "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 17_5 like Mac OS X;en_US) gzip",
+            "https://www.youtube.com"),
+        // TVHTML5 embedded — designed for third-party embed context; lower PoToken enforcement.
+        NativeClient("TVHTML5_SIMPLY_EMBEDDED_PLAYER", "2.0", "85",
+            "https://www.youtube.com/youtubei/v1/player",
+            "Mozilla/5.0 (PlayStation; PlayStation 4/7.52) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/11.0 Safari/605.1.15",
+            "https://www.youtube.com",
+            extraContextJson = ""","thirdParty":{"embedUrl":"https://www.youtube.com"}"""),
+        // Android Music — YouTube Music for Android; separate auth path from YouTube proper.
+        NativeClient("ANDROID_MUSIC", "7.27.52", "21",
+            "https://music.youtube.com/youtubei/v1/player",
+            "com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 11) gzip",
+            "https://music.youtube.com"),
+        // iOS Music
+        NativeClient("IOS_MUSIC", "7.27.52", "26",
+            "https://music.youtube.com/youtubei/v1/player",
+            "com.google.ios.youtubemusic/7.27.52 (iPhone16,2; U; CPU iOS 17_5 like Mac OS X;en_US) gzip",
+            "https://music.youtube.com"),
+    )
+
+    private fun fetchAudioStreamNative(videoId: String): String {
         val json = "application/json; charset=utf-8".toMediaType()
-        val v = "19.45.4"
-        val body = """{"videoId":"$videoId","contentCheckOk":true,"racyCheckOk":true,"context":{"client":{"clientName":"IOS","clientVersion":"$v","deviceModel":"iPhone16,2","userAgent":"com.google.ios.youtube/$v (iPhone16,2; U; CPU iOS 17_5 like Mac OS X;en_US) gzip","hl":"en","gl":"US","timeZone":"UTC","utcOffsetMinutes":0,"platform":"MOBILE"}},"playbackContext":{"contentPlaybackContext":{"html5Preference":"HTML5_PREF_WANTS"}}}"""
+        val errors = mutableListOf<String>()
 
-        val response = httpClient.newCall(
-            Request.Builder()
-                .url("https://www.youtube.com/youtubei/v1/player")
-                .post(body.toRequestBody(json))
-                .addHeader("User-Agent", "com.google.ios.youtube/$v (iPhone16,2; U; CPU iOS 17_5 like Mac OS X;en_US) gzip")
-                .addHeader("X-YouTube-Client-Name", "5")
-                .addHeader("X-YouTube-Client-Version", v)
-                .addHeader("Origin", "https://www.youtube.com")
-                .addHeader("Content-Type", "application/json")
-                .build()
-        ).execute()
+        for (client in nativeClients) {
+            val extraCtx = if (client.extraContextJson.isNotBlank()) ",${client.extraContextJson}" else ""
+            val body = """{"videoId":"$videoId","contentCheckOk":true,"racyCheckOk":true,"context":{"client":{"clientName":"${client.name}","clientVersion":"${client.version}","hl":"en","gl":"US","timeZone":"UTC","utcOffsetMinutes":0}$extraCtx},"playbackContext":{"contentPlaybackContext":{"html5Preference":"HTML5_PREF_WANTS"}}}"""
+            try {
+                val response = httpClient.newCall(
+                    Request.Builder()
+                        .url(client.url)
+                        .post(body.toRequestBody(json))
+                        .addHeader("User-Agent", client.userAgent)
+                        .addHeader("X-YouTube-Client-Name", client.clientId)
+                        .addHeader("X-YouTube-Client-Version", client.version)
+                        .addHeader("Origin", client.origin)
+                        .addHeader("Referer", "${client.origin}/")
+                        .addHeader("Content-Type", "application/json")
+                        .build()
+                ).execute()
 
-        val rb = response.body?.string()
-        if (!response.isSuccessful || rb.isNullOrBlank()) error("HTTP ${response.code}: ${rb?.take(200)}")
+                val rb = response.body?.string()
+                if (!response.isSuccessful || rb.isNullOrBlank()) {
+                    errors += "${client.name}: HTTP ${response.code} ${rb?.take(100)}"
+                    continue
+                }
 
-        val root = JSONObject(rb)
-        val playability = root.optJSONObject("playabilityStatus")
-        val status = playability?.optString("status") ?: "?"
-        if (status != "OK") error("$status: ${playability?.optString("reason") ?: ""} (streamingData=${root.has("streamingData")})")
+                val root = JSONObject(rb)
+                val playability = root.optJSONObject("playabilityStatus")
+                val status = playability?.optString("status") ?: "?"
+                if (status != "OK") {
+                    errors += "${client.name}: $status ${playability?.optString("reason") ?: ""}"
+                    continue
+                }
 
-        val formats = root.optJSONObject("streamingData")?.optJSONArray("adaptiveFormats")
-            ?: error("no adaptiveFormats")
+                val formats = root.optJSONObject("streamingData")?.optJSONArray("adaptiveFormats")
+                if (formats == null) { errors += "${client.name}: no adaptiveFormats"; continue }
 
-        var bestUrl: String? = null
-        var bestBitrate = 0
-        for (i in 0 until formats.length()) {
-            val fmt = formats.getJSONObject(i)
-            if (!fmt.optString("mimeType", "").startsWith("audio/")) continue
-            val u = fmt.optString("url", "").takeIf { it.isNotBlank() } ?: continue
-            val br = fmt.optInt("averageBitrate", 0).takeIf { it > 0 } ?: fmt.optInt("bitrate", 0)
-            if (br > bestBitrate) { bestBitrate = br; bestUrl = u }
+                var bestUrl: String? = null; var bestBitrate = 0
+                for (i in 0 until formats.length()) {
+                    val fmt = formats.getJSONObject(i)
+                    if (!fmt.optString("mimeType", "").startsWith("audio/")) continue
+                    val u = fmt.optString("url", "").takeIf { it.isNotBlank() } ?: continue
+                    val br = fmt.optInt("averageBitrate", 0).takeIf { it > 0 } ?: fmt.optInt("bitrate", 0)
+                    if (br > bestBitrate) { bestBitrate = br; bestUrl = u }
+                }
+                if (bestUrl != null) {
+                    Log.d(tag, "fetchAudioStreamNative($videoId) ok via ${client.name}")
+                    return bestUrl
+                }
+                errors += "${client.name}: no direct audio URL in ${formats.length()} formats"
+
+            } catch (e: Exception) {
+                errors += "${client.name}: ${e.javaClass.simpleName} ${e.message?.take(80)}"
+            }
         }
-        return bestUrl ?: error("no direct audio URL in ${formats.length()} formats")
+        error(errors.joinToString(" | "))
     }
 
     fun search(query: String): SearchResult<YtMusicTrack> {
