@@ -78,7 +78,7 @@ class InnertubeApi @Inject constructor() {
         } catch (e: Exception) {
             val elapsed = System.currentTimeMillis() - start
             Log.w(tag, "getAudioStreamUrl($videoId) FAILED ${elapsed}ms: ${e.message}")
-            app.opentune.utils.DiagnosticsLogger.logStream(videoId, false, elapsed, e.javaClass.simpleName + ": " + e.message?.take(120))
+            app.opentune.utils.DiagnosticsLogger.logStream(videoId, false, elapsed, e.javaClass.simpleName + ": " + e.message?.take(600))
             throw e
         }
     }
@@ -153,10 +153,12 @@ class InnertubeApi @Inject constructor() {
                 }
 
                 val root = JSONObject(responseBody)
-                val status = root.optJSONObject("playabilityStatus")?.optString("status")
+                val playability = root.optJSONObject("playabilityStatus")
+                val status = playability?.optString("status")
                 if (status == "ERROR" || status == "LOGIN_REQUIRED" || status == "UNPLAYABLE") {
-                    val reason = root.optJSONObject("playabilityStatus")?.optString("reason") ?: status
-                    errors += "${client.name}: $status — $reason"
+                    val reason = playability?.optString("reason") ?: "?"
+                    val hasStreaming = root.has("streamingData")
+                    errors += "${client.name}: $status reason=\"$reason\" hasStreamingData=$hasStreaming"
                     continue
                 }
 
