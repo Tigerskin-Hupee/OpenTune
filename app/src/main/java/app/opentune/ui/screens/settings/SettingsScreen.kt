@@ -19,6 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.LibraryBooks
+import androidx.compose.material.icons.rounded.AccountCircle
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Interests
 import androidx.compose.material.icons.rounded.Palette
@@ -34,6 +35,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
@@ -43,6 +47,7 @@ import androidx.navigation.NavController
 import app.opentune.LocalSnackbarHostState
 import app.opentune.R
 import app.opentune.constants.TopBarInsets
+import app.opentune.utils.YouTubeAuthManager
 import app.opentune.ui.component.ColumnWithContentPadding
 import app.opentune.ui.component.PreferenceEntry
 import app.opentune.ui.component.button.IconButton
@@ -59,6 +64,7 @@ fun SettingsScreen(
     val context = LocalContext.current
     val snackbarHostState = LocalSnackbarHostState.current
     val uriHandler = LocalUriHandler.current
+    val isLoggedIn by remember { mutableStateOf(YouTubeAuthManager.isLoggedIn(context)) }
 
     ColumnWithContentPadding(
         modifier = Modifier.fillMaxHeight(),
@@ -66,6 +72,18 @@ fun SettingsScreen(
             .padding(horizontal = 16.dp)
             .verticalScroll(rememberScrollState())
     ) {
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            PreferenceEntry(
+                title = { Text(if (isLoggedIn) "YouTube: Signed in" else "Sign in to YouTube") },
+                description = if (isLoggedIn) "Tap to manage account" else "Required for music playback",
+                icon = { Icon(Icons.Rounded.AccountCircle, null) },
+                onClick = { navController.navigate("settings/account") },
+            )
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+
         ElevatedCard(
             modifier = Modifier.fillMaxWidth()
         ) {

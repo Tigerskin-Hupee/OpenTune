@@ -9,7 +9,9 @@
  */
 package app.opentune.innertube
 
+import android.content.Context
 import android.util.Log
+import dagger.hilt.android.qualifiers.ApplicationContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -56,7 +58,9 @@ data class YtMusicAlbum(
 )
 
 @Singleton
-class InnertubeApi @Inject constructor() {
+class InnertubeApi @Inject constructor(
+    @ApplicationContext private val context: Context,
+) {
     private val tag = "InnertubeApi"
 
     private val cookieJar = object : okhttp3.CookieJar {
@@ -127,9 +131,18 @@ class InnertubeApi @Inject constructor() {
         val usePoToken: Boolean = false,
         val useVideoEmbedUrl: Boolean = false,
         val isNativeApp: Boolean = false,     // true = no web headers, use API key in URL
+        val useAuth: Boolean = false,         // true = requires OAuth Bearer token
     )
 
     private val nativeClients = listOf(
+        // TVHTML5 authenticated — requires OAuth; bypasses all bot detection.
+        NativeClient(
+            name = "TVHTML5", version = "7.20260101.00.00", clientId = "7",
+            url = "https://www.youtube.com/youtubei/v1/player",
+            userAgent = "Mozilla/5.0 (SMART-TV; Linux; Tizen 6.0) AppleWebKit/538.1 (KHTML, like Gecko) Version/6.0 TV Safari/538.1",
+            origin = "https://www.youtube.com",
+            useAuth = true,
+        ),
         // ANDROID_TESTSUITE — internal test client, historically bypasses enforcement.
         NativeClient(
             name = "ANDROID_TESTSUITE", version = "1.9", clientId = "30",
@@ -169,6 +182,16 @@ class InnertubeApi @Inject constructor() {
         val errors = mutableListOf<String>()
 
         for (client in nativeClients) {
+            // OAuth client: skip if not logged in; get valid token (refreshing if needed).
+            val bearerToken: String?
+            if (client.useAuth) {
+                val token = app.opentune.utils.YouTubeAuthManager.getValidAccessToken(context)
+                if (token == null) { errors += "${client.name}: not logged in"; continue }
+                bearerToken = token
+            } else {
+                bearerToken = null
+            }
+
             // Fetch PoToken if this client requires it (WEB client path).
             val pot = if (client.usePoToken) {
                 try { app.opentune.utils.potoken.OpenTunePoTokenProvider.getWebClientPoToken(videoId) }
@@ -209,8 +232,13 @@ class InnertubeApi @Inject constructor() {
                         reqBuilder.addHeader("Origin", client.origin)
                         reqBuilder.addHeader("Referer", "${client.origin}/watch?v=$videoId")
                     }
-                    // SOCS=CAI= bypasses cookie-consent check for API requests.
-                    reqBuilder.addHeader("Cookie", "SOCS=CAI=")
+                    if (bearerToken != null) {
+                        reqBuilder.addHeader("Authorization", "Bearer $bearerToken")
+                        reqBuilder.addHeader("X-Goog-AuthUser", "0")
+                    } else {
+                        // SOCS=CAI= bypasses cookie-consent check for unauthenticated requests.
+                        reqBuilder.addHeader("Cookie", "SOCS=CAI=")
+                    }
                 }
                 if (pot?.visitorData != null) {
                     reqBuilder.addHeader("X-Goog-Visitor-Id", pot.visitorData)

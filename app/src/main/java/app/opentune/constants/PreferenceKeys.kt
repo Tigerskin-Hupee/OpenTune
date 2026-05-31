@@ -187,6 +187,14 @@ val PlaylistEditLockKey = booleanPreferencesKey("playlistEditLock")
 
 
 /**
+ * YouTube OAuth
+ */
+val YtOAuthAccessToken = stringPreferencesKey("ytOAuthAccessToken")
+val YtOAuthRefreshToken = stringPreferencesKey("ytOAuthRefreshToken")
+val YtOAuthExpiry = longPreferencesKey("ytOAuthExpiry")
+
+
+/**
  * Misc
  */
 //val LastUpdateCheckKey = longPreferencesKey("lastUpdateCheck")
