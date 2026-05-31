@@ -183,10 +183,14 @@ class InnertubeApi @Inject constructor(
 
         for (client in nativeClients) {
             // OAuth client: skip if not logged in; get valid token (refreshing if needed).
-            val bearerToken: String? = if (client.useAuth) {
-                app.opentune.utils.YouTubeAuthManager.getValidAccessToken(context)
-                    ?: run { errors += "${client.name}: not logged in"; continue }
-            } else null
+            val bearerToken: String?
+            if (client.useAuth) {
+                val token = app.opentune.utils.YouTubeAuthManager.getValidAccessToken(context)
+                if (token == null) { errors += "${client.name}: not logged in"; continue }
+                bearerToken = token
+            } else {
+                bearerToken = null
+            }
 
             // Fetch PoToken if this client requires it (WEB client path).
             val pot = if (client.usePoToken) {
