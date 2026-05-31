@@ -33,6 +33,8 @@ class PoTokenWebView private constructor(private val context: Context) {
     private val poTokenLock = Any()
     private val poTokenDeferreds = mutableListOf<Pair<String, CompletableDeferred<String>>>()
     private lateinit var expirationInstant: Instant
+    // Resolved dynamically from player JS before initialization; falls back to constant.
+    private var requestKey: String = REQUEST_KEY
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
@@ -79,7 +81,7 @@ class PoTokenWebView private constructor(private val context: Context) {
             try {
                 val responseBody = makeBotguardRequest(
                     "https://www.youtube.com/api/jnn/v1/Create",
-                    "[ \"$REQUEST_KEY\" ]"
+                    "[ \"$requestKey\" ]"
                 )
                 val parsedChallenge = parseChallengeData(responseBody)
                 withContext(Dispatchers.Main) {
@@ -117,7 +119,7 @@ class PoTokenWebView private constructor(private val context: Context) {
             try {
                 val responseBody = makeBotguardRequest(
                     "https://www.youtube.com/api/jnn/v1/GenerateIT",
-                    "[ \"$REQUEST_KEY\", \"$botguardResponse\" ]"
+                    "[ \"$requestKey\", \"$botguardResponse\" ]"
                 )
                 val (integrityToken, ttlSeconds) = parseIntegrityTokenData(responseBody)
                 expirationInstant = Instant.now().plusSeconds(ttlSeconds - 600)
@@ -216,16 +218,55 @@ class PoTokenWebView private constructor(private val context: Context) {
         return response.body?.string() ?: throw PoTokenException("Empty body from $url")
     }
 
+    // Fetch the current JNN request key from YouTube's player JS so we stay in sync
+    // when YouTube rotates keys. Falls back to the hardcoded constant on any error.
+    private fun fetchDynamicRequestKey(): String? {
+        return try {
+            val homeHtml = httpClient.newCall(
+                Request.Builder().url("https://www.youtube.com")
+                    .addHeader("User-Agent", USER_AGENT)
+                    .addHeader("Accept-Language", "en-US,en;q=0.9")
+                    .get().build()
+            ).execute().body?.string() ?: return null
+
+            val scriptPath = Regex("""/s/player/[a-f0-9]+/player_ias\.vflset[^"' ]*base\.js""")
+                .find(homeHtml)?.value ?: return null
+
+            val jsContent = httpClient.newCall(
+                Request.Builder().url("https://www.youtube.com$scriptPath")
+                    .addHeader("User-Agent", USER_AGENT).get().build()
+            ).execute().body?.string() ?: return null
+
+            // The JNN request key is a ~20-char alphanumeric string passed as the first
+            // element of the JSON array body to /api/jnn/v1/Create. Search for it within
+            // a window around the Create endpoint string.
+            val jnnIdx = jsContent.indexOf("jnn/v1/Create")
+            if (jnnIdx < 0) { Log.w(TAG, "jnn/v1/Create not in player JS"); return null }
+            val window = jsContent.substring(maxOf(0, jnnIdx - 3000), jnnIdx + 100)
+            val key = Regex("""["']([A-Za-z0-9_-]{15,30})["']""")
+                .findAll(window).lastOrNull()?.groupValues?.get(1)
+            if (key != null) Log.d(TAG, "Dynamic REQUEST_KEY: ${key.take(8)}...")
+            key
+        } catch (e: Exception) {
+            Log.w(TAG, "fetchDynamicRequestKey: ${e.message}")
+            null
+        }
+    }
+
     companion object {
         private const val TAG = "PoTokenWebView"
         private const val GOOGLE_API_KEY = "AIzaSyDyT5W0Jh49F30Pqqtyfdf7pDLFKLJoAnw" // NOSONAR
         private const val REQUEST_KEY = "O43z0dpjhgX20SCx4KAo"
         const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.3"
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
         private const val JS_INTERFACE = "PoTokenWebView"
 
         suspend fun create(context: Context): PoTokenWebView {
             val wv = PoTokenWebView(context)
+            // Resolve the current JNN request key from the player JS before initializing.
+            val dynamicKey = withContext(Dispatchers.IO) { wv.fetchDynamicRequestKey() }
+            if (dynamicKey != null) wv.requestKey = dynamicKey
+            else Log.w(TAG, "Using fallback REQUEST_KEY")
             wv.initialize()
             return wv
         }
