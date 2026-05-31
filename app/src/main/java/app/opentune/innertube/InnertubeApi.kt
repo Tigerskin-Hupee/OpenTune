@@ -124,22 +124,23 @@ class InnertubeApi @Inject constructor() {
         val url: String, val userAgent: String, val origin: String,
         val extraContextJson: String = "",
         val usePoToken: Boolean = false,
+        val useVideoEmbedUrl: Boolean = false,
     )
 
     private val nativeClients = listOf(
         // WEB + PoToken — uses our BotGuard WebView token; most reliable path.
-        // serviceIntegrityDimensions.poToken is added to body when usePoToken=true.
-        NativeClient("WEB", "2.20241030.09.00", "1",
+        // serviceIntegrityDimensions.poToken + visitorData + X-Goog-Visitor-Id header.
+        NativeClient("WEB", "2.20260101.00.00", "1",
             "https://www.youtube.com/youtubei/v1/player",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
             "https://www.youtube.com",
             usePoToken = true),
-        // WEB_EMBEDDED_PLAYER — third-party embed; lower enforcement, no PoToken needed.
-        NativeClient("WEB_EMBEDDED_PLAYER", "1.20241201.00.00", "56",
+        // WEB_EMBEDDED_PLAYER — third-party embed with video-specific embedUrl.
+        NativeClient("WEB_EMBEDDED_PLAYER", "1.20260101.00.00", "56",
             "https://www.youtube.com/youtubei/v1/player",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
             "https://www.youtube.com",
-            extraContextJson = """"thirdParty":{"embedUrl":"https://www.youtube.com"}"""),
+            useVideoEmbedUrl = true),
         // iOS — official mobile endpoint.
         NativeClient("IOS", "19.45.4", "5",
             "https://youtubei.googleapis.com/youtubei/v1/player?key=AIzaSyB-63vPrdThhKuerbB2N_WhIe4",
@@ -173,21 +174,29 @@ class InnertubeApi @Inject constructor() {
             val poTokenFrag = if (pot?.playerRequestPoToken != null)
                 ""","serviceIntegrityDimensions":{"poToken":"${pot.playerRequestPoToken}"}""" else ""
 
-            val extraCtx = if (client.extraContextJson.isNotBlank()) ",${client.extraContextJson}" else ""
+            // WEB_EMBEDDED_PLAYER requires the specific video embed URL as the third-party origin.
+            val embedUrlCtx = if (client.useVideoEmbedUrl)
+                ""","thirdParty":{"embedUrl":"https://www.youtube.com/watch?v=$videoId"}""" else ""
+            val staticCtx = if (client.extraContextJson.isNotBlank()) ",${client.extraContextJson}" else ""
+            val extraCtx = embedUrlCtx.ifEmpty { staticCtx }
+
             val body = """{"videoId":"$videoId","contentCheckOk":true,"racyCheckOk":true,"context":{"client":{"clientName":"${client.name}","clientVersion":"${client.version}","hl":"en","gl":"US","timeZone":"UTC","utcOffsetMinutes":0$visitorDataFrag}$extraCtx}$poTokenFrag,"playbackContext":{"contentPlaybackContext":{"html5Preference":"HTML5_PREF_WANTS"}}}"""
             try {
-                val response = httpClient.newCall(
-                    Request.Builder()
-                        .url(client.url)
-                        .post(body.toRequestBody(json))
-                        .addHeader("User-Agent", client.userAgent)
-                        .addHeader("X-YouTube-Client-Name", client.clientId)
-                        .addHeader("X-YouTube-Client-Version", client.version)
-                        .addHeader("Origin", client.origin)
-                        .addHeader("Referer", "${client.origin}/")
-                        .addHeader("Content-Type", "application/json")
-                        .build()
-                ).execute()
+                val reqBuilder = Request.Builder()
+                    .url(client.url)
+                    .post(body.toRequestBody(json))
+                    .addHeader("User-Agent", client.userAgent)
+                    .addHeader("X-YouTube-Client-Name", client.clientId)
+                    .addHeader("X-YouTube-Client-Version", client.version)
+                    .addHeader("Origin", client.origin)
+                    .addHeader("Referer", "${client.origin}/watch?v=$videoId")
+                    .addHeader("Content-Type", "application/json")
+                    // SOCS=CAI= bypasses cookie-consent check for API requests.
+                    .addHeader("Cookie", "SOCS=CAI=")
+                if (pot?.visitorData != null) {
+                    reqBuilder.addHeader("X-Goog-Visitor-Id", pot.visitorData)
+                }
+                val response = httpClient.newCall(reqBuilder.build()).execute()
 
                 val rb = response.body?.string()
                 if (!response.isSuccessful || rb.isNullOrBlank()) {
