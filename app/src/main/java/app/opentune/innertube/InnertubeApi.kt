@@ -231,6 +231,15 @@ class InnertubeApi @Inject constructor(
             clientContextJson = """"osName":"Android","osVersion":"14","androidSdkVersion":"30","platform":"MOBILE"""",
             isNativeApp = true,
         ),
+        // WEB_REMIX — YouTube Music web client (primary client used by Metrolist/working apps).
+        // music.youtube.com endpoint, clientId 67, requires PoToken.
+        NativeClient(
+            name = "WEB_REMIX", version = "1.20260213.01.00", clientId = "67",
+            url = "https://music.youtube.com/youtubei/v1/player",
+            userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0",
+            origin = "https://music.youtube.com",
+            usePoToken = true,
+        ),
         // WEB + PoToken — BotGuard WebView token.
         NativeClient(
             name = "WEB", version = "2.20260101.00.00", clientId = "1",
