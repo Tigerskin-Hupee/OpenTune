@@ -78,6 +78,38 @@ class InnertubeApi @Inject constructor(
         .cookieJar(cookieJar)
         .build()
 
+    // Signature timestamp from YouTube's player JS — required in playbackContext for web clients.
+    // Changes with each player JS deploy; cache for 1 hour.
+    @Volatile private var cachedSigTs: Int = 0
+    @Volatile private var sigTsFetchedAt: Long = 0L
+
+    private fun getSignatureTimestamp(): Int {
+        val now = System.currentTimeMillis()
+        if (cachedSigTs > 0 && now - sigTsFetchedAt < 3_600_000L) return cachedSigTs
+        return try {
+            val homeHtml = httpClient.newCall(
+                Request.Builder().url("https://www.youtube.com")
+                    .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0")
+                    .get().build()
+            ).execute().body?.string() ?: return cachedSigTs
+            val scriptPath = Regex("""/s/player/[a-f0-9]+/player_ias\.vflset[^"' ]*base\.js""")
+                .find(homeHtml)?.value ?: return cachedSigTs
+            val js = httpClient.newCall(
+                Request.Builder().url("https://www.youtube.com$scriptPath")
+                    .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0")
+                    .get().build()
+            ).execute().body?.string() ?: return cachedSigTs
+            val ts = Regex("""signatureTimestamp[=:]\s*(\d+)""").find(js)
+                ?.groupValues?.get(1)?.toIntOrNull() ?: return cachedSigTs
+            Log.d(tag, "signatureTimestamp=$ts")
+            cachedSigTs = ts; sigTsFetchedAt = now
+            ts
+        } catch (e: Exception) {
+            Log.w(tag, "getSignatureTimestamp failed: ${e.message}")
+            cachedSigTs
+        }
+    }
+
     /** Resolve a video id to a direct audio CDN URL (highest-bitrate audio stream). */
     fun getAudioStreamUrl(videoId: String): String {
         val start = System.currentTimeMillis()
@@ -283,9 +315,14 @@ class InnertubeApi @Inject constructor(
                 client.contextJson.isNotBlank() -> ",${client.contextJson}"
                 else -> ""
             }
-            // html5Preference only makes sense for web clients; native apps don't use it.
-            val playbackCtx = if (!client.isNativeApp)
-                ""","playbackContext":{"contentPlaybackContext":{"html5Preference":"HTML5_PREF_WANTS"}}""" else ""
+            // Web clients need signatureTimestamp so YouTube can match the correct signing config.
+            // Without it YouTube returns UNPLAYABLE "Video unavailable".
+            val sigTs = if (!client.isNativeApp) getSignatureTimestamp() else 0
+            val playbackCtx = if (!client.isNativeApp && sigTs > 0)
+                ""","playbackContext":{"contentPlaybackContext":{"signatureTimestamp":$sigTs}}"""
+            else if (!client.isNativeApp)
+                ""","playbackContext":{"contentPlaybackContext":{"html5Preference":"HTML5_PREF_WANTS"}}"""
+            else ""
 
             val body = """{"videoId":"$videoId","contentCheckOk":true,"racyCheckOk":true,"context":{"client":{"clientName":"${client.name}","clientVersion":"${client.version}","hl":"en","gl":"US","timeZone":"UTC","utcOffsetMinutes":0$visitorDataFrag$clientFrag}$contextFrag}$poTokenFrag$playbackCtx}"""
             try {
