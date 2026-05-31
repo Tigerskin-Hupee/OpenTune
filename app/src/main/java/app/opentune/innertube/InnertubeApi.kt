@@ -184,11 +184,12 @@ class InnertubeApi @Inject constructor(
     private data class NativeClient(
         val name: String, val version: String, val clientId: String,
         val url: String, val userAgent: String, val origin: String = "",
+        val apiKey: String = "",              // passed as X-Goog-Api-Key header (not URL param)
         val clientContextJson: String = "",  // fields appended inside context.client {}
         val contextJson: String = "",         // fields appended inside context {} alongside client
         val usePoToken: Boolean = false,
         val useVideoEmbedUrl: Boolean = false,
-        val isNativeApp: Boolean = false,     // true = no web headers, use API key in URL
+        val isNativeApp: Boolean = false,     // true = no web headers, use API key header
         val useAuth: Boolean = false,         // true = requires OAuth Bearer token
         val addApiFormatVersion: Boolean = false, // true = add X-Goog-Api-Format-Version: 2 (IOS only)
     )
@@ -205,29 +206,32 @@ class InnertubeApi @Inject constructor(
         // ANDROID_TESTSUITE — internal test client, historically bypasses enforcement.
         NativeClient(
             name = "ANDROID_TESTSUITE", version = "1.9", clientId = "30",
-            url = "https://www.youtube.com/youtubei/v1/player?key=AIzaSyA8eiZmM1FaDVjRy-df2KpynQLqgref8Xw",
+            url = "https://www.youtube.com/youtubei/v1/player",
+            apiKey = "AIzaSyA8eiZmM1FaDVjRy-df2KpynQLqgref8Xw",
             userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 14) gzip",
             clientContextJson = """"osName":"Android","osVersion":"14","androidSdkVersion":30,"platform":"MOBILE"""",
             isNativeApp = true,
         ),
-        // ANDROID_MUSIC — YouTube Music Android client; music-specific endpoint.
+        // ANDROID_MUSIC — YouTube Music Android client; API key via header to match Vitune format.
         NativeClient(
             name = "ANDROID_MUSIC", version = "5.28.1", clientId = "21",
-            url = "https://music.youtube.com/youtubei/v1/player?key=AIzaSyAOghZGza2MQSZkY_zfZ370N-PUdXEo8AI",
+            url = "https://music.youtube.com/youtubei/v1/player",
+            apiKey = "AIzaSyAOghZGza2MQSZkY_zfZ370N-PUdXEo8AI",
             userAgent = "com.google.android.apps.youtube.music/5.28.1 (Linux; U; Android 11) gzip",
             clientContextJson = """"osName":"Android","osVersion":"11","androidSdkVersion":30,"platform":"MOBILE"""",
             isNativeApp = true,
         ),
-        // IOS — device-native client; must not use web headers, needs iOS device context.
+        // IOS — device-native client; X-Goog-Api-Format-Version:2 required.
         NativeClient(
             name = "IOS", version = "19.45.4", clientId = "5",
-            url = "https://youtubei.googleapis.com/youtubei/v1/player?key=AIzaSyB-63vPrdThhKuerbB2N_WhIe4",
+            url = "https://youtubei.googleapis.com/youtubei/v1/player",
+            apiKey = "AIzaSyB-63vPrdThhKuerbB2N_WhIe4",
             userAgent = "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 17_5 like Mac OS X;en_US) gzip",
             clientContextJson = """"osName":"iOS","osVersion":"17.5.1","deviceMake":"Apple","deviceModel":"iPhone16,2","platform":"MOBILE"""",
             isNativeApp = true,
             addApiFormatVersion = true,
         ),
-        // WEB + PoToken — BotGuard WebView token with dynamically-fetched REQUEST_KEY.
+        // WEB + PoToken — BotGuard WebView token.
         NativeClient(
             name = "WEB", version = "2.20260101.00.00", clientId = "1",
             url = "https://www.youtube.com/youtubei/v1/player",
@@ -282,10 +286,11 @@ class InnertubeApi @Inject constructor(
                     .addHeader("User-Agent", client.userAgent)
                     .addHeader("Content-Type", "application/json")
                 if (client.isNativeApp) {
-                    // Native app clients authenticate via API key in URL.
-                    // Web-style headers (X-YouTube-Client-*, Origin, Cookie) cause HTTP 400.
-                    // X-Goog-Api-Format-Version: 2 is IOS-only; sending it to Android clients
-                    // causes LOGIN_REQUIRED responses.
+                    // Native app clients: API key goes in header, not URL.
+                    // Web-style headers (X-YouTube-Client-*, Origin, Cookie) cause rejections.
+                    if (client.apiKey.isNotBlank()) {
+                        reqBuilder.addHeader("X-Goog-Api-Key", client.apiKey)
+                    }
                     if (client.addApiFormatVersion) {
                         reqBuilder.addHeader("X-Goog-Api-Format-Version", "2")
                     }

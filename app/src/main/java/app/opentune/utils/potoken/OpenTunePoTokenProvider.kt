@@ -86,11 +86,10 @@ object OpenTunePoTokenProvider : PoTokenProvider {
         return PoTokenResult(visitorData!!, playerPot, streamingPot)
     }
 
-    // WEB_EMBED and Android clients: provide the same WEB-context PoToken.
-    // NPE's latest version uses Android client internally; giving it a WEB token
-    // is better than returning null (which guarantees no streams).
     override fun getWebEmbedClientPoToken(videoId: String): PoTokenResult? = getWebClientPoToken(videoId)
-    override fun getAndroidClientPoToken(videoId: String): PoTokenResult? = getWebClientPoToken(videoId)
+    // Android and iOS clients don't use WEB-type PoTokens; return null so NPE
+    // falls back to WEB client where our token is valid.
+    override fun getAndroidClientPoToken(videoId: String): PoTokenResult? = null
     override fun getIosClientPoToken(videoId: String): PoTokenResult? = null
 
     private fun fetchVisitorData(): String {
