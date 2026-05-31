@@ -102,7 +102,7 @@ class InnertubeApi @Inject constructor() {
             Log.w(tag, "getAudioStreamUrl($videoId) NPE failed — trying iOS fallback: $npeError")
         }
 
-        // Fallback: native player API cascade (iOS → TV-embed → Android Music → iOS Music).
+        // Fallback: native player API cascade (Android test → Android Music → iOS → WEB+PoToken).
         return try {
             val nativeUrl = fetchAudioStreamNative(videoId)
             val elapsed = System.currentTimeMillis() - start
@@ -121,40 +121,47 @@ class InnertubeApi @Inject constructor() {
     // Multi-client native player API cascade. Tries clients in order, returns first working URL.
     private data class NativeClient(
         val name: String, val version: String, val clientId: String,
-        val url: String, val userAgent: String, val origin: String,
-        val extraContextJson: String = "",
+        val url: String, val userAgent: String, val origin: String = "",
+        val clientContextJson: String = "",  // fields appended inside context.client {}
+        val contextJson: String = "",         // fields appended inside context {} alongside client
         val usePoToken: Boolean = false,
         val useVideoEmbedUrl: Boolean = false,
+        val isNativeApp: Boolean = false,     // true = no web headers, use API key in URL
     )
 
     private val nativeClients = listOf(
+        // ANDROID_TESTSUITE — internal test client, historically bypasses enforcement.
+        NativeClient(
+            name = "ANDROID_TESTSUITE", version = "1.9", clientId = "30",
+            url = "https://www.youtube.com/youtubei/v1/player?key=AIzaSyA8eiZmM1FaDVjRy-df2KpynQLqgref8Xw",
+            userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 14) gzip",
+            clientContextJson = """"osName":"Android","osVersion":"14","androidSdkVersion":"34","platform":"MOBILE"""",
+            isNativeApp = true,
+        ),
+        // ANDROID_MUSIC — YouTube Music Android client; music-specific endpoint.
+        NativeClient(
+            name = "ANDROID_MUSIC", version = "7.27.52", clientId = "21",
+            url = "https://music.youtube.com/youtubei/v1/player?key=AIzaSyAOghZGza2MQSZkY_zfZ370N-PUdXEo8AI",
+            userAgent = "com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 14; en_US) gzip",
+            clientContextJson = """"osName":"Android","osVersion":"14","androidSdkVersion":"34","platform":"MOBILE"""",
+            isNativeApp = true,
+        ),
+        // IOS — device-native client; must not use web headers, needs iOS device context.
+        NativeClient(
+            name = "IOS", version = "19.45.4", clientId = "5",
+            url = "https://youtubei.googleapis.com/youtubei/v1/player?key=AIzaSyB-63vPrdThhKuerbB2N_WhIe4",
+            userAgent = "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 17_5 like Mac OS X;en_US) gzip",
+            clientContextJson = """"osName":"iOS","osVersion":"17.5.1","deviceMake":"Apple","deviceModel":"iPhone16,2","platform":"MOBILE"""",
+            isNativeApp = true,
+        ),
         // WEB + PoToken — BotGuard WebView token with dynamically-fetched REQUEST_KEY.
-        NativeClient("WEB", "2.20260101.00.00", "1",
-            "https://www.youtube.com/youtubei/v1/player",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
-            "https://www.youtube.com",
-            usePoToken = true),
-        // TVHTML5 — YouTube TV app client; historically lower PoToken enforcement.
-        NativeClient("TVHTML5", "7.20260101.00.00", "7",
-            "https://www.youtube.com/youtubei/v1/player",
-            "Mozilla/5.0 (SMART-TV; Linux; Tizen 6.0) AppleWebKit/538.1 (KHTML, like Gecko) Version/6.0 TV Safari/538.1",
-            "https://www.youtube.com"),
-        // MWEB — mobile web client; different auth path from desktop WEB.
-        NativeClient("MWEB", "2.20260101.00.00", "2",
-            "https://www.youtube.com/youtubei/v1/player",
-            "Mozilla/5.0 (Linux; Android 14; SM-S9380) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.6478.122 Mobile Safari/537.36",
-            "https://www.youtube.com"),
-        // WEB_EMBEDDED_PLAYER — third-party embed with video-specific embedUrl.
-        NativeClient("WEB_EMBEDDED_PLAYER", "1.20260101.00.00", "56",
-            "https://www.youtube.com/youtubei/v1/player",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
-            "https://www.youtube.com",
-            useVideoEmbedUrl = true),
-        // iOS — baseline without PoToken.
-        NativeClient("IOS", "19.45.4", "5",
-            "https://youtubei.googleapis.com/youtubei/v1/player?key=AIzaSyB-63vPrdThhKuerbB2N_WhIe4",
-            "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 17_5 like Mac OS X;en_US) gzip",
-            "https://www.youtube.com"),
+        NativeClient(
+            name = "WEB", version = "2.20260101.00.00", clientId = "1",
+            url = "https://www.youtube.com/youtubei/v1/player",
+            userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+            origin = "https://www.youtube.com",
+            usePoToken = true,
+        ),
     )
 
     private fun fetchAudioStreamNative(videoId: String): String {
@@ -173,25 +180,38 @@ class InnertubeApi @Inject constructor() {
             val poTokenFrag = if (pot?.playerRequestPoToken != null)
                 ""","serviceIntegrityDimensions":{"poToken":"${pot.playerRequestPoToken}"}""" else ""
 
-            // WEB_EMBEDDED_PLAYER requires the specific video embed URL as the third-party origin.
-            val embedUrlCtx = if (client.useVideoEmbedUrl)
-                ""","thirdParty":{"embedUrl":"https://www.youtube.com/watch?v=$videoId"}""" else ""
-            val staticCtx = if (client.extraContextJson.isNotBlank()) ",${client.extraContextJson}" else ""
-            val extraCtx = embedUrlCtx.ifEmpty { staticCtx }
+            // clientContextJson fields go inside context.client; contextJson/embed go at context level.
+            val clientFrag = if (client.clientContextJson.isNotBlank()) ",${client.clientContextJson}" else ""
+            val contextFrag = when {
+                client.useVideoEmbedUrl -> ""","thirdParty":{"embedUrl":"https://www.youtube.com/watch?v=$videoId"}"""
+                client.contextJson.isNotBlank() -> ",${client.contextJson}"
+                else -> ""
+            }
+            // html5Preference only makes sense for web clients; native apps don't use it.
+            val playbackCtx = if (!client.isNativeApp)
+                ""","playbackContext":{"contentPlaybackContext":{"html5Preference":"HTML5_PREF_WANTS"}}""" else ""
 
-            val body = """{"videoId":"$videoId","contentCheckOk":true,"racyCheckOk":true,"context":{"client":{"clientName":"${client.name}","clientVersion":"${client.version}","hl":"en","gl":"US","timeZone":"UTC","utcOffsetMinutes":0$visitorDataFrag}$extraCtx}$poTokenFrag,"playbackContext":{"contentPlaybackContext":{"html5Preference":"HTML5_PREF_WANTS"}}}"""
+            val body = """{"videoId":"$videoId","contentCheckOk":true,"racyCheckOk":true,"context":{"client":{"clientName":"${client.name}","clientVersion":"${client.version}","hl":"en","gl":"US","timeZone":"UTC","utcOffsetMinutes":0$visitorDataFrag$clientFrag}$contextFrag}$poTokenFrag$playbackCtx}"""
             try {
                 val reqBuilder = Request.Builder()
                     .url(client.url)
                     .post(body.toRequestBody(json))
                     .addHeader("User-Agent", client.userAgent)
-                    .addHeader("X-YouTube-Client-Name", client.clientId)
-                    .addHeader("X-YouTube-Client-Version", client.version)
-                    .addHeader("Origin", client.origin)
-                    .addHeader("Referer", "${client.origin}/watch?v=$videoId")
                     .addHeader("Content-Type", "application/json")
+                if (client.isNativeApp) {
+                    // Native app clients authenticate via API key in URL.
+                    // Web-style headers (X-YouTube-Client-*, Origin, Cookie) cause HTTP 400.
+                    reqBuilder.addHeader("X-Goog-Api-Format-Version", "2")
+                } else {
+                    reqBuilder.addHeader("X-YouTube-Client-Name", client.clientId)
+                    reqBuilder.addHeader("X-YouTube-Client-Version", client.version)
+                    if (client.origin.isNotBlank()) {
+                        reqBuilder.addHeader("Origin", client.origin)
+                        reqBuilder.addHeader("Referer", "${client.origin}/watch?v=$videoId")
+                    }
                     // SOCS=CAI= bypasses cookie-consent check for API requests.
-                    .addHeader("Cookie", "SOCS=CAI=")
+                    reqBuilder.addHeader("Cookie", "SOCS=CAI=")
+                }
                 if (pot?.visitorData != null) {
                     reqBuilder.addHeader("X-Goog-Visitor-Id", pot.visitorData)
                 }
