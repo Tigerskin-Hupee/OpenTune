@@ -96,7 +96,24 @@ class InnertubeApi @Inject constructor(
             Log.w(tag, "getAudioStreamUrl($videoId) $msg")
         }
 
-        // 2. Native player API cascade (OAuth TVHTML5 → Android → iOS).
+        // 2. NewPipeExtractor with WEB PoToken fed to Android client provider.
+        try {
+            val info = StreamInfo.getInfo(ServiceList.YouTube, "https://www.youtube.com/watch?v=$videoId")
+            val best = info.audioStreams.filter { it.content != null }.maxByOrNull { it.averageBitrate }
+            if (best != null) {
+                val elapsed = System.currentTimeMillis() - start
+                Log.d(tag, "getAudioStreamUrl($videoId) ok via NPE ${elapsed}ms")
+                app.opentune.utils.DiagnosticsLogger.logStream(videoId, true, elapsed)
+                return best.content!!
+            }
+            val potErr = app.opentune.utils.potoken.OpenTunePoTokenProvider.lastError
+            errors += "NPE: ${info.audioStreams.size} streams, none with URL" +
+                if (potErr != null) " [pot:$potErr]" else ""
+        } catch (e: Exception) {
+            errors += "NPE: ${e.message?.take(100)}"
+        }
+
+        // 3. Native player API cascade (OAuth TVHTML5 → Android → iOS).
         return try {
             val nativeUrl = fetchAudioStreamNative(videoId)
             val elapsed = System.currentTimeMillis() - start
