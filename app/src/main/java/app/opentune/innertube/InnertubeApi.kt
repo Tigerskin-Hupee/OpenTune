@@ -141,11 +141,18 @@ class InnertubeApi @Inject constructor() {
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
             "https://www.youtube.com",
             useVideoEmbedUrl = true),
-        // iOS — official mobile endpoint.
+        // iOS — with our WEB PoToken. HTTP 400 = needs PoToken; providing ours tests validity.
         NativeClient("IOS", "19.45.4", "5",
             "https://youtubei.googleapis.com/youtubei/v1/player?key=AIzaSyB-63vPrdThhKuerbB2N_WhIe4",
             "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 17_5 like Mac OS X;en_US) gzip",
-            "https://www.youtube.com"),
+            "https://www.youtube.com",
+            usePoToken = true),
+        // Android — with our WEB PoToken.
+        NativeClient("ANDROID", "19.09.37", "3",
+            "https://youtubei.googleapis.com/youtubei/v1/player?key=AIzaSyB-63vPrdThhKuerbB2N_WhIe4",
+            "com.google.android.youtube/19.09.37 (Linux; U; Android 14) gzip",
+            "https://www.youtube.com",
+            usePoToken = true),
         // Android Music
         NativeClient("ANDROID_MUSIC", "7.27.52", "21",
             "https://music.youtube.com/youtubei/v1/player",
@@ -208,7 +215,11 @@ class InnertubeApi @Inject constructor() {
                 val playability = root.optJSONObject("playabilityStatus")
                 val status = playability?.optString("status") ?: "?"
                 if (status != "OK") {
-                    errors += "${client.name}: $status ${playability?.optString("reason") ?: ""}"
+                    val reason = playability?.optString("reason") ?: ""
+                    val messages = playability?.optJSONArray("messages")?.let {
+                        (0 until it.length()).map { i -> it.optString(i) }.joinToString(";")
+                    } ?: ""
+                    errors += "${client.name}: $status $reason${if (messages.isNotBlank()) " [$messages]" else ""}"
                     continue
                 }
 
