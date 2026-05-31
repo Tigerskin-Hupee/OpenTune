@@ -195,6 +195,25 @@ class InnertubeApi @Inject constructor(
     )
 
     private val nativeClients = listOf(
+        // ANDROID_VR — YouTube VR (Oculus Quest 3) client; no auth required, not subject to
+        // music.youtube.com OAuth enforcement. Used by Metrolist and other working apps.
+        NativeClient(
+            name = "ANDROID_VR", version = "1.61.48", clientId = "28",
+            url = "https://www.youtube.com/youtubei/v1/player",
+            apiKey = "AIzaSyA8eiZmM1FaDVjRy-df2KpynQLqgref8Xw",
+            userAgent = "com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12; en_US; Quest 3 Build/SQ3A.220605.009.A1) gzip",
+            clientContextJson = """"deviceMake":"Oculus","deviceModel":"Quest 3","osName":"Android","osVersion":"12","androidSdkVersion":"32","platform":"MOBILE"""",
+            isNativeApp = true,
+        ),
+        // TVHTML5_SIMPLY_EMBEDDED_PLAYER — TV embedded client (PlayStation UA); bypasses
+        // age/auth restrictions because YouTube allows unauthenticated embedded playback.
+        NativeClient(
+            name = "TVHTML5_SIMPLY_EMBEDDED_PLAYER", version = "2.0", clientId = "85",
+            url = "https://www.youtube.com/youtubei/v1/player",
+            userAgent = "Mozilla/5.0 (PlayStation; PlayStation 4/12.02) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.106 Safari/537.36",
+            origin = "https://www.youtube.com",
+            useVideoEmbedUrl = true,
+        ),
         // TVHTML5 authenticated — requires OAuth; bypasses all bot detection.
         NativeClient(
             name = "TVHTML5", version = "7.20260101.00.00", clientId = "7",
@@ -203,33 +222,14 @@ class InnertubeApi @Inject constructor(
             origin = "https://www.youtube.com",
             useAuth = true,
         ),
-        // ANDROID_TESTSUITE — internal test client, historically bypasses enforcement.
+        // ANDROID_TESTSUITE — internal test client.
         NativeClient(
             name = "ANDROID_TESTSUITE", version = "1.9", clientId = "30",
             url = "https://www.youtube.com/youtubei/v1/player",
             apiKey = "AIzaSyA8eiZmM1FaDVjRy-df2KpynQLqgref8Xw",
             userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 14) gzip",
-            clientContextJson = """"osName":"Android","osVersion":"14","androidSdkVersion":30,"platform":"MOBILE"""",
+            clientContextJson = """"osName":"Android","osVersion":"14","androidSdkVersion":"30","platform":"MOBILE"""",
             isNativeApp = true,
-        ),
-        // ANDROID_MUSIC — YouTube Music Android client; API key via header to match Vitune format.
-        NativeClient(
-            name = "ANDROID_MUSIC", version = "5.28.1", clientId = "21",
-            url = "https://music.youtube.com/youtubei/v1/player",
-            apiKey = "AIzaSyAOghZGza2MQSZkY_zfZ370N-PUdXEo8AI",
-            userAgent = "com.google.android.apps.youtube.music/5.28.1 (Linux; U; Android 11) gzip",
-            clientContextJson = """"osName":"Android","osVersion":"11","androidSdkVersion":30,"platform":"MOBILE"""",
-            isNativeApp = true,
-        ),
-        // IOS — device-native client; X-Goog-Api-Format-Version:2 required.
-        NativeClient(
-            name = "IOS", version = "19.45.4", clientId = "5",
-            url = "https://youtubei.googleapis.com/youtubei/v1/player",
-            apiKey = "AIzaSyB-63vPrdThhKuerbB2N_WhIe4",
-            userAgent = "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 17_5 like Mac OS X;en_US) gzip",
-            clientContextJson = """"osName":"iOS","osVersion":"17.5.1","deviceMake":"Apple","deviceModel":"iPhone16,2","platform":"MOBILE"""",
-            isNativeApp = true,
-            addApiFormatVersion = true,
         ),
         // WEB + PoToken — BotGuard WebView token.
         NativeClient(
