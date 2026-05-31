@@ -190,6 +190,7 @@ class InnertubeApi @Inject constructor(
         val useVideoEmbedUrl: Boolean = false,
         val isNativeApp: Boolean = false,     // true = no web headers, use API key in URL
         val useAuth: Boolean = false,         // true = requires OAuth Bearer token
+        val addApiFormatVersion: Boolean = false, // true = add X-Goog-Api-Format-Version: 2 (IOS only)
     )
 
     private val nativeClients = listOf(
@@ -206,15 +207,15 @@ class InnertubeApi @Inject constructor(
             name = "ANDROID_TESTSUITE", version = "1.9", clientId = "30",
             url = "https://www.youtube.com/youtubei/v1/player?key=AIzaSyA8eiZmM1FaDVjRy-df2KpynQLqgref8Xw",
             userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 14) gzip",
-            clientContextJson = """"osName":"Android","osVersion":"14","androidSdkVersion":"34","platform":"MOBILE"""",
+            clientContextJson = """"osName":"Android","osVersion":"14","androidSdkVersion":30,"platform":"MOBILE"""",
             isNativeApp = true,
         ),
         // ANDROID_MUSIC — YouTube Music Android client; music-specific endpoint.
         NativeClient(
-            name = "ANDROID_MUSIC", version = "7.27.52", clientId = "21",
+            name = "ANDROID_MUSIC", version = "5.28.1", clientId = "21",
             url = "https://music.youtube.com/youtubei/v1/player?key=AIzaSyAOghZGza2MQSZkY_zfZ370N-PUdXEo8AI",
-            userAgent = "com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 14; en_US) gzip",
-            clientContextJson = """"osName":"Android","osVersion":"14","androidSdkVersion":"34","platform":"MOBILE"""",
+            userAgent = "com.google.android.apps.youtube.music/5.28.1 (Linux; U; Android 11) gzip",
+            clientContextJson = """"osName":"Android","osVersion":"11","androidSdkVersion":30,"platform":"MOBILE"""",
             isNativeApp = true,
         ),
         // IOS — device-native client; must not use web headers, needs iOS device context.
@@ -224,6 +225,7 @@ class InnertubeApi @Inject constructor(
             userAgent = "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 17_5 like Mac OS X;en_US) gzip",
             clientContextJson = """"osName":"iOS","osVersion":"17.5.1","deviceMake":"Apple","deviceModel":"iPhone16,2","platform":"MOBILE"""",
             isNativeApp = true,
+            addApiFormatVersion = true,
         ),
         // WEB + PoToken — BotGuard WebView token with dynamically-fetched REQUEST_KEY.
         NativeClient(
@@ -282,7 +284,11 @@ class InnertubeApi @Inject constructor(
                 if (client.isNativeApp) {
                     // Native app clients authenticate via API key in URL.
                     // Web-style headers (X-YouTube-Client-*, Origin, Cookie) cause HTTP 400.
-                    reqBuilder.addHeader("X-Goog-Api-Format-Version", "2")
+                    // X-Goog-Api-Format-Version: 2 is IOS-only; sending it to Android clients
+                    // causes LOGIN_REQUIRED responses.
+                    if (client.addApiFormatVersion) {
+                        reqBuilder.addHeader("X-Goog-Api-Format-Version", "2")
+                    }
                 } else {
                     reqBuilder.addHeader("X-YouTube-Client-Name", client.clientId)
                     reqBuilder.addHeader("X-YouTube-Client-Version", client.version)
