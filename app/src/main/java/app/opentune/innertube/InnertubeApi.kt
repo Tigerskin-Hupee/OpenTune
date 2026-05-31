@@ -81,45 +81,105 @@ class InnertubeApi @Inject constructor(
     /** Resolve a video id to a direct audio CDN URL (highest-bitrate audio stream). */
     fun getAudioStreamUrl(videoId: String): String {
         val start = System.currentTimeMillis()
-        var npeError: String? = null
+        var errors = mutableListOf<String>()
 
-        // Primary: NewPipeExtractor — handles cipher, n-param, visitor data.
-        // Use a separate try so that NPE exceptions still fall through to the iOS fallback.
+        // 1. Piped public API — server-side YouTube proxy, no user login needed.
+        try {
+            val url = fetchAudioStreamPiped(videoId)
+            val elapsed = System.currentTimeMillis() - start
+            Log.d(tag, "getAudioStreamUrl($videoId) ok via Piped ${elapsed}ms")
+            app.opentune.utils.DiagnosticsLogger.logStream(videoId, true, elapsed)
+            return url
+        } catch (e: Exception) {
+            val msg = "Piped: ${e.message?.take(120)}"
+            errors += msg
+            Log.w(tag, "getAudioStreamUrl($videoId) $msg")
+        }
+
+        // 2. NewPipeExtractor — handles cipher/n-param on-device.
         try {
             val info = StreamInfo.getInfo(ServiceList.YouTube, "https://www.youtube.com/watch?v=$videoId")
             val allAudio = info.audioStreams
             val withUrl = allAudio.filter { it.content != null }
-            Log.d(tag, "getAudioStreamUrl($videoId) npe: total=${allAudio.size} withUrl=${withUrl.size}")
             val best = withUrl.maxByOrNull { it.averageBitrate }
             if (best != null) {
                 val elapsed = System.currentTimeMillis() - start
-                Log.d(tag, "getAudioStreamUrl($videoId) ok via NPE ${elapsed}ms bitrate=${best.averageBitrate}")
+                Log.d(tag, "getAudioStreamUrl($videoId) ok via NPE ${elapsed}ms")
                 app.opentune.utils.DiagnosticsLogger.logStream(videoId, true, elapsed)
                 return best.content!!
             }
             val potErr = app.opentune.utils.potoken.OpenTunePoTokenProvider.lastError
-            npeError = "NPE: ${allAudio.size} streams, none with direct URL" +
+            errors += "NPE: ${allAudio.size} streams, none with URL" +
                 if (potErr != null) " [PoToken:$potErr]" else ""
-            Log.w(tag, "getAudioStreamUrl($videoId) $npeError — trying iOS fallback")
         } catch (e: Exception) {
-            npeError = "NPE ${e.javaClass.simpleName}: ${e.message?.take(100)}"
-            Log.w(tag, "getAudioStreamUrl($videoId) NPE failed — trying iOS fallback: $npeError")
+            errors += "NPE: ${e.message?.take(100)}"
         }
 
-        // Fallback: native player API cascade (Android test → Android Music → iOS → WEB+PoToken).
+        // 3. Native player API cascade (OAuth TVHTML5 → Android → iOS).
         return try {
             val nativeUrl = fetchAudioStreamNative(videoId)
             val elapsed = System.currentTimeMillis() - start
-            Log.d(tag, "getAudioStreamUrl($videoId) ok via native fallback ${elapsed}ms")
+            Log.d(tag, "getAudioStreamUrl($videoId) ok via native ${elapsed}ms")
             app.opentune.utils.DiagnosticsLogger.logStream(videoId, true, elapsed)
             nativeUrl
         } catch (e: Exception) {
             val elapsed = System.currentTimeMillis() - start
-            val combined = "$npeError | native: ${e.message?.take(400)}"
+            errors += "native: ${e.message?.take(400)}"
+            val combined = errors.joinToString(" | ")
             Log.w(tag, "getAudioStreamUrl($videoId) ALL FAILED ${elapsed}ms: $combined")
             app.opentune.utils.DiagnosticsLogger.logStream(videoId, false, elapsed, combined.take(600))
             throw Exception(combined)
         }
+    }
+
+    // Piped is a public YouTube proxy that resolves streams server-side — no user auth needed.
+    // Tries multiple public instances in order; first successful response wins.
+    private val pipedInstances = listOf(
+        "https://pipedapi.kavin.rocks",
+        "https://pipedapi.adminforge.de",
+        "https://piped-api.garudalinux.org",
+    )
+
+    private fun fetchAudioStreamPiped(videoId: String): String {
+        var lastError = "no instances tried"
+        for (instance in pipedInstances) {
+            try {
+                val response = httpClient.newCall(
+                    Request.Builder()
+                        .url("$instance/streams/$videoId")
+                        .addHeader("User-Agent", "OpenTune/1.2 Android")
+                        .get()
+                        .build()
+                ).execute()
+                val rb = response.body?.string()
+                if (!response.isSuccessful || rb.isNullOrBlank()) {
+                    lastError = "$instance: HTTP ${response.code}"; continue
+                }
+                val root = JSONObject(rb)
+                if (root.has("error")) {
+                    lastError = "$instance: ${root.optString("message", root.optString("error"))}"; continue
+                }
+                val streams = root.optJSONArray("audioStreams")
+                if (streams == null || streams.length() == 0) {
+                    lastError = "$instance: no audioStreams"; continue
+                }
+                var bestUrl: String? = null; var bestBitrate = 0
+                for (i in 0 until streams.length()) {
+                    val s = streams.getJSONObject(i)
+                    val u = s.optString("url").takeIf { it.isNotBlank() } ?: continue
+                    val br = s.optInt("bitrate", 0)
+                    if (br > bestBitrate) { bestBitrate = br; bestUrl = u }
+                }
+                if (bestUrl != null) {
+                    Log.d(tag, "fetchAudioStreamPiped($videoId) ok via $instance bitrate=$bestBitrate")
+                    return bestUrl
+                }
+                lastError = "$instance: no URL in ${streams.length()} streams"
+            } catch (e: Exception) {
+                lastError = "$instance: ${e.message?.take(80)}"
+            }
+        }
+        error("Piped failed: $lastError")
     }
 
     // Multi-client native player API cascade. Tries clients in order, returns first working URL.
