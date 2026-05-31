@@ -128,41 +128,33 @@ class InnertubeApi @Inject constructor() {
     )
 
     private val nativeClients = listOf(
-        // WEB + PoToken — uses our BotGuard WebView token; most reliable path.
-        // serviceIntegrityDimensions.poToken + visitorData + X-Goog-Visitor-Id header.
+        // WEB + PoToken — BotGuard WebView token with dynamically-fetched REQUEST_KEY.
         NativeClient("WEB", "2.20260101.00.00", "1",
             "https://www.youtube.com/youtubei/v1/player",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
             "https://www.youtube.com",
             usePoToken = true),
+        // TVHTML5 — YouTube TV app client; historically lower PoToken enforcement.
+        NativeClient("TVHTML5", "7.20260101.00.00", "7",
+            "https://www.youtube.com/youtubei/v1/player",
+            "Mozilla/5.0 (SMART-TV; Linux; Tizen 6.0) AppleWebKit/538.1 (KHTML, like Gecko) Version/6.0 TV Safari/538.1",
+            "https://www.youtube.com"),
+        // MWEB — mobile web client; different auth path from desktop WEB.
+        NativeClient("MWEB", "2.20260101.00.00", "2",
+            "https://www.youtube.com/youtubei/v1/player",
+            "Mozilla/5.0 (Linux; Android 14; SM-S9380) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.6478.122 Mobile Safari/537.36",
+            "https://www.youtube.com"),
         // WEB_EMBEDDED_PLAYER — third-party embed with video-specific embedUrl.
         NativeClient("WEB_EMBEDDED_PLAYER", "1.20260101.00.00", "56",
             "https://www.youtube.com/youtubei/v1/player",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
             "https://www.youtube.com",
             useVideoEmbedUrl = true),
-        // iOS — with our WEB PoToken. HTTP 400 = needs PoToken; providing ours tests validity.
+        // iOS — baseline without PoToken.
         NativeClient("IOS", "19.45.4", "5",
             "https://youtubei.googleapis.com/youtubei/v1/player?key=AIzaSyB-63vPrdThhKuerbB2N_WhIe4",
             "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 17_5 like Mac OS X;en_US) gzip",
-            "https://www.youtube.com",
-            usePoToken = true),
-        // Android — with our WEB PoToken.
-        NativeClient("ANDROID", "19.09.37", "3",
-            "https://youtubei.googleapis.com/youtubei/v1/player?key=AIzaSyB-63vPrdThhKuerbB2N_WhIe4",
-            "com.google.android.youtube/19.09.37 (Linux; U; Android 14) gzip",
-            "https://www.youtube.com",
-            usePoToken = true),
-        // Android Music
-        NativeClient("ANDROID_MUSIC", "7.27.52", "21",
-            "https://music.youtube.com/youtubei/v1/player",
-            "com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 11) gzip",
-            "https://music.youtube.com"),
-        // iOS Music
-        NativeClient("IOS_MUSIC", "7.27.52", "26",
-            "https://music.youtube.com/youtubei/v1/player",
-            "com.google.ios.youtubemusic/7.27.52 (iPhone16,2; U; CPU iOS 17_5 like Mac OS X;en_US) gzip",
-            "https://music.youtube.com"),
+            "https://www.youtube.com"),
     )
 
     private fun fetchAudioStreamNative(videoId: String): String {
