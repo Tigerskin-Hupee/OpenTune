@@ -152,6 +152,7 @@ import app.opentune.ui.screens.playlist.AutoPlaylistScreen
 import app.opentune.ui.screens.playlist.LocalPlaylistScreen
 import app.opentune.ui.screens.search.SearchBarContainer
 import app.opentune.ui.screens.settings.AboutScreen
+import app.opentune.ui.screens.settings.AccountSettings
 import app.opentune.ui.screens.settings.AppearanceSettings
 import app.opentune.ui.screens.settings.AttributionScreen
 import app.opentune.ui.screens.settings.BackupAndRestore
@@ -600,6 +601,9 @@ class MainActivity : ComponentActivity() {
                                     }
                                     composable("settings") {
                                         SettingsScreen(navController, scrollBehavior)
+                                    }
+                                    composable("settings/account") {
+                                        AccountSettings(navController, scrollBehavior)
                                     }
                                     composable("settings/appearance") {
                                         AppearanceSettings(navController, scrollBehavior)
