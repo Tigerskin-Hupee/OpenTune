@@ -266,11 +266,17 @@ class InnertubeApi @Inject constructor(
             // 3. NewPipeExtractor — last resort; slow (10+ s) but handles more edge cases.
             try {
                 val info = StreamInfo.getInfo(ServiceList.YouTube, "https://www.youtube.com/watch?v=$videoId")
-                val best = info.audioStreams.filter { it.content != null }.maxByOrNull { it.averageBitrate }
+                // Filter out IOS-client streams: NPE falls back to IOS when WEB fails, but IOS
+                // CDN URLs cause ExoPlayer to buffer indefinitely (no error, no audio). Prefer
+                // any non-IOS stream; only accept IOS as last resort if nothing else is available.
+                val allStreams = info.audioStreams.filter { it.content != null }
+                val nonIos = allStreams.filter { !it.content!!.contains("c=IOS", ignoreCase = true) }
+                val best = (nonIos.ifEmpty { allStreams }).maxByOrNull { it.averageBitrate }
                 if (best != null) {
                     val elapsed = System.currentTimeMillis() - start
-                    Log.d(tag, "getAudioStreamUrl($videoId) ok via NPE ${elapsed}ms")
-                    app.opentune.utils.DiagnosticsLogger.logStream(videoId, true, elapsed, client = "NPE", urlHint = urlHint(best.content!!))
+                    val isIos = best.content!!.contains("c=IOS", ignoreCase = true)
+                    Log.d(tag, "getAudioStreamUrl($videoId) ok via NPE ${elapsed}ms ios=$isIos streams=${allStreams.size} nonIos=${nonIos.size}")
+                    app.opentune.utils.DiagnosticsLogger.logStream(videoId, true, elapsed, client = "NPE${if (isIos) "(ios)" else ""}", urlHint = urlHint(best.content!!))
                     return best.content!!
                 }
                 val potErr = app.opentune.utils.potoken.OpenTunePoTokenProvider.lastError
@@ -354,11 +360,24 @@ class InnertubeApi @Inject constructor(
         val rawSig = params["s"] ?: return null
         val sigParam = params["sp"] ?: "sig"
 
-        val ops = cachedSigOps ?: run { ensurePlayerJsData(); cachedSigOps } ?: run {
-            Log.w(tag, "decodeCipherUrl: sig ops not available, skipping format")
-            return null
+        val ops = cachedSigOps ?: run { ensurePlayerJsData(); cachedSigOps }
+        val decodedSig = if (ops != null) {
+            applySigOps(rawSig, ops)
+        } else {
+            // Kotlin sigOps unavailable (player JS extraction failed). Try WebView sig-decode:
+            // PoTokenWebView injects the actual player JS decode function during init, so it works
+            // even when our regex-based parser can't parse the current JS obfuscation pattern.
+            val wvSig = try {
+                runBlocking { app.opentune.utils.potoken.OpenTunePoTokenProvider.decodeSig(rawSig) }
+            } catch (_: Exception) { null }
+            if (wvSig != null) {
+                Log.d(tag, "decodeCipherUrl: used WebView sig-decode fallback")
+                wvSig
+            } else {
+                Log.w(tag, "decodeCipherUrl: sig decode unavailable (Kotlin sigOps=null, WebView=null)")
+                return null
+            }
         }
-        val decodedSig = applySigOps(rawSig, ops)
         val sep = if (baseUrl.contains('?')) '&' else '?'
         return "$baseUrl$sep$sigParam=${java.net.URLEncoder.encode(decodedSig, "UTF-8")}"
     }
@@ -407,6 +426,16 @@ class InnertubeApi @Inject constructor(
     )
 
     private val nativeClients = listOf(
+        // TVHTML5_SIMPLY_EMBEDDED_PLAYER — tried FIRST: no PoToken, no Play Integrity, no auth.
+        // Uses embed URL trick; returns signatureCipher decoded via Kotlin sigOps or WebView fallback.
+        // Web-format CDN URLs play correctly in ExoPlayer (no UA binding, no special container).
+        NativeClient(
+            name = "TVHTML5_SIMPLY_EMBEDDED_PLAYER", version = "2.0", clientId = "85",
+            url = "https://www.youtube.com/youtubei/v1/player",
+            userAgent = "Mozilla/5.0 (PlayStation; PlayStation 4/12.02) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.106 Safari/537.36",
+            origin = "https://www.youtube.com",
+            useVideoEmbedUrl = true,
+        ),
         // WEB_REMIX — YouTube Music web client. PoToken-gated; CDN URLs from web clients
         // work reliably with ExoPlayer (no UA binding). Primary when PoToken is valid.
         NativeClient(
@@ -441,16 +470,6 @@ class InnertubeApi @Inject constructor(
             userAgent = "com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 14; en_US) gzip",
             clientContextJson = """"deviceMake":"Google","deviceModel":"Pixel 9","osName":"Android","osVersion":"14","androidSdkVersion":"34","platform":"MOBILE"""",
             isNativeApp = true,
-        ),
-        // TVHTML5_SIMPLY_EMBEDDED_PLAYER — TV embedded client. No PoToken required;
-        // embedUrl bypasses age/auth restrictions. Returns signatureCipher (needs sigOps).
-        // Web-format CDN URLs work reliably with ExoPlayer.
-        NativeClient(
-            name = "TVHTML5_SIMPLY_EMBEDDED_PLAYER", version = "2.0", clientId = "85",
-            url = "https://www.youtube.com/youtubei/v1/player",
-            userAgent = "Mozilla/5.0 (PlayStation; PlayStation 4/12.02) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.106 Safari/537.36",
-            origin = "https://www.youtube.com",
-            useVideoEmbedUrl = true,
         ),
         // TVHTML5 authenticated — requires OAuth; bypasses all bot detection.
         NativeClient(
