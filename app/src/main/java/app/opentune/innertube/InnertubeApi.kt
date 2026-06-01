@@ -215,6 +215,38 @@ class InnertubeApi @Inject constructor(
         error("Piped failed: $lastError")
     }
 
+    // Decode a YouTube signatureCipher string into a playable URL.
+    // signatureCipher format: url=BASE_URL&s=ENCODED_SIG&sp=PARAM_NAME (URL-encoded values)
+    private fun decodeCipherUrl(cipher: String): String? {
+        val params = cipher.split("&").associate {
+            val eq = it.indexOf('=')
+            if (eq < 0) it to ""
+            else it.substring(0, eq) to try {
+                java.net.URLDecoder.decode(it.substring(eq + 1), "UTF-8")
+            } catch (_: Exception) { it.substring(eq + 1) }
+        }
+        val baseUrl = params["url"] ?: return null
+        val rawSig = params["s"] ?: return null
+        val sigParam = params["sp"] ?: "sig"
+
+        val decodedSig = try {
+            runBlocking {
+                app.opentune.utils.potoken.OpenTunePoTokenProvider.decodeSig(rawSig)
+            }
+        } catch (e: Exception) {
+            Log.w(tag, "decodeCipherUrl: decodeSig threw: ${e.message}")
+            null
+        }
+
+        if (decodedSig == null) {
+            Log.w(tag, "decodeCipherUrl: sig decode unavailable, skipping format")
+            return null
+        }
+
+        val sep = if (baseUrl.contains('?')) '&' else '?'
+        return "$baseUrl$sep$sigParam=${java.net.URLEncoder.encode(decodedSig, "UTF-8")}"
+    }
+
     // Build a safe URL hint for logging: host + key params (no sensitive data).
     private fun urlHint(url: String): String {
         val host = try { android.net.Uri.parse(url).host?.take(30) ?: "?" } catch (_: Exception) { "?" }
@@ -426,9 +458,22 @@ class InnertubeApi @Inject constructor(
                 for (i in 0 until formats.length()) {
                     val fmt = formats.getJSONObject(i)
                     if (!fmt.optString("mimeType", "").startsWith("audio/")) continue
-                    val u = fmt.optString("url", "").takeIf { it.isNotBlank() } ?: continue
                     val br = fmt.optInt("averageBitrate", 0).takeIf { it > 0 } ?: fmt.optInt("bitrate", 0)
-                    if (br > bestBitrate) { bestBitrate = br; bestUrl = u }
+
+                    // Try direct URL first (native app clients: iOS, Android)
+                    val directUrl = fmt.optString("url", "").takeIf { it.isNotBlank() }
+                    if (directUrl != null) {
+                        if (br > bestBitrate) { bestBitrate = br; bestUrl = directUrl }
+                        continue
+                    }
+
+                    // Handle signatureCipher / cipher (WEB/WEB_REMIX browser clients)
+                    val cipher = fmt.optString("signatureCipher").takeIf { it.isNotBlank() }
+                        ?: fmt.optString("cipher").takeIf { it.isNotBlank() }
+                    if (cipher != null) {
+                        val cipherUrl = decodeCipherUrl(cipher)
+                        if (cipherUrl != null && br > bestBitrate) { bestBitrate = br; bestUrl = cipherUrl }
+                    }
                 }
                 if (bestUrl != null) {
                     // Strip alr=yes — YouTube's "adaptive live redirect" causes CDN to return

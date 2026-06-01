@@ -102,6 +102,16 @@ object OpenTunePoTokenProvider : PoTokenProvider {
         }
     }
 
+    /** Decode YouTube signatureCipher 's' param using the player JS function in the WebView. */
+    suspend fun decodeSig(sig: String): String? {
+        return try {
+            webView?.decodeSig(sig)
+        } catch (e: Exception) {
+            Log.w(TAG, "decodeSig('${sig.take(12)}..') failed: ${e.message}")
+            null
+        }
+    }
+
     private fun fetchVisitorData(): String {
         val clientCtx = """{"client":{"clientName":"WEB","clientVersion":"2.20241030.09.00","hl":"en","gl":"US"}}"""
         val endpoints = listOf(

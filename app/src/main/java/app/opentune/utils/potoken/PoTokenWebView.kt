@@ -233,24 +233,29 @@ class PoTokenWebView private constructor(private val context: Context) {
         return response.body?.string() ?: throw PoTokenException("Empty body from $url")
     }
 
-    // Fetch JNN request key AND n-decode function from YouTube's player JS.
-    // Returns Pair(requestKey, nDecodeFnCode) — either may be null on failure.
-    private fun fetchPlayerJsData(): Pair<String?, String?> {
+    // Fetch JNN request key, n-decode function, and sig-decode code from YouTube's player JS.
+    private data class PlayerJsData(
+        val requestKey: String?,
+        val nDecodeFn: String?,
+        val sigDecodeFn: String?,
+    )
+
+    private fun fetchPlayerJsData(): PlayerJsData {
         return try {
             val homeHtml = httpClient.newCall(
                 Request.Builder().url("https://www.youtube.com")
                     .addHeader("User-Agent", USER_AGENT)
                     .addHeader("Accept-Language", "en-US,en;q=0.9")
                     .get().build()
-            ).execute().body?.string() ?: return Pair(null, null)
+            ).execute().body?.string() ?: return PlayerJsData(null, null, null)
 
             val scriptPath = Regex("""/s/player/[a-f0-9]+/player_ias\.vflset[^"' ]*base\.js""")
-                .find(homeHtml)?.value ?: return Pair(null, null)
+                .find(homeHtml)?.value ?: return PlayerJsData(null, null, null)
 
             val jsContent = httpClient.newCall(
                 Request.Builder().url("https://www.youtube.com$scriptPath")
                     .addHeader("User-Agent", USER_AGENT).get().build()
-            ).execute().body?.string() ?: return Pair(null, null)
+            ).execute().body?.string() ?: return PlayerJsData(null, null, null)
 
             // --- JNN request key ---
             val jnnIdx = jsContent.indexOf("jnn/v1/Create")
@@ -266,11 +271,51 @@ class PoTokenWebView private constructor(private val context: Context) {
                 ?.also { Log.d(TAG, "n-decode fn extracted (${it.length} chars)") }
                 ?: run { Log.w(TAG, "n-decode fn not found in player JS"); null }
 
-            Pair(requestKey, nDecodeFn)
+            // --- sig-decode code ---
+            val sigDecodeFn = extractSigDecodeCode(jsContent)
+                ?.also { Log.d(TAG, "sig-decode code extracted (${it.length} chars)") }
+                ?: run { Log.w(TAG, "sig-decode code not found in player JS"); null }
+
+            PlayerJsData(requestKey, nDecodeFn, sigDecodeFn)
         } catch (e: Exception) {
             Log.w(TAG, "fetchPlayerJsData: ${e.message}")
-            Pair(null, null)
+            PlayerJsData(null, null, null)
         }
+    }
+
+    // Extract YouTube's signature-cipher decode code (helper object + main fn) from player JS.
+    // The extracted code, when eval'd, sets decodeSig_global = mainFn so WebView can call it.
+    private fun extractSigDecodeCode(js: String): String? {
+        // Find the function called to decode the 's' parameter from signatureCipher
+        val fnName = listOf(
+            Regex("""[;,=]\s*([a-zA-Z0-9$]{2,})\(decodeURIComponent\([^)]+\.get\("s"\)"""),
+            Regex("""\.sig\s*\|\|\s*([a-zA-Z0-9$]{2,})\("""),
+            Regex("""a\.set\("sig"\s*,\s*([a-zA-Z0-9$]{2,})\("""),
+        ).firstNotNullOfOrNull { it.find(js) }?.groupValues?.get(1) ?: return null
+        Log.d(TAG, "sig decode fn: $fnName")
+
+        // Extract main function body
+        val fnDefIdx = js.indexOf("function $fnName(").takeIf { it >= 0 } ?: return null
+        val bodyOpen = js.indexOf("{", fnDefIdx).takeIf { it >= 0 } ?: return null
+        val fnBody = extractBalanced(js, bodyOpen) ?: return null
+        val paramEnd = js.indexOf(")", js.indexOf("(", fnDefIdx))
+        val params = js.substring(js.indexOf("(", fnDefIdx) + 1, paramEnd)
+
+        // Find helper object name (first `OBJ.method(a` call in function body)
+        val helperName = Regex("""([a-zA-Z0-9$]{2,})\.[a-zA-Z0-9$]+\(a""")
+            .find(fnBody)?.groupValues?.get(1) ?: return null
+        Log.d(TAG, "sig helper obj: $helperName")
+
+        // Extract helper object definition
+        val helperSearch = js.indexOf("var $helperName={")
+            .takeIf { it >= 0 }
+            ?: js.indexOf(",$helperName={").takeIf { it >= 0 }?.plus(1)
+            ?: return null
+        val helperOpen = js.indexOf("{", helperSearch).takeIf { it >= 0 } ?: return null
+        val helperBody = extractBalanced(js, helperOpen) ?: return null
+
+        // Build self-contained code block; exposes decodeSig_global in outer (WebView) scope
+        return "var $helperName=$helperBody;\nfunction $fnName($params) $fnBody\ndecodeSig_global=$fnName;"
     }
 
     // Extract the YouTube n-parameter decode function from player JS.
@@ -313,6 +358,24 @@ class PoTokenWebView private constructor(private val context: Context) {
         return null
     }
 
+    // Decode a YouTube signature cipher 's' value using the injected player JS decode function.
+    // Returns decoded signature, or null if unavailable/failed.
+    suspend fun decodeSig(sig: String): String? {
+        val deferred = CompletableDeferred<String?>()
+        withContext(Dispatchers.Main) {
+            val escaped = sig.replace("\\", "\\\\").replace("\"", "\\\"")
+            webView.evaluateJavascript(
+                """(function(){try{return decodeSig("$escaped");}catch(e){return null;}})()"""
+            ) { result ->
+                deferred.complete(
+                    if (result == null || result == "null") null
+                    else result.trim('"').ifBlank { null }
+                )
+            }
+        }
+        return deferred.await()
+    }
+
     // Decode a YouTube CDN URL's n-parameter using the injected player JS function.
     // Returns the decoded n value, or null if unavailable/failed.
     suspend fun decodeNParam(nEncoded: String): String? {
@@ -340,16 +403,22 @@ class PoTokenWebView private constructor(private val context: Context) {
 
         suspend fun create(context: Context): PoTokenWebView {
             val wv = PoTokenWebView(context)
-            val (dynamicKey, nDecodeFn) = withContext(Dispatchers.IO) { wv.fetchPlayerJsData() }
-            if (dynamicKey != null) wv.requestKey = dynamicKey
+            val jsData = withContext(Dispatchers.IO) { wv.fetchPlayerJsData() }
+            if (jsData.requestKey != null) wv.requestKey = jsData.requestKey
             else Log.w(TAG, "Using fallback REQUEST_KEY")
             wv.initialize()
-            // Inject n-decode function into the already-initialized WebView
-            if (nDecodeFn != null) {
-                val escaped = nDecodeFn.replace("\\", "\\\\").replace("'", "\\'")
-                withContext(Dispatchers.Main) {
+            // Inject n-decode and sig-decode functions into the already-initialized WebView
+            withContext(Dispatchers.Main) {
+                if (jsData.nDecodeFn != null) {
+                    val escaped = jsData.nDecodeFn.replace("\\", "\\\\").replace("'", "\\'")
                     wv.webView.evaluateJavascript("setupNDecode('$escaped')") { r ->
                         Log.d(TAG, "setupNDecode: $r")
+                    }
+                }
+                if (jsData.sigDecodeFn != null) {
+                    val escaped = jsData.sigDecodeFn.replace("\\", "\\\\").replace("'", "\\'")
+                    wv.webView.evaluateJavascript("setupSigDecode('$escaped')") { r ->
+                        Log.d(TAG, "setupSigDecode: $r")
                     }
                 }
             }
