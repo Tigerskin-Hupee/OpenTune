@@ -404,9 +404,8 @@ class InnertubeApi @Inject constructor(
     )
 
     private val nativeClients = listOf(
-        // WEB_REMIX — YouTube Music web client. Primary client: PoToken-gated but CDN URLs
-        // from the web client work reliably with standard HTTP clients (no iOS/Android UA binding).
-        // Same client used by InnerTune, Metrolist, and other working music apps.
+        // WEB_REMIX — YouTube Music web client. PoToken-gated; CDN URLs from web clients
+        // work reliably with ExoPlayer (no UA binding). Primary when PoToken is valid.
         NativeClient(
             name = "WEB_REMIX", version = "1.20260213.01.00", clientId = "67",
             url = "https://music.youtube.com/youtubei/v1/player",
@@ -422,10 +421,7 @@ class InnertubeApi @Inject constructor(
             origin = "https://www.youtube.com",
             usePoToken = true,
         ),
-        // ANDROID_VR — YouTube VR (Oculus Quest 3) client. Regular YouTube client
-        // (not YouTube Music), so it accesses any YouTube video regardless of Music
-        // licensing. Returns direct Android-format CDN URLs. Placed before IOS because
-        // IOS CDN URLs now return 403 to ExoPlayer.
+        // ANDROID_VR — YouTube VR (Oculus Quest 3) client.
         NativeClient(
             name = "ANDROID_VR", version = "1.61.48", clientId = "28",
             url = "https://www.youtube.com/youtubei/v1/player",
@@ -434,8 +430,7 @@ class InnertubeApi @Inject constructor(
             clientContextJson = """"deviceMake":"Oculus","deviceModel":"Quest 3","osName":"Android","osVersion":"12","androidSdkVersion":"32","platform":"MOBILE"""",
             isNativeApp = true,
         ),
-        // ANDROID_MUSIC — YouTube Music Android client. Only reaches videos licensed
-        // for YouTube Music; kept as fallback for Music-exclusive content.
+        // ANDROID_MUSIC — YouTube Music Android client.
         NativeClient(
             name = "ANDROID_MUSIC", version = "7.27.52", clientId = "21",
             url = "https://www.youtube.com/youtubei/v1/player",
@@ -444,16 +439,9 @@ class InnertubeApi @Inject constructor(
             clientContextJson = """"deviceMake":"Google","deviceModel":"Pixel 9","osName":"Android","osVersion":"14","androidSdkVersion":"34","platform":"MOBILE"""",
             isNativeApp = true,
         ),
-        // IOS — fallback only; CDN URLs have been returning 403 to ExoPlayer.
-        NativeClient(
-            name = "IOS", version = "20.03.02", clientId = "5",
-            url = "https://youtubei.googleapis.com/youtubei/v1/player",
-            apiKey = "AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc",
-            userAgent = "com.google.ios.youtube/20.03.02 (iPhone16,2; U; CPU iOS 18_2_1 like Mac OS X;)",
-            clientContextJson = """"deviceMake":"Apple","deviceModel":"iPhone16,2","osName":"iPhone","osVersion":"18.2.1.22C161","platform":"MOBILE"""",
-            isNativeApp = true,
-        ),
-        // TVHTML5_SIMPLY_EMBEDDED_PLAYER — TV embedded client; bypasses age/auth restrictions.
+        // TVHTML5_SIMPLY_EMBEDDED_PLAYER — TV embedded client. No PoToken required;
+        // embedUrl bypasses age/auth restrictions. Returns signatureCipher (needs sigOps).
+        // Web-format CDN URLs work reliably with ExoPlayer.
         NativeClient(
             name = "TVHTML5_SIMPLY_EMBEDDED_PLAYER", version = "2.0", clientId = "85",
             url = "https://www.youtube.com/youtubei/v1/player",
@@ -476,6 +464,16 @@ class InnertubeApi @Inject constructor(
             apiKey = "AIzaSyA8eiZmM1FaDVjRy-df2KpynQLqgref8Xw",
             userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 14) gzip",
             clientContextJson = """"osName":"Android","osVersion":"14","androidSdkVersion":"30","platform":"MOBILE"""",
+            isNativeApp = true,
+        ),
+        // IOS — last resort only. CDN URLs consistently return 403 to ExoPlayer regardless
+        // of User-Agent; only use if every other client fails.
+        NativeClient(
+            name = "IOS", version = "20.03.02", clientId = "5",
+            url = "https://youtubei.googleapis.com/youtubei/v1/player",
+            apiKey = "AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc",
+            userAgent = "com.google.ios.youtube/20.03.02 (iPhone16,2; U; CPU iOS 18_2_1 like Mac OS X;)",
+            clientContextJson = """"deviceMake":"Apple","deviceModel":"iPhone16,2","osName":"iPhone","osVersion":"18.2.1.22C161","platform":"MOBILE"""",
             isNativeApp = true,
         ),
     )
@@ -610,7 +608,7 @@ class InnertubeApi @Inject constructor(
                     Log.d(tag, "fetchAudioStreamNative($videoId) ok via ${client.name} bitrate=$bestBitrate alr=${bestUrl.contains("alr=yes")}")
                     return Triple(finalUrl, client.name, errors.toList())
                 }
-                errors += "${client.name}: no direct audio URL in ${formats.length()} formats"
+                errors += "${client.name}: no audio URL in ${formats.length()} formats (sigTs=$cachedSigTs sigOps=${cachedSigOps?.size ?: "null"})"
 
             } catch (e: Exception) {
                 errors += "${client.name}: ${e.javaClass.simpleName} ${e.message?.take(80)}"
