@@ -79,36 +79,144 @@ class InnertubeApi @Inject constructor(
         .cookieJar(cookieJar)
         .build()
 
-    // Signature timestamp from YouTube's player JS — required in playbackContext for web clients.
-    // Changes with each player JS deploy; cache for 1 hour.
-    @Volatile private var cachedSigTs: Int = 0
-    @Volatile private var sigTsFetchedAt: Long = 0L
+    // ── Player JS cache ─────────────────────────────────────────────────────────
+    // Both signatureTimestamp and sig-decode operations come from the same player JS.
+    // Fetch once per hour; sig ops are used to decode signatureCipher URL fields.
 
-    private fun getSignatureTimestamp(): Int {
+    @Volatile private var cachedSigTs: Int = 0
+    @Volatile private var cachedSigOps: List<SigOp>? = null
+    @Volatile private var jsDataFetchedAt: Long = 0L
+
+    private sealed class SigOp {
+        object Reverse : SigOp()
+        data class Splice(val n: Int) : SigOp()
+        data class Swap(val n: Int) : SigOp()
+    }
+
+    private fun ensurePlayerJsData() {
         val now = System.currentTimeMillis()
-        if (cachedSigTs > 0 && now - sigTsFetchedAt < 3_600_000L) return cachedSigTs
-        return try {
+        if (jsDataFetchedAt > 0 && now - jsDataFetchedAt < 3_600_000L) return
+        try {
+            val ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0"
             val homeHtml = httpClient.newCall(
-                Request.Builder().url("https://www.youtube.com")
-                    .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0")
-                    .get().build()
-            ).execute().body?.string() ?: return cachedSigTs
+                Request.Builder().url("https://www.youtube.com").addHeader("User-Agent", ua).get().build()
+            ).execute().body?.string() ?: return
             val scriptPath = Regex("""/s/player/[a-f0-9]+/player_ias\.vflset[^"' ]*base\.js""")
-                .find(homeHtml)?.value ?: return cachedSigTs
+                .find(homeHtml)?.value ?: return
             val js = httpClient.newCall(
                 Request.Builder().url("https://www.youtube.com$scriptPath")
-                    .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0")
-                    .get().build()
-            ).execute().body?.string() ?: return cachedSigTs
-            val ts = Regex("""signatureTimestamp[=:]\s*(\d+)""").find(js)
-                ?.groupValues?.get(1)?.toIntOrNull() ?: return cachedSigTs
-            Log.d(tag, "signatureTimestamp=$ts")
-            cachedSigTs = ts; sigTsFetchedAt = now
-            ts
+                    .addHeader("User-Agent", ua).get().build()
+            ).execute().body?.string() ?: return
+
+            // signature timestamp
+            Regex("""signatureTimestamp[=:]\s*(\d+)""").find(js)
+                ?.groupValues?.get(1)?.toIntOrNull()
+                ?.also { cachedSigTs = it; Log.d(tag, "signatureTimestamp=$it") }
+
+            // sig-decode operations
+            extractSigOps(js)?.also { cachedSigOps = it; Log.d(tag, "sigOps: ${it.size} ops") }
+                ?: Log.w(tag, "sig decode ops not found in player JS")
+
+            jsDataFetchedAt = System.currentTimeMillis()
         } catch (e: Exception) {
-            Log.w(tag, "getSignatureTimestamp failed: ${e.message}")
-            cachedSigTs
+            Log.w(tag, "ensurePlayerJsData failed: ${e.message}")
         }
+    }
+
+    private fun getSignatureTimestamp(): Int { ensurePlayerJsData(); return cachedSigTs }
+
+    // Extract bracket-balanced substring from js starting at position `start`.
+    private fun extractBalancedJs(js: String, start: Int): String? {
+        if (start < 0 || start >= js.length) return null
+        val close = when (js[start]) { '[' -> ']'; '{' -> '}'; '(' -> ')'; else -> return null }
+        var depth = 0; var inStr = false; var strCh = ' '; var i = start
+        while (i < js.length) {
+            val c = js[i]
+            if (inStr) { if (c == strCh && js[i - 1] != '\\') inStr = false }
+            else when (c) {
+                '"', '\'', '`' -> { inStr = true; strCh = c }
+                '[', '{', '(' -> depth++
+                ']', '}', ')' -> { depth--; if (depth == 0) return js.substring(start, i + 1) }
+            }
+            i++
+        }
+        return null
+    }
+
+    // Extract sig-decode operation sequence from player JS (natively in JVM — no WebView).
+    // Returns null if the pattern is not found (player JS obfuscation may have changed).
+    private fun extractSigOps(js: String): List<SigOp>? {
+        // 1. Find the sig-decode function name (the function called on the 's' cipher param)
+        val fnName = listOf(
+            Regex("""[;,=]\s*([a-zA-Z0-9$]{2,})\(decodeURIComponent\([^)]+\.get\("s"\)"""),
+            Regex("""c&&\(c=([a-zA-Z0-9$]{2,})\(decodeURIComponent"""),
+            Regex("""a\.set\("sig"\s*,\s*([a-zA-Z0-9$]{2,})\("""),
+            Regex("""\.sig\s*\|\|\s*([a-zA-Z0-9$]{2,})\("""),
+            Regex("""b=([a-zA-Z0-9$]{2,})\(decodeURIComponent\(b\.get\("s"\)"""),
+            Regex("""\.set\("sig"\s*,([a-zA-Z0-9$]{2,})\("""),
+        ).firstNotNullOfOrNull { it.find(js) }?.groupValues?.get(1) ?: run {
+            Log.w(tag, "extractSigOps: fn name not found"); return null
+        }
+
+        // 2. Extract the function body
+        val fnIdx = js.indexOf("function $fnName(").takeIf { it >= 0 } ?: run {
+            Log.w(tag, "extractSigOps: fn '$fnName' not found"); return null
+        }
+        val bodyStart = js.indexOf("{", fnIdx).takeIf { it >= 0 } ?: return null
+        val fnBody = extractBalancedJs(js, bodyStart) ?: return null
+
+        // 3. Find the helper object name (first `OBJ.method(a` reference in body)
+        val helperName = Regex("""([a-zA-Z0-9$]{2,})\.[a-zA-Z0-9$]+\(a""")
+            .find(fnBody)?.groupValues?.get(1) ?: return null
+
+        // 4. Extract helper object to map method names → operation types
+        val helperSearch = js.indexOf("var $helperName={")
+            .takeIf { it >= 0 }
+            ?: js.indexOf(",$helperName={").takeIf { it >= 0 }?.plus(1)
+            ?: return null
+        val helperObjStart = js.indexOf("{", helperSearch).takeIf { it >= 0 } ?: return null
+        val helperBody = extractBalancedJs(js, helperObjStart) ?: return null
+
+        val opMap = mutableMapOf<String, SigOp>()
+        // Reverse: single param, calls .reverse()
+        Regex("""([a-zA-Z0-9$]+)\s*:\s*function\s*\(\w+\)\s*\{[^}]*\.reverse\(\)""")
+            .findAll(helperBody).forEach { opMap[it.groupValues[1]] = SigOp.Reverse }
+        // Splice: two params, calls .splice(0,
+        Regex("""([a-zA-Z0-9$]+)\s*:\s*function\s*\(\w+,\w+\)\s*\{[^}]*\.splice\(0,""")
+            .findAll(helperBody).forEach { opMap[it.groupValues[1]] = SigOp.Splice(0) }
+        // Swap: two params, swaps a[0] with a[idx]
+        Regex("""([a-zA-Z0-9$]+)\s*:\s*function\s*\(\w+,\w+\)\s*\{[^;]*=\w\[0\][^}]*=\w\[0\]""")
+            .findAll(helperBody).forEach { opMap[it.groupValues[1]] = SigOp.Swap(0) }
+
+        // 5. Parse operation calls from function body, extracting numeric arguments
+        val ops = mutableListOf<SigOp>()
+        Regex("""${Regex.escape(helperName)}\.([a-zA-Z0-9$]+)\(a(?:,(\d+))?\)""")
+            .findAll(fnBody).forEach { m ->
+                val method = m.groupValues[1]
+                val n = m.groupValues[2].toIntOrNull() ?: 0
+                when (val base = opMap[method]) {
+                    SigOp.Reverse -> ops.add(SigOp.Reverse)
+                    is SigOp.Splice -> ops.add(SigOp.Splice(n))
+                    is SigOp.Swap -> ops.add(SigOp.Swap(n))
+                    null -> { Log.w(tag, "extractSigOps: unknown method '$method'"); return null }
+                }
+            }
+        return ops.takeIf { it.isNotEmpty() }
+    }
+
+    // Apply extracted sig-decode operations to a raw signature string.
+    private fun applySigOps(sig: String, ops: List<SigOp>): String {
+        val a = sig.toMutableList()
+        for (op in ops) when (op) {
+            SigOp.Reverse -> a.reverse()
+            is SigOp.Splice -> repeat(op.n) { if (a.isNotEmpty()) a.removeAt(0) }
+            is SigOp.Swap -> {
+                if (a.isEmpty()) return@when
+                val idx = op.n % a.size
+                val tmp = a[0]; a[0] = a[idx]; a[idx] = tmp
+            }
+        }
+        return a.joinToString("")
     }
 
     /** Resolve a video id to a direct audio CDN URL (highest-bitrate audio stream). */
@@ -124,38 +232,44 @@ class InnertubeApi @Inject constructor(
             app.opentune.utils.DiagnosticsLogger.logStream(videoId, true, elapsed, client = "Piped", urlHint = urlHint(url))
             return url
         } catch (e: Exception) {
-            val msg = "Piped: ${e.message?.take(120)}"
+            val msg = "Piped: ${e.message?.take(80)}"
             errors += msg
             Log.w(tag, "getAudioStreamUrl($videoId) $msg")
         }
 
-        // 2. NewPipeExtractor with WEB PoToken fed to Android client provider.
-        try {
-            val info = StreamInfo.getInfo(ServiceList.YouTube, "https://www.youtube.com/watch?v=$videoId")
-            val best = info.audioStreams.filter { it.content != null }.maxByOrNull { it.averageBitrate }
-            if (best != null) {
-                val elapsed = System.currentTimeMillis() - start
-                Log.d(tag, "getAudioStreamUrl($videoId) ok via NPE ${elapsed}ms")
-                app.opentune.utils.DiagnosticsLogger.logStream(videoId, true, elapsed, client = "NPE", urlHint = urlHint(best.content!!))
-                return best.content!!
-            }
-            val potErr = app.opentune.utils.potoken.OpenTunePoTokenProvider.lastError
-            errors += "NPE: ${info.audioStreams.size} streams, none with URL" +
-                if (potErr != null) " [pot:$potErr]" else ""
-        } catch (e: Exception) {
-            errors += "NPE: ${e.message?.take(100)}"
-        }
-
-        // 3. Native player API cascade (OAuth TVHTML5 → Android → iOS).
+        // 2. Native player API cascade (WEB_REMIX+PoToken → IOS → ANDROID_VR → ...).
+        // NPE is tried AFTER native because it takes 10+ seconds on failure.
         return try {
-            val (nativeUrl, nativeClient) = fetchAudioStreamNative(videoId)
+            val (nativeUrl, nativeClient, fallbackErrs) = fetchAudioStreamNative(videoId)
             val elapsed = System.currentTimeMillis() - start
             Log.d(tag, "getAudioStreamUrl($videoId) ok via $nativeClient ${elapsed}ms")
-            app.opentune.utils.DiagnosticsLogger.logStream(videoId, true, elapsed, client = nativeClient, urlHint = urlHint(nativeUrl))
+            // Include any fallback errors (e.g. why WEB_REMIX failed before IOS) in the log
+            val fallbackNote = fallbackErrs.take(2).joinToString("; ").take(150).ifBlank { null }
+            app.opentune.utils.DiagnosticsLogger.logStream(
+                videoId, true, elapsed, client = nativeClient, urlHint = urlHint(nativeUrl), error = fallbackNote
+            )
             nativeUrl
-        } catch (e: Exception) {
+        } catch (nativeEx: Exception) {
+            errors += "native: ${nativeEx.message?.take(300)}"
+
+            // 3. NewPipeExtractor — last resort; slow (10+ s) but handles more edge cases.
+            try {
+                val info = StreamInfo.getInfo(ServiceList.YouTube, "https://www.youtube.com/watch?v=$videoId")
+                val best = info.audioStreams.filter { it.content != null }.maxByOrNull { it.averageBitrate }
+                if (best != null) {
+                    val elapsed = System.currentTimeMillis() - start
+                    Log.d(tag, "getAudioStreamUrl($videoId) ok via NPE ${elapsed}ms")
+                    app.opentune.utils.DiagnosticsLogger.logStream(videoId, true, elapsed, client = "NPE", urlHint = urlHint(best.content!!))
+                    return best.content!!
+                }
+                val potErr = app.opentune.utils.potoken.OpenTunePoTokenProvider.lastError
+                errors += "NPE: ${info.audioStreams.size} streams, none with URL" +
+                    if (potErr != null) " [pot:$potErr]" else ""
+            } catch (e: Exception) {
+                errors += "NPE: ${e.message?.take(80)}"
+            }
+
             val elapsed = System.currentTimeMillis() - start
-            errors += "native: ${e.message?.take(400)}"
             val combined = errors.joinToString(" | ")
             Log.w(tag, "getAudioStreamUrl($videoId) ALL FAILED ${elapsed}ms: $combined")
             app.opentune.utils.DiagnosticsLogger.logStream(videoId, false, elapsed, combined.take(600))
@@ -215,7 +329,7 @@ class InnertubeApi @Inject constructor(
         error("Piped failed: $lastError")
     }
 
-    // Decode a YouTube signatureCipher string into a playable URL.
+    // Decode a YouTube signatureCipher string into a playable URL using native Kotlin sig decode.
     // signatureCipher format: url=BASE_URL&s=ENCODED_SIG&sp=PARAM_NAME (URL-encoded values)
     private fun decodeCipherUrl(cipher: String): String? {
         val params = cipher.split("&").associate {
@@ -229,20 +343,11 @@ class InnertubeApi @Inject constructor(
         val rawSig = params["s"] ?: return null
         val sigParam = params["sp"] ?: "sig"
 
-        val decodedSig = try {
-            runBlocking {
-                app.opentune.utils.potoken.OpenTunePoTokenProvider.decodeSig(rawSig)
-            }
-        } catch (e: Exception) {
-            Log.w(tag, "decodeCipherUrl: decodeSig threw: ${e.message}")
-            null
-        }
-
-        if (decodedSig == null) {
-            Log.w(tag, "decodeCipherUrl: sig decode unavailable, skipping format")
+        val ops = cachedSigOps ?: run { ensurePlayerJsData(); cachedSigOps } ?: run {
+            Log.w(tag, "decodeCipherUrl: sig ops not available, skipping format")
             return null
         }
-
+        val decodedSig = applySigOps(rawSig, ops)
         val sep = if (baseUrl.contains('?')) '&' else '?'
         return "$baseUrl$sep$sigParam=${java.net.URLEncoder.encode(decodedSig, "UTF-8")}"
     }
@@ -355,7 +460,7 @@ class InnertubeApi @Inject constructor(
         ),
     )
 
-    private fun fetchAudioStreamNative(videoId: String): Pair<String, String> {
+    private fun fetchAudioStreamNative(videoId: String): Triple<String, String, List<String>> {
         val json = "application/json; charset=utf-8".toMediaType()
         val errors = mutableListOf<String>()
 
@@ -485,7 +590,7 @@ class InnertubeApi @Inject constructor(
                         .replace("?alr=yes", "")
                     val finalUrl = decodeNParamInUrl(cleanUrl)
                     Log.d(tag, "fetchAudioStreamNative($videoId) ok via ${client.name} bitrate=$bestBitrate alr=${bestUrl.contains("alr=yes")}")
-                    return Pair(finalUrl, client.name)
+                    return Triple(finalUrl, client.name, errors.toList())
                 }
                 errors += "${client.name}: no direct audio URL in ${formats.length()} formats"
 
