@@ -572,7 +572,7 @@ class MusicService : MediaLibraryService(),
                         DefaultDataSource.Factory(
                             this,
                             DefaultHttpDataSource.Factory()
-                                .setUserAgent("com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)")
+                                .setUserAgent("com.google.ios.youtube/20.03.02 (iPhone16,2; U; CPU iOS 18_2_1 like Mac OS X;)")
                                 .setAllowCrossProtocolRedirects(true)
                                 .setConnectTimeoutMs(30_000)
                                 .setReadTimeoutMs(30_000)
