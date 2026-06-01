@@ -169,6 +169,8 @@ class InnertubeApi @Inject constructor(
         "https://pipedapi.kavin.rocks",
         "https://pipedapi.adminforge.de",
         "https://piped-api.garudalinux.org",
+        "https://api.piped.yt",
+        "https://pipedapi.in.projectsegfau.lt",
     )
 
     private fun fetchAudioStreamPiped(videoId: String): String {
@@ -213,11 +215,14 @@ class InnertubeApi @Inject constructor(
         error("Piped failed: $lastError")
     }
 
-    // Build a safe URL hint for logging: host + n-param presence (no sensitive data).
+    // Build a safe URL hint for logging: host + key params (no sensitive data).
     private fun urlHint(url: String): String {
         val host = try { android.net.Uri.parse(url).host?.take(30) ?: "?" } catch (_: Exception) { "?" }
         val hasN = url.contains("&n=") || url.contains("?n=")
-        return "$host${if (hasN) " n=enc" else " n=none"}"
+        val hasAlr = url.contains("alr=yes")
+        val nTag = if (hasN) " n=enc" else " n=none"
+        val alrTag = if (hasAlr) " alr=yes" else ""
+        return "$host$nTag$alrTag"
     }
 
     // Decode the n-parameter in a YouTube CDN URL using the player JS function.
@@ -427,8 +432,15 @@ class InnertubeApi @Inject constructor(
                     if (br > bestBitrate) { bestBitrate = br; bestUrl = u }
                 }
                 if (bestUrl != null) {
-                    val finalUrl = decodeNParamInUrl(bestUrl)
-                    Log.d(tag, "fetchAudioStreamNative($videoId) ok via ${client.name} bitrate=$bestBitrate")
+                    // Strip alr=yes — YouTube's "adaptive live redirect" causes CDN to return
+                    // a non-standard redirect body (not HTTP 302) that ExoPlayer can't handle,
+                    // resulting in 403 or wrong-format errors.
+                    val cleanUrl = bestUrl
+                        .replace("&alr=yes", "")
+                        .replace("?alr=yes&", "?")
+                        .replace("?alr=yes", "")
+                    val finalUrl = decodeNParamInUrl(cleanUrl)
+                    Log.d(tag, "fetchAudioStreamNative($videoId) ok via ${client.name} bitrate=$bestBitrate alr=${bestUrl.contains("alr=yes")}")
                     return Pair(finalUrl, client.name)
                 }
                 errors += "${client.name}: no direct audio URL in ${formats.length()} formats"
