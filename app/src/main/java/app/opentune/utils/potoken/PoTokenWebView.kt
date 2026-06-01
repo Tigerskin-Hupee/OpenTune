@@ -24,6 +24,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.util.concurrent.TimeUnit
 
 class PoTokenWebView private constructor(private val context: Context) {
@@ -122,18 +123,33 @@ class PoTokenWebView private constructor(private val context: Context) {
                     "[ \"$requestKey\", \"$botguardResponse\" ]"
                 )
                 val (integrityToken, ttlSeconds) = parseIntegrityTokenData(responseBody)
-                expirationInstant = Instant.now().plusSeconds(ttlSeconds - 600)
+                expirationInstant = Instant.now().plusSeconds(ttlSeconds).minus(10, ChronoUnit.MINUTES)
                 withContext(Dispatchers.Main) {
-                    webView.evaluateJavascript("this.integrityToken = $integrityToken") {
-                        Log.d(TAG, "Initialized, expiry=${ttlSeconds}s")
-                        initDeferred.complete(Unit)
-                    }
+                    webView.evaluateJavascript(
+                        """try {
+                            this.integrityToken = $integrityToken
+                            createPoTokenMinter(webPoSignalOutput, integrityToken).then(function() {
+                                $JS_INTERFACE.onMinterCreated()
+                            }).catch(function(error) {
+                                $JS_INTERFACE.onJsInitializationError(error + "\n" + (error.stack || ''))
+                            })
+                        } catch(error) {
+                            $JS_INTERFACE.onJsInitializationError(error + "\n" + error.stack)
+                        }""",
+                        null
+                    )
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "onRunBotguardResult failed", e)
                 initDeferred.completeExceptionally(e)
             }
         }
+    }
+
+    @JavascriptInterface
+    fun onMinterCreated() {
+        Log.d(TAG, "PoToken minter ready, init complete")
+        initDeferred.complete(Unit)
     }
 
     suspend fun generatePoToken(identifier: String): String {
@@ -146,13 +162,12 @@ class PoTokenWebView private constructor(private val context: Context) {
                 """try {
                     identifier = "$identifier"
                     u8Identifier = $u8
-                    poTokenU8 = obtainPoToken(webPoSignalOutput, integrityToken, u8Identifier)
-                    poTokenU8String = ""
-                    for (i = 0; i < poTokenU8.length; i++) {
-                        if (i != 0) poTokenU8String += ","
-                        poTokenU8String += poTokenU8[i]
-                    }
-                    $JS_INTERFACE.onObtainPoTokenResult(identifier, poTokenU8String)
+                    obtainPoToken(u8Identifier).then(function(poTokenU8) {
+                        poTokenU8String = poTokenU8.join(",")
+                        $JS_INTERFACE.onObtainPoTokenResult(identifier, poTokenU8String)
+                    }).catch(function(error) {
+                        $JS_INTERFACE.onObtainPoTokenError(identifier, error + "\n" + (error.stack || ''))
+                    })
                 } catch(error) {
                     $JS_INTERFACE.onObtainPoTokenError(identifier, error + "\n" + error.stack)
                 }""",
