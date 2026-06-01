@@ -24,6 +24,21 @@ function decodeN(n) {
     } catch(e) { console.warn('[decodeN] ' + e); return null; }
 }
 
+// Signature cipher decode support (for WEB/WEB_REMIX adaptive format URLs).
+// decodeSig_global is set by setupSigDecode once player JS is injected.
+var decodeSig_global = null;
+function setupSigDecode(code) {
+    try {
+        // Wrap in IIFE so helper-object names don't leak into the global scope
+        eval('(function(){' + code + '})()');
+        return typeof decodeSig_global === 'function';
+    } catch(e) { console.warn('[setupSigDecode] ' + e); return false; }
+}
+function decodeSig(sig) {
+    try { return decodeSig_global ? decodeSig_global(sig) : null; }
+    catch(e) { console.warn('[decodeSig] ' + e); return null; }
+}
+
 // Make WebView appear as Chrome to BotGuard environment checks.
 if (!window.chrome) {
   window.chrome = {
