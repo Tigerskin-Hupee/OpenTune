@@ -191,8 +191,11 @@ class InnertubeApi @Inject constructor(
         // Splice: two params, calls .splice(0,
         Regex("""([a-zA-Z0-9$]+)\s*:\s*function\s*\(\w+,\w+\)\s*\{[^}]*\.splice\(0,""")
             .findAll(helperBody).forEach { opMap[it.groupValues[1]] = SigOp.Splice(0) }
-        // Swap: two params, swaps a[0] with a[idx]
-        Regex("""([a-zA-Z0-9$]+)\s*:\s*function\s*\(\w+,\w+\)\s*\{[^;]*=\w\[0\][^}]*=\w\[0\]""")
+        // Swap: two params, uses b%a.length modulo index — this is the unique marker.
+        // The old pattern ([^;]*=\w\[0\][^}]*=\w\[0\]) fails for the standard YouTube form
+        // {var c=a[0];a[0]=a[b%a.length];a[b%a.length]=c} because the second assignment
+        // ends in =c, not =\w[0]. Use .length as the discriminator instead.
+        Regex("""([a-zA-Z0-9$]+)\s*:\s*function\s*\(\w+,\w+\)\s*\{[^}]*\.length[^}]*\}""")
             .findAll(helperBody).forEach { opMap[it.groupValues[1]] = SigOp.Swap(0) }
 
         // 5. Parse operation calls from function body, extracting numeric arguments
