@@ -212,9 +212,10 @@ class InnertubeApi @Inject constructor(
             SigOp.Reverse -> a.reverse()
             is SigOp.Splice -> repeat(op.n) { if (a.isNotEmpty()) a.removeAt(0) }
             is SigOp.Swap -> {
-                if (a.isEmpty()) return@when
-                val idx = op.n % a.size
-                val tmp = a[0]; a[0] = a[idx]; a[idx] = tmp
+                if (a.isNotEmpty()) {
+                    val idx = op.n % a.size
+                    val tmp = a[0]; a[0] = a[idx]; a[idx] = tmp
+                }
             }
         }
         return a.joinToString("")
