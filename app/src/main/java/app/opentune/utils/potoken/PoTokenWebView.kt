@@ -294,12 +294,15 @@ class PoTokenWebView private constructor(private val context: Context) {
         ).firstNotNullOfOrNull { it.find(js) }?.groupValues?.get(1) ?: return null
         Log.d(TAG, "sig decode fn: $fnName")
 
-        // Extract main function body
-        val fnDefIdx = js.indexOf("function $fnName(").takeIf { it >= 0 } ?: return null
+        // Extract main function body — player JS uses both `function NAME(` and `NAME=function(`
+        val fnDefIdx = js.indexOf("function $fnName(").takeIf { it >= 0 }
+            ?: js.indexOf("$fnName=function(").takeIf { it >= 0 }
+            ?: return null
         val bodyOpen = js.indexOf("{", fnDefIdx).takeIf { it >= 0 } ?: return null
         val fnBody = extractBalanced(js, bodyOpen) ?: return null
-        val paramEnd = js.indexOf(")", js.indexOf("(", fnDefIdx))
-        val params = js.substring(js.indexOf("(", fnDefIdx) + 1, paramEnd)
+        val paramOpen = js.indexOf("(", fnDefIdx)
+        val paramEnd = js.indexOf(")", paramOpen)
+        val params = js.substring(paramOpen + 1, paramEnd)
 
         // Find helper object name (first `OBJ.method(a` call in function body)
         val helperName = Regex("""([a-zA-Z0-9$]{2,})\.[a-zA-Z0-9$]+\(a""")

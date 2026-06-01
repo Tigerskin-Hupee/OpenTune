@@ -158,10 +158,11 @@ class InnertubeApi @Inject constructor(
             Log.w(tag, "extractSigOps: fn name not found"); return null
         }
 
-        // 2. Extract the function body
-        val fnIdx = js.indexOf("function $fnName(").takeIf { it >= 0 } ?: run {
-            Log.w(tag, "extractSigOps: fn '$fnName' not found"); return null
-        }
+        // 2. Extract the function body — YouTube player JS uses BOTH declaration forms:
+        //    `function NAME(a){...}` and `NAME=function(a){...}`
+        val fnIdx = js.indexOf("function $fnName(").takeIf { it >= 0 }
+            ?: js.indexOf("$fnName=function(").takeIf { it >= 0 }
+            ?: run { Log.w(tag, "extractSigOps: fn '$fnName' not found"); return null }
         val bodyStart = js.indexOf("{", fnIdx).takeIf { it >= 0 } ?: return null
         val fnBody = extractBalancedJs(js, bodyStart) ?: return null
 
@@ -211,9 +212,10 @@ class InnertubeApi @Inject constructor(
             SigOp.Reverse -> a.reverse()
             is SigOp.Splice -> repeat(op.n) { if (a.isNotEmpty()) a.removeAt(0) }
             is SigOp.Swap -> {
-                if (a.isEmpty()) return@when
-                val idx = op.n % a.size
-                val tmp = a[0]; a[0] = a[idx]; a[idx] = tmp
+                if (a.isNotEmpty()) {
+                    val idx = op.n % a.size
+                    val tmp = a[0]; a[0] = a[idx]; a[idx] = tmp
+                }
             }
         }
         return a.joinToString("")
@@ -414,8 +416,20 @@ class InnertubeApi @Inject constructor(
             origin = "https://www.youtube.com",
             usePoToken = true,
         ),
-        // IOS — YouTube iOS app client. Fallback: returns streams without PoToken
-        // but CDN URLs may be iOS-UA or IP bound (causing 403 in ExoPlayer).
+        // ANDROID_MUSIC — YouTube Music Android app client (clientId=21).
+        // Returns direct CDN URLs (no signatureCipher). Designed for Android streaming,
+        // so ExoPlayer can fetch them without UA restrictions. No PoToken required.
+        // Placed before IOS because IOS CDN URLs have started returning 403 to ExoPlayer.
+        NativeClient(
+            name = "ANDROID_MUSIC", version = "7.27.52", clientId = "21",
+            url = "https://www.youtube.com/youtubei/v1/player",
+            apiKey = "AIzaSyAOghZGza2MQSZkY_zfZ370N-PUdXEo8AI",
+            userAgent = "com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 14; en_US) gzip",
+            clientContextJson = """"deviceMake":"Google","deviceModel":"Pixel 9","osName":"Android","osVersion":"14","androidSdkVersion":"34","platform":"MOBILE"""",
+            isNativeApp = true,
+        ),
+        // IOS — YouTube iOS app client. Kept as further fallback but CDN URLs
+        // have been returning 403 to ExoPlayer for non-iOS contexts.
         NativeClient(
             name = "IOS", version = "20.03.02", clientId = "5",
             url = "https://youtubei.googleapis.com/youtubei/v1/player",
