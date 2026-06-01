@@ -246,7 +246,7 @@ class InnertubeApi @Inject constructor(
             val elapsed = System.currentTimeMillis() - start
             Log.d(tag, "getAudioStreamUrl($videoId) ok via $nativeClient ${elapsed}ms")
             // Include any fallback errors (e.g. why WEB_REMIX failed before IOS) in the log
-            val fallbackNote = fallbackErrs.take(2).joinToString("; ").take(150).ifBlank { null }
+            val fallbackNote = fallbackErrs.take(4).joinToString("; ").take(300).ifBlank { null }
             app.opentune.utils.DiagnosticsLogger.logStream(
                 videoId, true, elapsed, client = nativeClient, urlHint = urlHint(nativeUrl), error = fallbackNote
             )
@@ -416,10 +416,20 @@ class InnertubeApi @Inject constructor(
             origin = "https://www.youtube.com",
             usePoToken = true,
         ),
-        // ANDROID_MUSIC — YouTube Music Android app client (clientId=21).
-        // Returns direct CDN URLs (no signatureCipher). Designed for Android streaming,
-        // so ExoPlayer can fetch them without UA restrictions. No PoToken required.
-        // Placed before IOS because IOS CDN URLs have started returning 403 to ExoPlayer.
+        // ANDROID_VR — YouTube VR (Oculus Quest 3) client. Regular YouTube client
+        // (not YouTube Music), so it accesses any YouTube video regardless of Music
+        // licensing. Returns direct Android-format CDN URLs. Placed before IOS because
+        // IOS CDN URLs now return 403 to ExoPlayer.
+        NativeClient(
+            name = "ANDROID_VR", version = "1.61.48", clientId = "28",
+            url = "https://www.youtube.com/youtubei/v1/player",
+            apiKey = "AIzaSyA8eiZmM1FaDVjRy-df2KpynQLqgref8Xw",
+            userAgent = "com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12; en_US; Quest 3 Build/SQ3A.220605.009.A1) gzip",
+            clientContextJson = """"deviceMake":"Oculus","deviceModel":"Quest 3","osName":"Android","osVersion":"12","androidSdkVersion":"32","platform":"MOBILE"""",
+            isNativeApp = true,
+        ),
+        // ANDROID_MUSIC — YouTube Music Android client. Only reaches videos licensed
+        // for YouTube Music; kept as fallback for Music-exclusive content.
         NativeClient(
             name = "ANDROID_MUSIC", version = "7.27.52", clientId = "21",
             url = "https://www.youtube.com/youtubei/v1/player",
@@ -428,23 +438,13 @@ class InnertubeApi @Inject constructor(
             clientContextJson = """"deviceMake":"Google","deviceModel":"Pixel 9","osName":"Android","osVersion":"14","androidSdkVersion":"34","platform":"MOBILE"""",
             isNativeApp = true,
         ),
-        // IOS — YouTube iOS app client. Kept as further fallback but CDN URLs
-        // have been returning 403 to ExoPlayer for non-iOS contexts.
+        // IOS — fallback only; CDN URLs have been returning 403 to ExoPlayer.
         NativeClient(
             name = "IOS", version = "20.03.02", clientId = "5",
             url = "https://youtubei.googleapis.com/youtubei/v1/player",
             apiKey = "AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc",
             userAgent = "com.google.ios.youtube/20.03.02 (iPhone16,2; U; CPU iOS 18_2_1 like Mac OS X;)",
             clientContextJson = """"deviceMake":"Apple","deviceModel":"iPhone16,2","osName":"iPhone","osVersion":"18.2.1.22C161","platform":"MOBILE"""",
-            isNativeApp = true,
-        ),
-        // ANDROID_VR — YouTube VR (Oculus Quest 3) client; no auth required.
-        NativeClient(
-            name = "ANDROID_VR", version = "1.61.48", clientId = "28",
-            url = "https://www.youtube.com/youtubei/v1/player",
-            apiKey = "AIzaSyA8eiZmM1FaDVjRy-df2KpynQLqgref8Xw",
-            userAgent = "com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12; en_US; Quest 3 Build/SQ3A.220605.009.A1) gzip",
-            clientContextJson = """"deviceMake":"Oculus","deviceModel":"Quest 3","osName":"Android","osVersion":"12","androidSdkVersion":"32","platform":"MOBILE"""",
             isNativeApp = true,
         ),
         // TVHTML5_SIMPLY_EMBEDDED_PLAYER — TV embedded client; bypasses age/auth restrictions.
