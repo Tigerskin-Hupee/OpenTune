@@ -575,7 +575,12 @@ class MusicService : MediaLibraryService(),
     }
 
     private fun createCacheDataSource(): CacheDataSource.Factory {
+        // Use the YouTube iOS app UA for CDN streaming. IOS player client is currently
+        // the only path that returns valid audio URLs (web clients are content-restricted,
+        // Android clients trigger bot detection). YouTube CDN validates that streaming
+        // requests use the same iOS UA as the player API client, returning 403 otherwise.
         val httpDataSourceFactory = OkHttpDataSource.Factory(streamHttpClient)
+            .setUserAgent("com.google.ios.youtube/20.03.02 (iPhone16,2; U; CPU iOS 18_2_1 like Mac OS X;)")
         return CacheDataSource.Factory()
             .setCache(downloadCache)
             .setUpstreamDataSourceFactory(
