@@ -248,14 +248,14 @@ class InnertubeApi @Inject constructor(
             Log.w(tag, "getAudioStreamUrl($videoId) $msg")
         }
 
-        // 2. Native player API cascade (WEB_REMIX+PoToken → IOS → ANDROID_VR → ...).
+        // 2. Native player API cascade (WEB_REMIX+PoToken → ANDROID_VR → TVHTML5_SEP → NPE fallback).
         // NPE is tried AFTER native because it takes 10+ seconds on failure.
         return try {
             val (nativeUrl, nativeClient, fallbackErrs) = fetchAudioStreamNative(videoId)
             val elapsed = System.currentTimeMillis() - start
             Log.d(tag, "getAudioStreamUrl($videoId) ok via $nativeClient ${elapsed}ms")
-            // Include any fallback errors (e.g. why WEB_REMIX failed before IOS) in the log
-            val fallbackNote = fallbackErrs.take(4).joinToString("; ").take(300).ifBlank { null }
+            // Include ALL fallback errors so diagnostic shows every client tried before the winner.
+            val fallbackNote = fallbackErrs.joinToString("; ").take(600).ifBlank { null }
             app.opentune.utils.DiagnosticsLogger.logStream(
                 videoId, true, elapsed, client = nativeClient, urlHint = urlHint(nativeUrl), error = fallbackNote
             )
@@ -469,21 +469,17 @@ class InnertubeApi @Inject constructor(
             clientContextJson = """"osName":"Android","osVersion":"14","androidSdkVersion":"30","platform":"MOBILE"""",
             isNativeApp = true,
         ),
-        // IOS — last resort only. CDN URLs consistently return 403 to ExoPlayer regardless
-        // of User-Agent; only use if every other client fails.
-        NativeClient(
-            name = "IOS", version = "20.03.02", clientId = "5",
-            url = "https://youtubei.googleapis.com/youtubei/v1/player",
-            apiKey = "AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc",
-            userAgent = "com.google.ios.youtube/20.03.02 (iPhone16,2; U; CPU iOS 18_2_1 like Mac OS X;)",
-            clientContextJson = """"deviceMake":"Apple","deviceModel":"iPhone16,2","osName":"iPhone","osVersion":"18.2.1.22C161","platform":"MOBILE"""",
-            isNativeApp = true,
-        ),
+        // IOS — removed. CDN URLs from this client cause ExoPlayer to buffer indefinitely
+        // (no error, no audio, progress stuck at 0:00). The URL is technically reachable
+        // but ExoPlayer cannot decode the stream. NPE is a better last-resort fallback.
     )
 
     private fun fetchAudioStreamNative(videoId: String): Triple<String, String, List<String>> {
         val json = "application/json; charset=utf-8".toMediaType()
         val errors = mutableListOf<String>()
+        // Log player JS state immediately — visible in logcat and helps diagnose sigOps issues.
+        ensurePlayerJsData()
+        Log.i(tag, "fetchAudioStreamNative($videoId) playerJs: sigTs=$cachedSigTs sigOps=${cachedSigOps?.size ?: "null"}")
 
         for (client in nativeClients) {
             // OAuth client: skip if not logged in; get valid token (refreshing if needed).
