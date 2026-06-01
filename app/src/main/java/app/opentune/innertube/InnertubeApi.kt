@@ -96,31 +96,37 @@ class InnertubeApi @Inject constructor(
     private fun ensurePlayerJsData() {
         val now = System.currentTimeMillis()
         if (jsDataFetchedAt > 0 && now - jsDataFetchedAt < 3_600_000L) return
-        try {
-            val ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0"
-            val homeHtml = httpClient.newCall(
-                Request.Builder().url("https://www.youtube.com").addHeader("User-Agent", ua).get().build()
-            ).execute().body?.string() ?: return
-            val scriptPath = Regex("""/s/player/[a-f0-9]+/player_ias\.vflset[^"' ]*base\.js""")
-                .find(homeHtml)?.value ?: return
-            val js = httpClient.newCall(
-                Request.Builder().url("https://www.youtube.com$scriptPath")
-                    .addHeader("User-Agent", ua).get().build()
-            ).execute().body?.string() ?: return
+        val ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0"
+        val scriptPathRegex = Regex("""/s/player/[a-f0-9]+/player_ias\.vflset[^"' ]*base\.js""")
+        // Try homepage first; fall back to a known watch page if the homepage returns no player JS path.
+        val sourceUrls = listOf("https://www.youtube.com", "https://www.youtube.com/watch?v=jNQXAC9IVRw")
+        for (sourceUrl in sourceUrls) {
+            try {
+                val html = httpClient.newCall(
+                    Request.Builder().url(sourceUrl).addHeader("User-Agent", ua).get().build()
+                ).execute().body?.string() ?: continue
+                val scriptPath = scriptPathRegex.find(html)?.value ?: continue
+                val js = httpClient.newCall(
+                    Request.Builder().url("https://www.youtube.com$scriptPath")
+                        .addHeader("User-Agent", ua).get().build()
+                ).execute().body?.string() ?: continue
 
-            // signature timestamp
-            Regex("""signatureTimestamp[=:]\s*(\d+)""").find(js)
-                ?.groupValues?.get(1)?.toIntOrNull()
-                ?.also { cachedSigTs = it; Log.d(tag, "signatureTimestamp=$it") }
+                // signature timestamp
+                Regex("""signatureTimestamp[=:]\s*(\d+)""").find(js)
+                    ?.groupValues?.get(1)?.toIntOrNull()
+                    ?.also { cachedSigTs = it; Log.d(tag, "signatureTimestamp=$it (from $sourceUrl)") }
 
-            // sig-decode operations
-            extractSigOps(js)?.also { cachedSigOps = it; Log.d(tag, "sigOps: ${it.size} ops") }
-                ?: Log.w(tag, "sig decode ops not found in player JS")
+                // sig-decode operations
+                extractSigOps(js)?.also { cachedSigOps = it; Log.d(tag, "sigOps: ${it.size} ops") }
+                    ?: Log.w(tag, "sig decode ops not found in player JS (from $sourceUrl)")
 
-            jsDataFetchedAt = System.currentTimeMillis()
-        } catch (e: Exception) {
-            Log.w(tag, "ensurePlayerJsData failed: ${e.message}")
+                jsDataFetchedAt = System.currentTimeMillis()
+                return
+            } catch (e: Exception) {
+                Log.w(tag, "ensurePlayerJsData($sourceUrl) failed: ${e.message}")
+            }
         }
+        Log.w(tag, "ensurePlayerJsData: all sources failed")
     }
 
     private fun getSignatureTimestamp(): Int { ensurePlayerJsData(); return cachedSigTs }
@@ -507,14 +513,12 @@ class InnertubeApi @Inject constructor(
                 client.contextJson.isNotBlank() -> ",${client.contextJson}"
                 else -> ""
             }
-            // signatureTimestamp must be included for all clients so YouTube can match
-            // the correct signing config. Falls back to html5Preference for web clients only.
+            // signatureTimestamp: required for WEB/WEB_REMIX browser clients. If player JS
+            // fetch failed (sigTs = 0), send nothing — YouTube rejects html5Preference in 2026.
             val sigTs = getSignatureTimestamp()
-            val playbackCtx = when {
-                sigTs > 0 -> ""","playbackContext":{"contentPlaybackContext":{"signatureTimestamp":$sigTs}}"""
-                !client.isNativeApp -> ""","playbackContext":{"contentPlaybackContext":{"html5Preference":"HTML5_PREF_WANTS"}}"""
-                else -> ""
-            }
+            val playbackCtx = if (sigTs > 0) {
+                ""","playbackContext":{"contentPlaybackContext":{"signatureTimestamp":$sigTs}}"""
+            } else ""
 
             val body = """{"videoId":"$videoId","contentCheckOk":true,"racyCheckOk":true,"context":{"client":{"clientName":"${client.name}","clientVersion":"${client.version}","hl":"en","gl":"US","timeZone":"UTC","utcOffsetMinutes":0$visitorDataFrag$clientFrag}$contextFrag}$poTokenFrag$playbackCtx}"""
             try {
