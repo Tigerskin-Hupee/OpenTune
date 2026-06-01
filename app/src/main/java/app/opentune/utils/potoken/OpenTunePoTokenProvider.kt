@@ -92,6 +92,16 @@ object OpenTunePoTokenProvider : PoTokenProvider {
     override fun getAndroidClientPoToken(videoId: String): PoTokenResult? = null
     override fun getIosClientPoToken(videoId: String): PoTokenResult? = null
 
+    /** Decode YouTube CDN n-parameter using the player JS function loaded in the WebView. */
+    suspend fun decodeNParam(nEncoded: String): String? {
+        return try {
+            webView?.decodeNParam(nEncoded)
+        } catch (e: Exception) {
+            Log.w(TAG, "decodeNParam('${nEncoded.take(12)}..') failed: ${e.message}")
+            null
+        }
+    }
+
     private fun fetchVisitorData(): String {
         val clientCtx = """{"client":{"clientName":"WEB","clientVersion":"2.20241030.09.00","hl":"en","gl":"US"}}"""
         val endpoints = listOf(

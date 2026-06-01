@@ -233,39 +233,101 @@ class PoTokenWebView private constructor(private val context: Context) {
         return response.body?.string() ?: throw PoTokenException("Empty body from $url")
     }
 
-    // Fetch the current JNN request key from YouTube's player JS so we stay in sync
-    // when YouTube rotates keys. Falls back to the hardcoded constant on any error.
-    private fun fetchDynamicRequestKey(): String? {
+    // Fetch JNN request key AND n-decode function from YouTube's player JS.
+    // Returns Pair(requestKey, nDecodeFnCode) — either may be null on failure.
+    private fun fetchPlayerJsData(): Pair<String?, String?> {
         return try {
             val homeHtml = httpClient.newCall(
                 Request.Builder().url("https://www.youtube.com")
                     .addHeader("User-Agent", USER_AGENT)
                     .addHeader("Accept-Language", "en-US,en;q=0.9")
                     .get().build()
-            ).execute().body?.string() ?: return null
+            ).execute().body?.string() ?: return Pair(null, null)
 
             val scriptPath = Regex("""/s/player/[a-f0-9]+/player_ias\.vflset[^"' ]*base\.js""")
-                .find(homeHtml)?.value ?: return null
+                .find(homeHtml)?.value ?: return Pair(null, null)
 
             val jsContent = httpClient.newCall(
                 Request.Builder().url("https://www.youtube.com$scriptPath")
                     .addHeader("User-Agent", USER_AGENT).get().build()
-            ).execute().body?.string() ?: return null
+            ).execute().body?.string() ?: return Pair(null, null)
 
-            // The JNN request key is a ~20-char alphanumeric string passed as the first
-            // element of the JSON array body to /api/jnn/v1/Create. Search for it within
-            // a window around the Create endpoint string.
+            // --- JNN request key ---
             val jnnIdx = jsContent.indexOf("jnn/v1/Create")
-            if (jnnIdx < 0) { Log.w(TAG, "jnn/v1/Create not in player JS"); return null }
-            val window = jsContent.substring(maxOf(0, jnnIdx - 3000), jnnIdx + 100)
-            val key = Regex("""["']([A-Za-z0-9_-]{15,30})["']""")
-                .findAll(window).lastOrNull()?.groupValues?.get(1)
-            if (key != null) Log.d(TAG, "Dynamic REQUEST_KEY: ${key.take(8)}...")
-            key
+            val requestKey = if (jnnIdx >= 0) {
+                val window = jsContent.substring(maxOf(0, jnnIdx - 3000), jnnIdx + 100)
+                Regex("""["']([A-Za-z0-9_-]{15,30})["']""")
+                    .findAll(window).lastOrNull()?.groupValues?.get(1)
+                    ?.also { Log.d(TAG, "Dynamic REQUEST_KEY: ${it.take(8)}...") }
+            } else { Log.w(TAG, "jnn/v1/Create not in player JS"); null }
+
+            // --- n-decode function ---
+            val nDecodeFn = extractNDecodeFn(jsContent)
+                ?.also { Log.d(TAG, "n-decode fn extracted (${it.length} chars)") }
+                ?: run { Log.w(TAG, "n-decode fn not found in player JS"); null }
+
+            Pair(requestKey, nDecodeFn)
         } catch (e: Exception) {
-            Log.w(TAG, "fetchDynamicRequestKey: ${e.message}")
-            null
+            Log.w(TAG, "fetchPlayerJsData: ${e.message}")
+            Pair(null, null)
         }
+    }
+
+    // Extract the YouTube n-parameter decode function from player JS.
+    // YouTube stores it as an array: var X=[function(a){...}] called as X[0](n).
+    private fun extractNDecodeFn(js: String): String? {
+        // Find the variable name of the n-decode array via the call site pattern
+        val arrName = listOf(
+            Regex("""\.get\("n"\)\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{2,4})\[0\]\("""),
+            Regex("""\.get\("n"\)\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{2,4})\("""),
+        ).firstNotNullOfOrNull { it.find(js) }?.groupValues?.get(1) ?: return null
+
+        // Find var arrName=[ and extract bracket-balanced content
+        val searchToken = "var $arrName=["
+        val start = js.indexOf(searchToken).takeIf { it >= 0 }
+            ?: js.indexOf(",$arrName=[").takeIf { it >= 0 }?.plus(1)
+            ?: return null
+        val fnStart = start + searchToken.length - 1  // points at '['
+        return extractBalanced(js, fnStart)
+    }
+
+    // Extract bracket-balanced content starting at `start` (must be '[', '{', or '(').
+    private fun extractBalanced(js: String, start: Int): String? {
+        if (start >= js.length) return null
+        val closeChar = when (js[start]) { '[' -> ']'; '{' -> '}'; '(' -> ')'; else -> return null }
+        var depth = 0
+        var inString = false
+        var stringChar = ' '
+        var i = start
+        while (i < js.length) {
+            val c = js[i]
+            if (inString) {
+                if (c == stringChar && (i == start || js[i - 1] != '\\')) inString = false
+            } else when (c) {
+                '"', '\'', '`' -> { inString = true; stringChar = c }
+                '[', '{', '(' -> depth++
+                ']', '}', ')' -> { depth--; if (depth == 0) return js.substring(start, i + 1) }
+            }
+            i++
+        }
+        return null
+    }
+
+    // Decode a YouTube CDN URL's n-parameter using the injected player JS function.
+    // Returns the decoded n value, or null if unavailable/failed.
+    suspend fun decodeNParam(nEncoded: String): String? {
+        val deferred = CompletableDeferred<String?>()
+        withContext(Dispatchers.Main) {
+            webView.evaluateJavascript(
+                """(function(){try{return decodeN("${nEncoded.replace("\\", "\\\\").replace("\"", "\\\"")}");}catch(e){return null;}})()"""
+            ) { result ->
+                deferred.complete(
+                    if (result == null || result == "null") null
+                    else result.trim('"').ifBlank { null }
+                )
+            }
+        }
+        return deferred.await()
     }
 
     companion object {
@@ -278,11 +340,19 @@ class PoTokenWebView private constructor(private val context: Context) {
 
         suspend fun create(context: Context): PoTokenWebView {
             val wv = PoTokenWebView(context)
-            // Resolve the current JNN request key from the player JS before initializing.
-            val dynamicKey = withContext(Dispatchers.IO) { wv.fetchDynamicRequestKey() }
+            val (dynamicKey, nDecodeFn) = withContext(Dispatchers.IO) { wv.fetchPlayerJsData() }
             if (dynamicKey != null) wv.requestKey = dynamicKey
             else Log.w(TAG, "Using fallback REQUEST_KEY")
             wv.initialize()
+            // Inject n-decode function into the already-initialized WebView
+            if (nDecodeFn != null) {
+                val escaped = nDecodeFn.replace("\\", "\\\\").replace("'", "\\'")
+                withContext(Dispatchers.Main) {
+                    wv.webView.evaluateJavascript("setupNDecode('$escaped')") { r ->
+                        Log.d(TAG, "setupNDecode: $r")
+                    }
+                }
+            }
             return wv
         }
     }
