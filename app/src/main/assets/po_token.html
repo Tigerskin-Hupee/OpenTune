@@ -11,6 +11,19 @@ var bgVm = null;
 var bgProgram = null;
 var poTokenMinter = null;  // Minter callback - created ONCE during init, reused for all tokens
 
+// n-parameter decode support
+var _nDecFn = null;
+function setupNDecode(fnCode) {
+    try { eval('_nDecFn = ' + fnCode); return true; } catch(e) { console.warn('[setupNDecode] ' + e); return false; }
+}
+function decodeN(n) {
+    try {
+        if (!_nDecFn) return null;
+        var r = (_nDecFn instanceof Array) ? _nDecFn[0](n) : _nDecFn(n);
+        return r || null;
+    } catch(e) { console.warn('[decodeN] ' + e); return null; }
+}
+
 // Make WebView appear as Chrome to BotGuard environment checks.
 if (!window.chrome) {
   window.chrome = {

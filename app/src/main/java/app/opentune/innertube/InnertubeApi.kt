@@ -12,6 +12,7 @@ package app.opentune.innertube
 import android.content.Context
 import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.runBlocking
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -120,7 +121,7 @@ class InnertubeApi @Inject constructor(
             val url = fetchAudioStreamPiped(videoId)
             val elapsed = System.currentTimeMillis() - start
             Log.d(tag, "getAudioStreamUrl($videoId) ok via Piped ${elapsed}ms")
-            app.opentune.utils.DiagnosticsLogger.logStream(videoId, true, elapsed)
+            app.opentune.utils.DiagnosticsLogger.logStream(videoId, true, elapsed, client = "Piped", urlHint = urlHint(url))
             return url
         } catch (e: Exception) {
             val msg = "Piped: ${e.message?.take(120)}"
@@ -135,7 +136,7 @@ class InnertubeApi @Inject constructor(
             if (best != null) {
                 val elapsed = System.currentTimeMillis() - start
                 Log.d(tag, "getAudioStreamUrl($videoId) ok via NPE ${elapsed}ms")
-                app.opentune.utils.DiagnosticsLogger.logStream(videoId, true, elapsed)
+                app.opentune.utils.DiagnosticsLogger.logStream(videoId, true, elapsed, client = "NPE", urlHint = urlHint(best.content!!))
                 return best.content!!
             }
             val potErr = app.opentune.utils.potoken.OpenTunePoTokenProvider.lastError
@@ -147,10 +148,10 @@ class InnertubeApi @Inject constructor(
 
         // 3. Native player API cascade (OAuth TVHTML5 → Android → iOS).
         return try {
-            val nativeUrl = fetchAudioStreamNative(videoId)
+            val (nativeUrl, nativeClient) = fetchAudioStreamNative(videoId)
             val elapsed = System.currentTimeMillis() - start
-            Log.d(tag, "getAudioStreamUrl($videoId) ok via native ${elapsed}ms")
-            app.opentune.utils.DiagnosticsLogger.logStream(videoId, true, elapsed)
+            Log.d(tag, "getAudioStreamUrl($videoId) ok via $nativeClient ${elapsed}ms")
+            app.opentune.utils.DiagnosticsLogger.logStream(videoId, true, elapsed, client = nativeClient, urlHint = urlHint(nativeUrl))
             nativeUrl
         } catch (e: Exception) {
             val elapsed = System.currentTimeMillis() - start
@@ -210,6 +211,32 @@ class InnertubeApi @Inject constructor(
             }
         }
         error("Piped failed: $lastError")
+    }
+
+    // Build a safe URL hint for logging: host + n-param presence (no sensitive data).
+    private fun urlHint(url: String): String {
+        val host = try { android.net.Uri.parse(url).host?.take(30) ?: "?" } catch (_: Exception) { "?" }
+        val hasN = url.contains("&n=") || url.contains("?n=")
+        return "$host${if (hasN) " n=enc" else " n=none"}"
+    }
+
+    // Decode the n-parameter in a YouTube CDN URL using the player JS function.
+    private fun decodeNParamInUrl(url: String): String {
+        val nMatch = Regex("""[?&]n=([^&]+)""").find(url) ?: return url
+        val nRaw = nMatch.groupValues[1]
+        val nDecoded = try {
+            runBlocking { app.opentune.utils.potoken.OpenTunePoTokenProvider.decodeNParam(nRaw) }
+        } catch (e: Exception) {
+            Log.w(tag, "n-param decode exception: ${e.message}")
+            null
+        }
+        return if (nDecoded != null && nDecoded != nRaw) {
+            Log.d(tag, "n-param decoded: ${nRaw.take(8)}.. → ${nDecoded.take(8)}..")
+            url.replace("&n=$nRaw", "&n=$nDecoded").replace("?n=$nRaw", "?n=$nDecoded")
+        } else {
+            if (nDecoded == null) Log.w(tag, "n-param decode returned null, using raw n")
+            url
+        }
     }
 
     // Multi-client native player API cascade. Tries clients in order, returns first working URL.
@@ -292,7 +319,7 @@ class InnertubeApi @Inject constructor(
         ),
     )
 
-    private fun fetchAudioStreamNative(videoId: String): String {
+    private fun fetchAudioStreamNative(videoId: String): Pair<String, String> {
         val json = "application/json; charset=utf-8".toMediaType()
         val errors = mutableListOf<String>()
 
@@ -400,8 +427,9 @@ class InnertubeApi @Inject constructor(
                     if (br > bestBitrate) { bestBitrate = br; bestUrl = u }
                 }
                 if (bestUrl != null) {
-                    Log.d(tag, "fetchAudioStreamNative($videoId) ok via ${client.name}")
-                    return bestUrl
+                    val finalUrl = decodeNParamInUrl(bestUrl)
+                    Log.d(tag, "fetchAudioStreamNative($videoId) ok via ${client.name} bitrate=$bestBitrate")
+                    return Pair(finalUrl, client.name)
                 }
                 errors += "${client.name}: no direct audio URL in ${formats.length()} formats"
 

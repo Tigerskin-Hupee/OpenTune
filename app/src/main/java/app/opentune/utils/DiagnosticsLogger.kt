@@ -15,16 +15,39 @@ object DiagnosticsLogger {
         val videoId: String,
         val success: Boolean,
         val durationMs: Long,
+        val client: String? = null,
+        val urlHint: String? = null,
         val error: String? = null,
     )
 
-    private val events = ArrayDeque<StreamEvent>()
+    data class PlaybackEvent(
+        val timestampMs: Long,
+        val videoId: String,
+        val errorCode: Int,
+        val message: String,
+    )
+
+    private val streamEvents = ArrayDeque<StreamEvent>()
+    private val playbackEvents = ArrayDeque<PlaybackEvent>()
     private const val MAX_EVENTS = 20
 
     @Synchronized
-    fun logStream(videoId: String, success: Boolean, durationMs: Long, error: String? = null) {
-        if (events.size >= MAX_EVENTS) events.removeFirst()
-        events.addLast(StreamEvent(System.currentTimeMillis(), videoId, success, durationMs, error))
+    fun logStream(
+        videoId: String,
+        success: Boolean,
+        durationMs: Long,
+        error: String? = null,
+        client: String? = null,
+        urlHint: String? = null,
+    ) {
+        if (streamEvents.size >= MAX_EVENTS) streamEvents.removeFirst()
+        streamEvents.addLast(StreamEvent(System.currentTimeMillis(), videoId, success, durationMs, client, urlHint, error))
+    }
+
+    @Synchronized
+    fun logPlayback(videoId: String, errorCode: Int, message: String) {
+        if (playbackEvents.size >= MAX_EVENTS) playbackEvents.removeFirst()
+        playbackEvents.addLast(PlaybackEvent(System.currentTimeMillis(), videoId, errorCode, message))
     }
 
     @Synchronized
@@ -40,28 +63,41 @@ object DiagnosticsLogger {
         sb.appendLine("PoToken: ${when (poErr) { null -> "OK"; "not_called" -> "not_called"; else -> "FAIL($poErr)" }}")
         sb.appendLine()
 
-        sb.appendLine("--- Stream Resolution Log (last ${events.size}) ---")
-        if (events.isEmpty()) {
+        sb.appendLine("--- Stream Resolution (last ${streamEvents.size}) ---")
+        if (streamEvents.isEmpty()) {
             sb.appendLine("(no events yet)")
         } else {
-            events.asReversed().forEach { e ->
-                val status = if (e.success) "OK   " else "FAIL "
+            streamEvents.asReversed().forEach { e ->
+                val status = if (e.success) "OK  " else "FAIL"
                 val time = sdf.format(Date(e.timestampMs))
-                sb.append("[$time] $status ${e.videoId} ${e.durationMs}ms")
+                val clientTag = e.client?.let { " [$it]" } ?: ""
+                val urlTag = e.urlHint?.let { " $it" } ?: ""
+                sb.append("[$time] $status ${e.videoId} ${e.durationMs}ms$clientTag$urlTag")
                 if (e.error != null) sb.append("  ← ${e.error}")
                 sb.appendLine()
             }
         }
 
-        val failCount = events.count { !it.success }
-        val okCount = events.count { it.success }
-        val avgMs = if (okCount > 0) events.filter { it.success }.map { it.durationMs }.average().toLong() else 0L
-        sb.appendLine()
+        val failCount = streamEvents.count { !it.success }
+        val okCount = streamEvents.count { it.success }
+        val avgMs = if (okCount > 0) streamEvents.filter { it.success }.map { it.durationMs }.average().toLong() else 0L
         sb.appendLine("OK: $okCount  FAIL: $failCount  avg: ${avgMs}ms")
+
+        if (playbackEvents.isNotEmpty()) {
+            sb.appendLine()
+            sb.appendLine("--- Playback Errors (last ${playbackEvents.size}) ---")
+            playbackEvents.asReversed().forEach { e ->
+                val time = sdf.format(Date(e.timestampMs))
+                sb.appendLine("[$time] ERR ${e.videoId} code=${e.errorCode} ${e.message.take(140)}")
+            }
+        }
 
         return sb.toString()
     }
 
     @Synchronized
-    fun clear() = events.clear()
+    fun clear() {
+        streamEvents.clear()
+        playbackEvents.clear()
+    }
 }

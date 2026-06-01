@@ -103,6 +103,7 @@ import app.opentune.models.toMediaMetadata
 import app.opentune.playback.queues.ListQueue
 import app.opentune.playback.queues.Queue
 import app.opentune.utils.CoilBitmapLoader
+import app.opentune.utils.DiagnosticsLogger
 import app.opentune.utils.dataStore
 import app.opentune.utils.get
 import app.opentune.utils.playerCoroutine
@@ -790,12 +791,13 @@ class MusicService : MediaLibraryService(),
     override fun onPlayerError(error: PlaybackException) {
         super.onPlayerError(error)
 
+        val mediaId = player.currentMediaItem?.mediaId ?: ""
+        DiagnosticsLogger.logPlayback(mediaId, error.errorCode, "${error.message}: ${error.cause?.message ?: ""}")
+
         // Invalidate cached stream URL on CDN auth errors (403/410) so the
         // next attempt re-resolves via StreamResolver.
         if (error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS) {
-            player.currentMediaItem?.mediaId?.let { mediaId ->
-                runBlocking { streamResolver.invalidate(mediaId) }
-            }
+            if (mediaId.isNotEmpty()) runBlocking { streamResolver.invalidate(mediaId) }
         }
 
         // wait for reconnection
