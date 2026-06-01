@@ -42,6 +42,8 @@ import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.ResolvingDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
+import okhttp3.OkHttpClient
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR
 import androidx.media3.datasource.cache.SimpleCache
@@ -178,6 +180,16 @@ class MusicService : MediaLibraryService(),
 
     lateinit var player: ExoPlayer
     private lateinit var mediaSession: MediaLibrarySession
+
+    // OkHttpClient for ExoPlayer media stream requests.
+    // Using OkHttp (instead of DefaultHttpDataSource/HttpURLConnection) for better
+    // HTTP/2 support and compatibility with YouTube CDN URL authentication.
+    private val streamHttpClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+    }
 
     // Player components
 
@@ -563,20 +575,14 @@ class MusicService : MediaLibraryService(),
     }
 
     private fun createCacheDataSource(): CacheDataSource.Factory {
+        val httpDataSourceFactory = OkHttpDataSource.Factory(streamHttpClient)
         return CacheDataSource.Factory()
             .setCache(downloadCache)
             .setUpstreamDataSourceFactory(
                 CacheDataSource.Factory()
                     .setCache(playerCache)
                     .setUpstreamDataSourceFactory(
-                        DefaultDataSource.Factory(
-                            this,
-                            DefaultHttpDataSource.Factory()
-                                .setUserAgent("com.google.ios.youtube/20.03.02 (iPhone16,2; U; CPU iOS 18_2_1 like Mac OS X;)")
-                                .setAllowCrossProtocolRedirects(true)
-                                .setConnectTimeoutMs(30_000)
-                                .setReadTimeoutMs(30_000)
-                        )
+                        DefaultDataSource.Factory(this, httpDataSourceFactory)
                     )
                     .setCacheWriteDataSinkFactory(null)
                     .setFlags(FLAG_IGNORE_CACHE_ON_ERROR)

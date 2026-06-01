@@ -29,8 +29,8 @@ android {
         applicationId = "app.opentune"
         minSdk = 24
         targetSdk = 36
-        versionCode = 47
-        versionName = "1.2.23"
+        versionCode = 48
+        versionName = "1.2.24"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "NEWPIPE_EXTRACTOR_COMMIT", "\"c0abfa985f31435e56b4024504e3cf903cf7795f\"")
     }
@@ -221,6 +221,7 @@ dependencies {
 
     implementation(libs.media3)
     implementation(libs.media3.session)
+    implementation(libs.media3.datasource.okhttp)
 
     implementation(libs.room.runtime)
     ksp(libs.room.compiler)

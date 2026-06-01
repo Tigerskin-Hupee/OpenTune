@@ -259,8 +259,26 @@ class InnertubeApi @Inject constructor(
     )
 
     private val nativeClients = listOf(
-        // IOS — YouTube iOS app client. Tried first because it reliably returns streams
-        // without PoToken or bot-detection checks (same approach used by Vitune/ViMusic).
+        // WEB_REMIX — YouTube Music web client. Primary client: PoToken-gated but CDN URLs
+        // from the web client work reliably with standard HTTP clients (no iOS/Android UA binding).
+        // Same client used by InnerTune, Metrolist, and other working music apps.
+        NativeClient(
+            name = "WEB_REMIX", version = "1.20260213.01.00", clientId = "67",
+            url = "https://music.youtube.com/youtubei/v1/player",
+            userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0",
+            origin = "https://music.youtube.com",
+            usePoToken = true,
+        ),
+        // WEB + PoToken — BotGuard WebView token.
+        NativeClient(
+            name = "WEB", version = "2.20260101.00.00", clientId = "1",
+            url = "https://www.youtube.com/youtubei/v1/player",
+            userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+            origin = "https://www.youtube.com",
+            usePoToken = true,
+        ),
+        // IOS — YouTube iOS app client. Fallback: returns streams without PoToken
+        // but CDN URLs may be iOS-UA or IP bound (causing 403 in ExoPlayer).
         NativeClient(
             name = "IOS", version = "20.03.02", clientId = "5",
             url = "https://youtubei.googleapis.com/youtubei/v1/player",
@@ -269,8 +287,7 @@ class InnertubeApi @Inject constructor(
             clientContextJson = """"deviceMake":"Apple","deviceModel":"iPhone16,2","osName":"iPhone","osVersion":"18.2.1.22C161","platform":"MOBILE"""",
             isNativeApp = true,
         ),
-        // ANDROID_VR — YouTube VR (Oculus Quest 3) client; no auth required, not subject to
-        // music.youtube.com OAuth enforcement. Used by Metrolist and other working apps.
+        // ANDROID_VR — YouTube VR (Oculus Quest 3) client; no auth required.
         NativeClient(
             name = "ANDROID_VR", version = "1.61.48", clientId = "28",
             url = "https://www.youtube.com/youtubei/v1/player",
@@ -279,8 +296,7 @@ class InnertubeApi @Inject constructor(
             clientContextJson = """"deviceMake":"Oculus","deviceModel":"Quest 3","osName":"Android","osVersion":"12","androidSdkVersion":"32","platform":"MOBILE"""",
             isNativeApp = true,
         ),
-        // TVHTML5_SIMPLY_EMBEDDED_PLAYER — TV embedded client (PlayStation UA); bypasses
-        // age/auth restrictions because YouTube allows unauthenticated embedded playback.
+        // TVHTML5_SIMPLY_EMBEDDED_PLAYER — TV embedded client; bypasses age/auth restrictions.
         NativeClient(
             name = "TVHTML5_SIMPLY_EMBEDDED_PLAYER", version = "2.0", clientId = "85",
             url = "https://www.youtube.com/youtubei/v1/player",
@@ -304,23 +320,6 @@ class InnertubeApi @Inject constructor(
             userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 14) gzip",
             clientContextJson = """"osName":"Android","osVersion":"14","androidSdkVersion":"30","platform":"MOBILE"""",
             isNativeApp = true,
-        ),
-        // WEB_REMIX — YouTube Music web client (primary client used by Metrolist/working apps).
-        // music.youtube.com endpoint, clientId 67, requires PoToken.
-        NativeClient(
-            name = "WEB_REMIX", version = "1.20260213.01.00", clientId = "67",
-            url = "https://music.youtube.com/youtubei/v1/player",
-            userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0",
-            origin = "https://music.youtube.com",
-            usePoToken = true,
-        ),
-        // WEB + PoToken — BotGuard WebView token.
-        NativeClient(
-            name = "WEB", version = "2.20260101.00.00", clientId = "1",
-            url = "https://www.youtube.com/youtubei/v1/player",
-            userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
-            origin = "https://www.youtube.com",
-            usePoToken = true,
         ),
     )
 
