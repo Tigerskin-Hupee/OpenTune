@@ -227,6 +227,16 @@ class InnertubeApi @Inject constructor(
     )
 
     private val nativeClients = listOf(
+        // IOS — YouTube iOS app client. Tried first because it reliably returns streams
+        // without PoToken or bot-detection checks (same approach used by Vitune/ViMusic).
+        NativeClient(
+            name = "IOS", version = "20.03.02", clientId = "5",
+            url = "https://youtubei.googleapis.com/youtubei/v1/player",
+            apiKey = "AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc",
+            userAgent = "com.google.ios.youtube/20.03.02 (iPhone16,2; U; CPU iOS 18_2_1 like Mac OS X;)",
+            clientContextJson = """"deviceMake":"Apple","deviceModel":"iPhone16,2","osName":"iPhone","osVersion":"18.2.1.22C161","platform":"MOBILE"""",
+            isNativeApp = true,
+        ),
         // ANDROID_VR — YouTube VR (Oculus Quest 3) client; no auth required, not subject to
         // music.youtube.com OAuth enforcement. Used by Metrolist and other working apps.
         NativeClient(
@@ -315,14 +325,14 @@ class InnertubeApi @Inject constructor(
                 client.contextJson.isNotBlank() -> ",${client.contextJson}"
                 else -> ""
             }
-            // Web clients need signatureTimestamp so YouTube can match the correct signing config.
-            // Without it YouTube returns UNPLAYABLE "Video unavailable".
-            val sigTs = if (!client.isNativeApp) getSignatureTimestamp() else 0
-            val playbackCtx = if (!client.isNativeApp && sigTs > 0)
-                ""","playbackContext":{"contentPlaybackContext":{"signatureTimestamp":$sigTs}}"""
-            else if (!client.isNativeApp)
-                ""","playbackContext":{"contentPlaybackContext":{"html5Preference":"HTML5_PREF_WANTS"}}"""
-            else ""
+            // signatureTimestamp must be included for all clients so YouTube can match
+            // the correct signing config. Falls back to html5Preference for web clients only.
+            val sigTs = getSignatureTimestamp()
+            val playbackCtx = when {
+                sigTs > 0 -> ""","playbackContext":{"contentPlaybackContext":{"signatureTimestamp":$sigTs}}"""
+                !client.isNativeApp -> ""","playbackContext":{"contentPlaybackContext":{"html5Preference":"HTML5_PREF_WANTS"}}"""
+                else -> ""
+            }
 
             val body = """{"videoId":"$videoId","contentCheckOk":true,"racyCheckOk":true,"context":{"client":{"clientName":"${client.name}","clientVersion":"${client.version}","hl":"en","gl":"US","timeZone":"UTC","utcOffsetMinutes":0$visitorDataFrag$clientFrag}$contextFrag}$poTokenFrag$playbackCtx}"""
             try {
