@@ -643,16 +643,7 @@ class MusicService : MediaLibraryService(),
                     PlaybackException.ERROR_CODE_IO_UNSPECIFIED
                 )
             }
-            val uri = android.net.Uri.parse(url)
-            // IOS CDN URLs must carry the iOS User-Agent — without it the CDN applies
-            // heavy throttling that makes ExoPlayer buffer indefinitely at 0:00.
-            if (url.contains("c=IOS", ignoreCase = true)) {
-                dataSpec.buildUpon().setUri(uri).setHttpRequestHeaders(
-                    mapOf("User-Agent" to "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X)")
-                ).build()
-            } else {
-                dataSpec.withUri(uri)
-            }
+            dataSpec.withUri(android.net.Uri.parse(url))
         }
     }
 
