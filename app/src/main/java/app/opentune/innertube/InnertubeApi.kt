@@ -248,7 +248,7 @@ class InnertubeApi @Inject constructor(
             Log.w(tag, "getAudioStreamUrl($videoId) $msg")
         }
 
-        // 2. Native player API cascade (WEB_REMIX+PoToken → ANDROID_VR → TVHTML5_SEP → NPE fallback).
+        // 2. Native player API cascade (WEB_EMBEDDED → WEB_REMIX+PoToken → WEB+PoToken → IOS → ANDROID_VR → …).
         // NPE is tried AFTER native because it takes 10+ seconds on failure.
         return try {
             val (nativeUrl, nativeClient, fallbackErrs) = fetchAudioStreamNative(videoId)
@@ -455,6 +455,19 @@ class InnertubeApi @Inject constructor(
             origin = "https://www.youtube.com",
             usePoToken = true,
         ),
+        // IOS — direct URLs (no cipher), no PoToken, no Play Integrity. Confirmed working
+        // in 2026. Placed after WEB clients so PoToken path is tried first; IOS is the
+        // reliable fallback when WEB clients fail. Buffering was caused by un-decoded
+        // n-param (CDN throttle); now fixed in PoTokenWebView.extractNDecodeFn.
+        NativeClient(
+            name = "IOS", version = "19.29.1", clientId = "5",
+            url = "https://www.youtube.com/youtubei/v1/player",
+            apiKey = "AIzaSyB-63vPrdThhKuerbB2N19ikJRR0v-_khBQ",
+            userAgent = "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X)",
+            clientContextJson = """"deviceMake":"Apple","deviceModel":"iPhone16,2","osName":"iPhone","osVersion":"17.5.1.21F90"""",
+            isNativeApp = true,
+            addApiFormatVersion = true,
+        ),
         // ANDROID_VR — YouTube VR (Oculus Quest 3) client.
         NativeClient(
             name = "ANDROID_VR", version = "1.61.48", clientId = "28",
@@ -490,9 +503,6 @@ class InnertubeApi @Inject constructor(
             clientContextJson = """"osName":"Android","osVersion":"14","androidSdkVersion":"30","platform":"MOBILE"""",
             isNativeApp = true,
         ),
-        // IOS — removed. CDN URLs from this client cause ExoPlayer to buffer indefinitely
-        // (no error, no audio, progress stuck at 0:00). The URL is technically reachable
-        // but ExoPlayer cannot decode the stream. NPE is a better last-resort fallback.
     )
 
     private fun fetchAudioStreamNative(videoId: String): Triple<String, String, List<String>> {
