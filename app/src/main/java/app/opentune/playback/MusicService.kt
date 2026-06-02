@@ -131,6 +131,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.net.Inet4Address
+import java.net.InetAddress
 import java.time.LocalDateTime
 import javax.inject.Inject
 import kotlin.math.min
@@ -188,16 +190,12 @@ class MusicService : MediaLibraryService(),
         OkHttpClient.Builder()
             .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
             .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-            .addInterceptor { chain ->
-                val req = chain.request()
-                val host = req.url.host
-                val newReq = if (host.endsWith("googlevideo.com") || host.endsWith("youtube.com")) {
-                    req.newBuilder()
-                        .header("Origin", "https://www.youtube.com")
-                        .header("Referer", "https://www.youtube.com/")
-                        .build()
-                } else req
-                chain.proceed(newReq)
+            // YouTube CDN URLs are IP-bound (ip= param). Force IPv4 so the CDN fetch
+            // matches the IP used when the URL was obtained from the YouTube API.
+            .dns { hostname ->
+                val addrs: List<InetAddress> = okhttp3.Dns.SYSTEM.lookup(hostname)
+                val v4 = addrs.filterIsInstance<Inet4Address>()
+                if (v4.isNotEmpty()) v4 else addrs
             }
             .build()
     }
