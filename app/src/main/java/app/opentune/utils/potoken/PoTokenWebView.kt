@@ -43,11 +43,13 @@ class PoTokenWebView private constructor(private val context: Context) {
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
         // Prefer IPv4 so youtube.com resolves consistently with the CDN URL ip= binding.
-        .dns { hostname ->
-            val addrs: List<InetAddress> = okhttp3.Dns.SYSTEM.lookup(hostname)
-            val v4 = addrs.filterIsInstance<Inet4Address>()
-            if (v4.isNotEmpty()) v4 else addrs
-        }
+        .dns(object : okhttp3.Dns {
+            override fun lookup(hostname: String): List<InetAddress> {
+                val addrs = okhttp3.Dns.SYSTEM.lookup(hostname)
+                val v4 = addrs.filterIsInstance<Inet4Address>()
+                return if (v4.isNotEmpty()) v4 else addrs
+            }
+        })
         .build()
 
     private suspend fun initialize() {
