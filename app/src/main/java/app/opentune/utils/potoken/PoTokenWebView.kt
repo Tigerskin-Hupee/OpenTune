@@ -259,12 +259,20 @@ class PoTokenWebView private constructor(private val context: Context) {
 
             // --- JNN request key ---
             val jnnIdx = jsContent.indexOf("jnn/v1/Create")
-            val requestKey = if (jnnIdx >= 0) {
-                val window = jsContent.substring(maxOf(0, jnnIdx - 3000), jnnIdx + 100)
-                Regex("""["']([A-Za-z0-9_-]{15,30})["']""")
-                    .findAll(window).lastOrNull()?.groupValues?.get(1)
-                    ?.also { Log.d(TAG, "Dynamic REQUEST_KEY: ${it.take(8)}...") }
-            } else { Log.w(TAG, "jnn/v1/Create not in player JS"); null }
+            val requestKey: String? = if (jnnIdx >= 0) {
+                // Narrow search first: key is typically in JSON.stringify(["KEY"]) adjacent to URL
+                val nearWindow = jsContent.substring(maxOf(0, jnnIdx - 1000), minOf(jsContent.length, jnnIdx + 200))
+                Regex("""stringify\(\s*\[\s*["']([A-Za-z0-9_-]{15,30})["']\s*\]""").find(nearWindow)?.groupValues?.get(1)
+                    ?: Regex("""\[\s*["']([A-Za-z0-9_-]{15,30})["']\s*[,\]]""").find(nearWindow)?.groupValues?.get(1)
+                    // Wide fallback: last assignment-style string literal in 5000 chars before URL
+                    ?: run {
+                        val wideWindow = jsContent.substring(maxOf(0, jnnIdx - 5000), jnnIdx + 100)
+                        Regex("""=\s*["']([A-Za-z0-9_-]{15,30})["']""").findAll(wideWindow)
+                            .lastOrNull()?.groupValues?.get(1)
+                    }
+            } else null
+            if (requestKey != null) Log.d(TAG, "Dynamic REQUEST_KEY: ${requestKey.take(8)}...")
+            else Log.w(TAG, "jnn/v1/Create not in player JS or key not found; using fallback")
 
             // --- n-decode function ---
             val nDecodeFn = extractNDecodeFn(jsContent)
@@ -326,8 +334,8 @@ class PoTokenWebView private constructor(private val context: Context) {
     private fun extractNDecodeFn(js: String): String? {
         // Find the variable name of the n-decode array via the call site pattern
         val arrName = listOf(
-            Regex("""\.get\("n"\)\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{2,4})\[0\]\("""),
-            Regex("""\.get\("n"\)\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{2,4})\("""),
+            Regex("""\.get\("n"\)\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{2,})\[0\]\("""),
+            Regex("""\.get\("n"\)\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{2,})\("""),
         ).firstNotNullOfOrNull { it.find(js) }?.groupValues?.get(1) ?: return null
 
         // Find var arrName=[ and extract bracket-balanced content
