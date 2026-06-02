@@ -188,6 +188,17 @@ class MusicService : MediaLibraryService(),
         OkHttpClient.Builder()
             .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
             .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            .addInterceptor { chain ->
+                val req = chain.request()
+                val host = req.url.host
+                val newReq = if (host.endsWith("googlevideo.com") || host.endsWith("youtube.com")) {
+                    req.newBuilder()
+                        .header("Origin", "https://www.youtube.com")
+                        .header("Referer", "https://www.youtube.com/")
+                        .build()
+                } else req
+                chain.proceed(newReq)
+            }
             .build()
     }
 

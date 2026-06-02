@@ -241,59 +241,78 @@ class PoTokenWebView private constructor(private val context: Context) {
     )
 
     private fun fetchPlayerJsData(): PlayerJsData {
-        return try {
-            val homeHtml = httpClient.newCall(
-                Request.Builder().url("https://www.youtube.com")
-                    .addHeader("User-Agent", USER_AGENT)
-                    .addHeader("Accept-Language", "en-US,en;q=0.9")
-                    .get().build()
-            ).execute().body?.string() ?: return PlayerJsData(null, null, null)
+        val sourceUrls = listOf(
+            "https://www.youtube.com",
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        )
+        for (sourceUrl in sourceUrls) {
+            try {
+                val pageHtml = httpClient.newCall(
+                    Request.Builder().url(sourceUrl)
+                        .addHeader("User-Agent", USER_AGENT)
+                        .addHeader("Accept-Language", "en-US,en;q=0.9")
+                        .get().build()
+                ).execute().body?.string()
+                if (pageHtml == null) {
+                    Log.w(TAG, "fetchPlayerJsData: null body from $sourceUrl")
+                    continue
+                }
 
-            val scriptPath = Regex("""/s/player/[a-f0-9]+/player_ias\.vflset[^"' ]*base\.js""")
-                .find(homeHtml)?.value ?: return PlayerJsData(null, null, null)
+                val scriptPath = Regex("""/s/player/[a-f0-9]+/player_ias\.vflset[^"' ]*base\.js""")
+                    .find(pageHtml)?.value
+                if (scriptPath == null) {
+                    Log.w(TAG, "fetchPlayerJsData: script path not found in $sourceUrl")
+                    continue
+                }
 
-            val jsContent = httpClient.newCall(
-                Request.Builder().url("https://www.youtube.com$scriptPath")
-                    .addHeader("User-Agent", USER_AGENT).get().build()
-            ).execute().body?.string() ?: return PlayerJsData(null, null, null)
+                val jsContent = httpClient.newCall(
+                    Request.Builder().url("https://www.youtube.com$scriptPath")
+                        .addHeader("User-Agent", USER_AGENT).get().build()
+                ).execute().body?.string()
+                if (jsContent == null) {
+                    Log.w(TAG, "fetchPlayerJsData: null JS body from $scriptPath")
+                    continue
+                }
 
-            // --- JNN request key ---
-            val jnnIdx = jsContent.indexOf("jnn/v1/Create")
-            val requestKey: String? = if (jnnIdx >= 0) {
-                // Narrow search first: key is typically in JSON.stringify(["KEY"]) adjacent to URL
-                val nearWindow = jsContent.substring(maxOf(0, jnnIdx - 1000), minOf(jsContent.length, jnnIdx + 200))
-                Regex("""stringify\(\s*\[\s*["']([A-Za-z0-9_-]{15,30})["']\s*\]""").find(nearWindow)?.groupValues?.get(1)
-                    ?: Regex("""\[\s*["']([A-Za-z0-9_-]{15,30})["']\s*[,\]]""").find(nearWindow)?.groupValues?.get(1)
-                    // Wide fallback: last assignment-style string literal in 5000 chars before URL
-                    ?: run {
-                        val wideWindow = jsContent.substring(maxOf(0, jnnIdx - 5000), jnnIdx + 100)
-                        Regex("""=\s*["']([A-Za-z0-9_-]{15,30})["']""").findAll(wideWindow)
-                            .lastOrNull()?.groupValues?.get(1)
-                    }
-            } else null
-            if (requestKey != null) {
-                Log.d(TAG, "Dynamic REQUEST_KEY: ${requestKey.take(8)}...")
-                lastRequestKeyHint = "dynamic:${requestKey.take(8)}"
-            } else {
-                Log.w(TAG, "jnn/v1/Create not in player JS or key not found; using fallback")
-                lastRequestKeyHint = "fallback:${REQUEST_KEY.take(8)}"
+                // --- JNN request key ---
+                val jnnIdx = jsContent.indexOf("jnn/v1/Create")
+                val requestKey: String? = if (jnnIdx >= 0) {
+                    val nearWindow = jsContent.substring(maxOf(0, jnnIdx - 1000), minOf(jsContent.length, jnnIdx + 200))
+                    Regex("""stringify\(\s*\[\s*["']([A-Za-z0-9_-]{15,30})["']\s*\]""").find(nearWindow)?.groupValues?.get(1)
+                        ?: Regex("""\[\s*["']([A-Za-z0-9_-]{15,30})["']\s*[,\]]""").find(nearWindow)?.groupValues?.get(1)
+                        ?: run {
+                            val wideWindow = jsContent.substring(maxOf(0, jnnIdx - 5000), jnnIdx + 100)
+                            Regex("""=\s*["']([A-Za-z0-9_-]{15,30})["']""").findAll(wideWindow)
+                                .lastOrNull()?.groupValues?.get(1)
+                        }
+                } else null
+                if (requestKey != null) {
+                    Log.d(TAG, "Dynamic REQUEST_KEY: ${requestKey.take(8)}...")
+                    lastRequestKeyHint = "dynamic:${requestKey.take(8)}"
+                } else {
+                    Log.w(TAG, "jnn/v1/Create not in player JS or key not found; using fallback")
+                    lastRequestKeyHint = "fallback:${REQUEST_KEY.take(8)}"
+                }
+
+                // --- n-decode function ---
+                val nDecodeFn = extractNDecodeFn(jsContent)
+                    ?.also { Log.d(TAG, "n-decode fn extracted (${it.length} chars)") }
+                    ?: run { Log.w(TAG, "n-decode fn not found in player JS"); null }
+
+                // --- sig-decode code ---
+                val sigDecodeFn = extractSigDecodeCode(jsContent)
+                    ?.also { Log.d(TAG, "sig-decode code extracted (${it.length} chars)") }
+                    ?: run { Log.w(TAG, "sig-decode code not found in player JS"); null }
+
+                return PlayerJsData(requestKey, nDecodeFn, sigDecodeFn)
+            } catch (e: Exception) {
+                Log.w(TAG, "fetchPlayerJsData: ${e.message} (source=$sourceUrl)")
             }
-
-            // --- n-decode function ---
-            val nDecodeFn = extractNDecodeFn(jsContent)
-                ?.also { Log.d(TAG, "n-decode fn extracted (${it.length} chars)") }
-                ?: run { Log.w(TAG, "n-decode fn not found in player JS"); null }
-
-            // --- sig-decode code ---
-            val sigDecodeFn = extractSigDecodeCode(jsContent)
-                ?.also { Log.d(TAG, "sig-decode code extracted (${it.length} chars)") }
-                ?: run { Log.w(TAG, "sig-decode code not found in player JS"); null }
-
-            PlayerJsData(requestKey, nDecodeFn, sigDecodeFn)
-        } catch (e: Exception) {
-            Log.w(TAG, "fetchPlayerJsData: ${e.message}")
-            PlayerJsData(null, null, null)
         }
+        // All sources failed — set hint so diagnostics shows fetch_fail, not unknown
+        lastRequestKeyHint = "fetch_fail:${REQUEST_KEY.take(8)}"
+        Log.w(TAG, "fetchPlayerJsData: all sources failed, using hardcoded fallback key")
+        return PlayerJsData(null, null, null)
     }
 
     // Extract YouTube's signature-cipher decode code (helper object + main fn) from player JS.
