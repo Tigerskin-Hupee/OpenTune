@@ -28,6 +28,8 @@ import org.schabi.newpipe.extractor.search.SearchInfo
 import org.schabi.newpipe.extractor.Page
 import org.schabi.newpipe.extractor.stream.StreamInfo
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
+import java.net.Inet4Address
+import java.net.InetAddress
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -77,6 +79,13 @@ class InnertubeApi @Inject constructor(
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .cookieJar(cookieJar)
+        // Force IPv4: YouTube CDN URLs are IP-bound; the API call and CDN fetch must
+        // use the same IP family or YouTube returns 403.
+        .dns { hostname ->
+            val addrs: List<InetAddress> = okhttp3.Dns.SYSTEM.lookup(hostname)
+            val v4 = addrs.filterIsInstance<Inet4Address>()
+            if (v4.isNotEmpty()) v4 else addrs
+        }
         .build()
 
     // ── Player JS cache ─────────────────────────────────────────────────────────

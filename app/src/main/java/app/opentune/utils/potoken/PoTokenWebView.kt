@@ -23,6 +23,8 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.net.Inet4Address
+import java.net.InetAddress
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.concurrent.TimeUnit
@@ -40,6 +42,12 @@ class PoTokenWebView private constructor(private val context: Context) {
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
+        // Prefer IPv4 so youtube.com resolves consistently with the CDN URL ip= binding.
+        .dns { hostname ->
+            val addrs: List<InetAddress> = okhttp3.Dns.SYSTEM.lookup(hostname)
+            val v4 = addrs.filterIsInstance<Inet4Address>()
+            if (v4.isNotEmpty()) v4 else addrs
+        }
         .build()
 
     private suspend fun initialize() {
