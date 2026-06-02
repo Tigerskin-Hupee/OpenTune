@@ -192,11 +192,13 @@ class MusicService : MediaLibraryService(),
             .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
             // YouTube CDN URLs are IP-bound (ip= param). Force IPv4 so the CDN fetch
             // matches the IP used when the URL was obtained from the YouTube API.
-            .dns { hostname ->
-                val addrs: List<InetAddress> = okhttp3.Dns.SYSTEM.lookup(hostname)
-                val v4 = addrs.filterIsInstance<Inet4Address>()
-                if (v4.isNotEmpty()) v4 else addrs
-            }
+            .dns(object : okhttp3.Dns {
+                override fun lookup(hostname: String): List<InetAddress> {
+                    val addrs = okhttp3.Dns.SYSTEM.lookup(hostname)
+                    val v4 = addrs.filterIsInstance<Inet4Address>()
+                    return if (v4.isNotEmpty()) v4 else addrs
+                }
+            })
             .build()
     }
 

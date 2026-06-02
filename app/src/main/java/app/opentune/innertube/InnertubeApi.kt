@@ -81,11 +81,13 @@ class InnertubeApi @Inject constructor(
         .cookieJar(cookieJar)
         // Force IPv4: YouTube CDN URLs are IP-bound; the API call and CDN fetch must
         // use the same IP family or YouTube returns 403.
-        .dns { hostname ->
-            val addrs: List<InetAddress> = okhttp3.Dns.SYSTEM.lookup(hostname)
-            val v4 = addrs.filterIsInstance<Inet4Address>()
-            if (v4.isNotEmpty()) v4 else addrs
-        }
+        .dns(object : okhttp3.Dns {
+            override fun lookup(hostname: String): List<InetAddress> {
+                val addrs = okhttp3.Dns.SYSTEM.lookup(hostname)
+                val v4 = addrs.filterIsInstance<Inet4Address>()
+                return if (v4.isNotEmpty()) v4 else addrs
+            }
+        })
         .build()
 
     // ── Player JS cache ─────────────────────────────────────────────────────────
