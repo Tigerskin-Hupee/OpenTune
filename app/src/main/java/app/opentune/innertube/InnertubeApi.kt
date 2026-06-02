@@ -456,17 +456,16 @@ class InnertubeApi @Inject constructor(
             usePoToken = true,
         ),
         // IOS — direct URLs (no cipher), no PoToken, no Play Integrity. Confirmed working
-        // in 2026. Placed after WEB clients so PoToken path is tried first; IOS is the
+        // in 2026 (v1.2.32). Placed after WEB clients so PoToken path is tried first; IOS is the
         // reliable fallback when WEB clients fail. Buffering was caused by un-decoded
         // n-param (CDN throttle); now fixed in PoTokenWebView.extractNDecodeFn.
         NativeClient(
-            name = "IOS", version = "19.29.1", clientId = "5",
-            url = "https://www.youtube.com/youtubei/v1/player",
-            apiKey = "AIzaSyB-63vPrdThhKuerbB2N19ikJRR0v-_khBQ",
-            userAgent = "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X)",
-            clientContextJson = """"deviceMake":"Apple","deviceModel":"iPhone16,2","osName":"iPhone","osVersion":"17.5.1.21F90"""",
+            name = "IOS", version = "20.03.02", clientId = "5",
+            url = "https://youtubei.googleapis.com/youtubei/v1/player",
+            apiKey = "AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc",
+            userAgent = "com.google.ios.youtube/20.03.02 (iPhone16,2; U; CPU iOS 18_2_1 like Mac OS X;)",
+            clientContextJson = """"deviceMake":"Apple","deviceModel":"iPhone16,2","osName":"iPhone","osVersion":"18.2.1.22C161","platform":"MOBILE"""",
             isNativeApp = true,
-            addApiFormatVersion = true,
         ),
         // ANDROID_VR — YouTube VR (Oculus Quest 3) client.
         NativeClient(
