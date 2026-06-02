@@ -541,10 +541,11 @@ class InnertubeApi @Inject constructor(
                 client.contextJson.isNotBlank() -> ",${client.contextJson}"
                 else -> ""
             }
-            // signatureTimestamp: required for WEB/WEB_REMIX browser clients. If player JS
-            // fetch failed (sigTs = 0), send nothing — YouTube rejects html5Preference in 2026.
+            // signatureTimestamp: only for browser (non-native) clients. Native app clients
+            // (IOS, Android) don't use signatureCiphers and YouTube returns HTTP 400
+            // "Precondition check failed" if this field is sent to them.
             val sigTs = getSignatureTimestamp()
-            val playbackCtx = if (sigTs > 0) {
+            val playbackCtx = if (sigTs > 0 && !client.isNativeApp) {
                 ""","playbackContext":{"contentPlaybackContext":{"signatureTimestamp":$sigTs}}"""
             } else ""
 
