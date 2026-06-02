@@ -261,7 +261,7 @@ class InnertubeApi @Inject constructor(
             )
             nativeUrl
         } catch (nativeEx: Exception) {
-            errors += "native: ${nativeEx.message?.take(300)}"
+            errors += "native: ${nativeEx.message?.take(800)}"
 
             // 3. NewPipeExtractor — last resort; slow (10+ s) but handles more edge cases.
             try {
@@ -426,13 +426,15 @@ class InnertubeApi @Inject constructor(
     )
 
     private val nativeClients = listOf(
-        // TVHTML5_SIMPLY_EMBEDDED_PLAYER — tried FIRST: no PoToken, no Play Integrity, no auth.
-        // Uses embed URL trick; returns signatureCipher decoded via Kotlin sigOps or WebView fallback.
-        // Web-format CDN URLs play correctly in ExoPlayer (no UA binding, no special container).
+        // WEB_EMBEDDED_PLAYER — tried FIRST: no PoToken, no Play Integrity, no auth.
+        // Direct replacement for deprecated TVHTML5_SEP (clientId=85, blocked June 2026 with
+        // "no longer supported" error). Uses same embed URL trick; YouTube allows embedded player
+        // requests without PoToken for publicly embeddable content. Returns signatureCipher decoded
+        // via Kotlin sigOps or WebView fallback. Web CDN URLs play correctly in ExoPlayer.
         NativeClient(
-            name = "TVHTML5_SIMPLY_EMBEDDED_PLAYER", version = "2.0", clientId = "85",
+            name = "WEB_EMBEDDED_PLAYER", version = "1.20250101.09.00", clientId = "56",
             url = "https://www.youtube.com/youtubei/v1/player",
-            userAgent = "Mozilla/5.0 (PlayStation; PlayStation 4/12.02) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.106 Safari/537.36",
+            userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
             origin = "https://www.youtube.com",
             useVideoEmbedUrl = true,
         ),
