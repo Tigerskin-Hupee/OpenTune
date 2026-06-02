@@ -60,7 +60,8 @@ object DiagnosticsLogger {
         sb.appendLine("Device : ${Build.BRAND} ${Build.MODEL} (Android ${Build.VERSION.SDK_INT})")
         sb.appendLine("Time   : ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())}")
         val poErr = OpenTunePoTokenProvider.lastError
-        sb.appendLine("PoToken: ${when (poErr) { null -> "OK"; "not_called" -> "not_called"; else -> "FAIL($poErr)" }}")
+        val keyHint = app.opentune.utils.potoken.PoTokenWebView.lastRequestKeyHint
+        sb.appendLine("PoToken: ${when (poErr) { null -> "OK"; "not_called" -> "not_called"; else -> "FAIL($poErr)" }} key=$keyHint")
         sb.appendLine()
 
         sb.appendLine("--- Stream Resolution (last ${streamEvents.size}) ---")

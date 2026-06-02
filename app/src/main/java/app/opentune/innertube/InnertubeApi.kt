@@ -389,7 +389,16 @@ class InnertubeApi @Inject constructor(
         val hasAlr = url.contains("alr=yes")
         val nTag = if (hasN) " n=enc" else " n=none"
         val alrTag = if (hasAlr) " alr=yes" else ""
-        return "$host$nTag$alrTag"
+        // Show expire delta and IP type to help diagnose CDN 403
+        val expireTag = try {
+            val exp = Regex("""[?&]expire=(\d+)""").find(url)?.groupValues?.get(1)?.toLongOrNull()
+            if (exp != null) { val delta = exp - System.currentTimeMillis() / 1000; " exp=${delta}s" } else ""
+        } catch (_: Exception) { "" }
+        val ipTag = try {
+            val ip = Regex("""[?&]ip=([^&]+)""").find(url)?.groupValues?.get(1)
+            if (ip != null) { if (ip.contains(":")) " ip=v6" else " ip=v4" } else ""
+        } catch (_: Exception) { "" }
+        return "$host$nTag$alrTag$expireTag$ipTag"
     }
 
     // Decode the n-parameter in a YouTube CDN URL using the player JS function.

@@ -271,8 +271,13 @@ class PoTokenWebView private constructor(private val context: Context) {
                             .lastOrNull()?.groupValues?.get(1)
                     }
             } else null
-            if (requestKey != null) Log.d(TAG, "Dynamic REQUEST_KEY: ${requestKey.take(8)}...")
-            else Log.w(TAG, "jnn/v1/Create not in player JS or key not found; using fallback")
+            if (requestKey != null) {
+                Log.d(TAG, "Dynamic REQUEST_KEY: ${requestKey.take(8)}...")
+                lastRequestKeyHint = "dynamic:${requestKey.take(8)}"
+            } else {
+                Log.w(TAG, "jnn/v1/Create not in player JS or key not found; using fallback")
+                lastRequestKeyHint = "fallback:${REQUEST_KEY.take(8)}"
+            }
 
             // --- n-decode function ---
             val nDecodeFn = extractNDecodeFn(jsContent)
@@ -408,6 +413,9 @@ class PoTokenWebView private constructor(private val context: Context) {
         private const val TAG = "PoTokenWebView"
         private const val GOOGLE_API_KEY = "AIzaSyDyT5W0Jh49F30Pqqtyfdf7pDLFKLJoAnw" // NOSONAR
         private const val REQUEST_KEY = "O43z0dpjhgX20SCx4KAo"
+        /** Diagnostic: "dynamic:XXXXXXXX" if key was extracted from player JS, "fallback:XXXXXXXX" otherwise. */
+        @Volatile var lastRequestKeyHint: String = "unknown"
+            private set
         const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
             "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
         private const val JS_INTERFACE = "PoTokenWebView"
