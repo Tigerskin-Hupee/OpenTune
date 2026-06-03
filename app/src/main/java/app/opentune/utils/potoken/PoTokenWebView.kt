@@ -251,10 +251,14 @@ class PoTokenWebView private constructor(private val context: Context) {
     )
 
     private fun fetchPlayerJsData(): PlayerJsData {
+        // Use embed pages — they bypass GDPR consent gates and are smaller than the homepage.
+        // The consent page at youtube.com/consent lacks the player script path entirely.
         val sourceUrls = listOf(
-            "https://www.youtube.com",
-            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "https://www.youtube.com/embed/jNQXAC9IVRw",
+            "https://www.youtube.com/embed/dQw4w9WgXcQ",
+            "https://www.youtube.com/watch?v=jNQXAC9IVRw",
         )
+        var lastFailReason = "no_attempt"
         for (sourceUrl in sourceUrls) {
             try {
                 val pageHtml = httpClient.newCall(
@@ -265,13 +269,15 @@ class PoTokenWebView private constructor(private val context: Context) {
                 ).execute().body?.string()
                 if (pageHtml == null) {
                     Log.w(TAG, "fetchPlayerJsData: null body from $sourceUrl")
+                    lastFailReason = "null_body"
                     continue
                 }
 
                 val scriptPath = Regex("""/s/player/[a-f0-9]+/player_ias\.vflset[^"' ]*base\.js""")
                     .find(pageHtml)?.value
                 if (scriptPath == null) {
-                    Log.w(TAG, "fetchPlayerJsData: script path not found in $sourceUrl")
+                    Log.w(TAG, "fetchPlayerJsData: script path not found in $sourceUrl (${pageHtml.length} bytes)")
+                    lastFailReason = "no_path"
                     continue
                 }
 
@@ -281,6 +287,7 @@ class PoTokenWebView private constructor(private val context: Context) {
                 ).execute().body?.string()
                 if (jsContent == null) {
                     Log.w(TAG, "fetchPlayerJsData: null JS body from $scriptPath")
+                    lastFailReason = "null_js"
                     continue
                 }
 
@@ -316,12 +323,13 @@ class PoTokenWebView private constructor(private val context: Context) {
 
                 return PlayerJsData(requestKey, nDecodeFn, sigDecodeFn)
             } catch (e: Exception) {
+                lastFailReason = "ex:${e.javaClass.simpleName}"
                 Log.w(TAG, "fetchPlayerJsData: ${e.message} (source=$sourceUrl)")
             }
         }
-        // All sources failed — set hint so diagnostics shows fetch_fail, not unknown
-        lastRequestKeyHint = "fetch_fail:${REQUEST_KEY.take(8)}"
-        Log.w(TAG, "fetchPlayerJsData: all sources failed, using hardcoded fallback key")
+        // All sources failed — encode the reason so diagnostics never just shows "fetch_fail"
+        lastRequestKeyHint = "fail_$lastFailReason:${REQUEST_KEY.take(8)}"
+        Log.w(TAG, "fetchPlayerJsData: all sources failed ($lastFailReason), using hardcoded fallback key")
         return PlayerJsData(null, null, null)
     }
 
