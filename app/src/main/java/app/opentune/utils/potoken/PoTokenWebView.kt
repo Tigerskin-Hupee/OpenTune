@@ -338,8 +338,12 @@ class PoTokenWebView private constructor(private val context: Context) {
         // Find the function called to decode the 's' parameter from signatureCipher
         val fnName = listOf(
             Regex("""[;,=]\s*([a-zA-Z0-9$]{2,})\(decodeURIComponent\([^)]+\.get\("s"\)"""),
+            Regex("""c&&\(c=([a-zA-Z0-9$]{2,})\(decodeURIComponent"""),
+            Regex("""b=([a-zA-Z0-9$]{2,})\(decodeURIComponent\(b\.get\("s"\)"""),
+            Regex("""[;(,]\s*([a-zA-Z0-9$]{2,})\([a-zA-Z0-9$]+\.get\("s"\)"""),
+            Regex("""[a-zA-Z0-9$]+&&\([a-zA-Z0-9$]+=([a-zA-Z0-9$]{2,})\([a-zA-Z0-9$]+\)\)"""),
+            Regex("""[a-zA-Z0-9$]+\.set\("sig"\s*,\s*([a-zA-Z0-9$]{2,})\("""),
             Regex("""\.sig\s*\|\|\s*([a-zA-Z0-9$]{2,})\("""),
-            Regex("""a\.set\("sig"\s*,\s*([a-zA-Z0-9$]{2,})\("""),
         ).firstNotNullOfOrNull { it.find(js) }?.groupValues?.get(1) ?: return null
         Log.d(TAG, "sig decode fn: $fnName")
 
@@ -351,10 +355,10 @@ class PoTokenWebView private constructor(private val context: Context) {
         val fnBody = extractBalanced(js, bodyOpen) ?: return null
         val paramOpen = js.indexOf("(", fnDefIdx)
         val paramEnd = js.indexOf(")", paramOpen)
-        val params = js.substring(paramOpen + 1, paramEnd)
+        val params = js.substring(paramOpen + 1, paramEnd).trim()
 
-        // Find helper object name (first `OBJ.method(a` call in function body)
-        val helperName = Regex("""([a-zA-Z0-9$]{2,})\.[a-zA-Z0-9$]+\(a""")
+        // Find helper object name using actual param name (YouTube uses a, b, c, etc.)
+        val helperName = Regex("""([a-zA-Z0-9$]{2,})\.[a-zA-Z0-9$]+\($params""")
             .find(fnBody)?.groupValues?.get(1) ?: return null
         Log.d(TAG, "sig helper obj: $helperName")
 
