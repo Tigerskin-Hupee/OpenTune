@@ -168,12 +168,16 @@ class InnertubeApi @Inject constructor(
     private fun extractSigOps(js: String): List<SigOp>? {
         // 1. Find the sig-decode function name (the function called on the 's' cipher param)
         val fnName = listOf(
+            // With decodeURIComponent (older/common)
             Regex("""[;,=]\s*([a-zA-Z0-9$]{2,})\(decodeURIComponent\([^)]+\.get\("s"\)"""),
             Regex("""c&&\(c=([a-zA-Z0-9$]{2,})\(decodeURIComponent"""),
-            Regex("""a\.set\("sig"\s*,\s*([a-zA-Z0-9$]{2,})\("""),
-            Regex("""\.sig\s*\|\|\s*([a-zA-Z0-9$]{2,})\("""),
             Regex("""b=([a-zA-Z0-9$]{2,})\(decodeURIComponent\(b\.get\("s"\)"""),
-            Regex("""\.set\("sig"\s*,([a-zA-Z0-9$]{2,})\("""),
+            // Without decodeURIComponent (newer YouTube player format)
+            Regex("""[;(,]\s*([a-zA-Z0-9$]{2,})\([a-zA-Z0-9$]+\.get\("s"\)"""),
+            Regex("""[a-zA-Z0-9$]+&&\([a-zA-Z0-9$]+=([a-zA-Z0-9$]{2,})\([a-zA-Z0-9$]+\)\)"""),
+            // set("sig", ...) patterns — variable name can be anything
+            Regex("""[a-zA-Z0-9$]+\.set\("sig"\s*,\s*([a-zA-Z0-9$]{2,})\("""),
+            Regex("""\.sig\s*\|\|\s*([a-zA-Z0-9$]{2,})\("""),
         ).firstNotNullOfOrNull { it.find(js) }?.groupValues?.get(1) ?: run {
             Log.w(tag, "extractSigOps: fn name not found"); return null
         }
@@ -185,9 +189,15 @@ class InnertubeApi @Inject constructor(
             ?: run { Log.w(tag, "extractSigOps: fn '$fnName' not found"); return null }
         val bodyStart = js.indexOf("{", fnIdx).takeIf { it >= 0 } ?: return null
         val fnBody = extractBalancedJs(js, bodyStart) ?: return null
+        // Extract the actual parameter name (YouTube uses different letters: a, b, c, etc.)
+        val fnParam = Regex("""function\s+[a-zA-Z0-9$]*\s*\(\s*([a-zA-Z0-9$]+)\s*\)""")
+            .find(js.substring(fnIdx, minOf(js.length, fnIdx + 100)))?.groupValues?.get(1)
+            ?: Regex("""[a-zA-Z0-9$]+=function\s*\(\s*([a-zA-Z0-9$]+)\s*\)""")
+                .find(js.substring(fnIdx, minOf(js.length, fnIdx + 100)))?.groupValues?.get(1)
+            ?: "a"
 
-        // 3. Find the helper object name (first `OBJ.method(a` reference in body)
-        val helperName = Regex("""([a-zA-Z0-9$]{2,})\.[a-zA-Z0-9$]+\(a""")
+        // 3. Find the helper object name (first `OBJ.method(PARAM` reference in body)
+        val helperName = Regex("""([a-zA-Z0-9$]{2,})\.[a-zA-Z0-9$]+\($fnParam""")
             .find(fnBody)?.groupValues?.get(1) ?: return null
 
         // 4. Extract helper object to map method names → operation types
@@ -214,7 +224,7 @@ class InnertubeApi @Inject constructor(
 
         // 5. Parse operation calls from function body, extracting numeric arguments
         val ops = mutableListOf<SigOp>()
-        Regex("""${Regex.escape(helperName)}\.([a-zA-Z0-9$]+)\(a(?:,(\d+))?\)""")
+        Regex("""${Regex.escape(helperName)}\.([a-zA-Z0-9$]+)\($fnParam(?:,(\d+))?\)""")
             .findAll(fnBody).forEach { m ->
                 val method = m.groupValues[1]
                 val n = m.groupValues[2].toIntOrNull() ?: 0
@@ -478,18 +488,10 @@ class InnertubeApi @Inject constructor(
             origin = "https://www.youtube.com",
             usePoToken = true,
         ),
-        // IOS — direct URLs (no cipher), no PoToken, no Play Integrity. Confirmed working
-        // in 2026 (v1.2.32). Placed after WEB clients so PoToken path is tried first; IOS is the
-        // reliable fallback when WEB clients fail. Buffering was caused by un-decoded
-        // n-param (CDN throttle); now fixed in PoTokenWebView.extractNDecodeFn.
-        NativeClient(
-            name = "IOS", version = "20.03.02", clientId = "5",
-            url = "https://youtubei.googleapis.com/youtubei/v1/player",
-            apiKey = "AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc",
-            userAgent = "com.google.ios.youtube/20.03.02 (iPhone16,2; U; CPU iOS 18_2_1 like Mac OS X;)",
-            clientContextJson = """"deviceMake":"Apple","deviceModel":"iPhone16,2","osName":"iPhone","osVersion":"18.2.1.22C161","platform":"MOBILE"""",
-            isNativeApp = true,
-        ),
+        // IOS CDN URLs consistently return 403 to ExoPlayer regardless of UA or headers.
+        // Removed from cascade — NPE (NewPipeExtractor) handles sig decode with up-to-date
+        // patterns and returns non-IOS URLs that work reliably.
+        // NativeClient("IOS", ...) — intentionally omitted.
         // ANDROID_VR — YouTube VR (Oculus Quest 3) client.
         NativeClient(
             name = "ANDROID_VR", version = "1.61.48", clientId = "28",
