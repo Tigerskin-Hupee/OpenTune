@@ -108,9 +108,12 @@ class InnertubeApi @Inject constructor(
         val now = System.currentTimeMillis()
         if (jsDataFetchedAt > 0 && now - jsDataFetchedAt < 3_600_000L) return
         val ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0"
-        val scriptPathRegex = Regex("""/s/player/[a-f0-9]+/player_ias\.vflset[^"' ]*base\.js""")
-        // Try homepage first; fall back to a known watch page if the homepage returns no player JS path.
-        val sourceUrls = listOf("https://www.youtube.com", "https://www.youtube.com/watch?v=jNQXAC9IVRw")
+        val scriptPathRegex = Regex("""/s/player/[0-9a-fA-F]+/[^\s"']*base\.js""")
+        val sourceUrls = listOf(
+            "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "https://www.youtube.com",
+        )
         for (sourceUrl in sourceUrls) {
             try {
                 val html = httpClient.newCall(

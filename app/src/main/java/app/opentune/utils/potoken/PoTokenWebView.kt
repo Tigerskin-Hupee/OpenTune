@@ -251,12 +251,11 @@ class PoTokenWebView private constructor(private val context: Context) {
     )
 
     private fun fetchPlayerJsData(): PlayerJsData {
-        // Use embed pages — they bypass GDPR consent gates and are smaller than the homepage.
-        // The consent page at youtube.com/consent lacks the player script path entirely.
+        // Watch pages contain the full player_ias/base.js; embed pages use a different player script.
         val sourceUrls = listOf(
-            "https://www.youtube.com/embed/jNQXAC9IVRw",
-            "https://www.youtube.com/embed/dQw4w9WgXcQ",
             "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "https://www.youtube.com",
         )
         var lastFailReason = "no_attempt"
         for (sourceUrl in sourceUrls) {
@@ -273,7 +272,7 @@ class PoTokenWebView private constructor(private val context: Context) {
                     continue
                 }
 
-                val scriptPath = Regex("""/s/player/[a-f0-9]+/player_ias\.vflset[^"' ]*base\.js""")
+                val scriptPath = Regex("""/s/player/[0-9a-fA-F]+/[^\s"']*base\.js""")
                     .find(pageHtml)?.value
                 if (scriptPath == null) {
                     Log.w(TAG, "fetchPlayerJsData: script path not found in $sourceUrl (${pageHtml.length} bytes)")
