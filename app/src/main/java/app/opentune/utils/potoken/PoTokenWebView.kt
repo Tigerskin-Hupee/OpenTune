@@ -337,8 +337,8 @@ class PoTokenWebView private constructor(private val context: Context) {
     private fun extractSigDecodeCode(js: String): String? {
         // PRIMARY: sig decode fn body ALWAYS starts with "param=param.split("")" — find by body.
         val splitMatch =
-            Regex("""function ([a-zA-Z0-9$]{2,})\(([a-zA-Z0-9$])\)\{\2=\2\.split\(""\)""").find(js)
-            ?: Regex("""([a-zA-Z0-9$]{2,})=function\(([a-zA-Z0-9$])\)\{\2=\2\.split\(""\)""").find(js)
+            Regex("""function ([a-zA-Z0-9$]+)\(([a-zA-Z0-9$])\)\s*\{\s*\2\s*=\s*\2\.split\(""\)""").find(js)
+            ?: Regex("""([a-zA-Z0-9$]+)=function\(([a-zA-Z0-9$])\)\s*\{\s*\2\s*=\s*\2\.split\(""\)""").find(js)
 
         val fnName: String
         val params: String
@@ -376,7 +376,7 @@ class PoTokenWebView private constructor(private val context: Context) {
         }
 
         // Find helper object name using actual param name (YouTube uses a, b, c, etc.)
-        val helperName = Regex("""([a-zA-Z0-9$]{2,})\.[a-zA-Z0-9$]+\($params""")
+        val helperName = Regex("""([a-zA-Z0-9$]+)\.[a-zA-Z0-9$]+\($params""")
             .find(fnBody)?.groupValues?.get(1) ?: return null
         Log.d(TAG, "sig helper obj: $helperName")
 
