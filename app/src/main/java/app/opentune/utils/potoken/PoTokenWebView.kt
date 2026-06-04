@@ -335,61 +335,60 @@ class PoTokenWebView private constructor(private val context: Context) {
     // Extract YouTube's signature-cipher decode code (helper object + main fn) from player JS.
     // The extracted code, when eval'd, sets decodeSig_global = mainFn so WebView can call it.
     private fun extractSigDecodeCode(js: String): String? {
-        // PRIMARY: sig decode fn body ALWAYS starts with "param=param.split("")" — find by body.
-        val splitMatch =
-            Regex("""function ([a-zA-Z0-9$]+)\(([a-zA-Z0-9$])\)\s*\{\s*\2\s*=\s*\2\.split\(""\)""").find(js)
-            ?: Regex("""([a-zA-Z0-9$]+)=function\(([a-zA-Z0-9$])\)\s*\{\s*\2\s*=\s*\2\.split\(""\)""").find(js)
+        // Find function name using NPE-aligned patterns (NewPipeExtractor FUNCTION_REGEXES).
+        // YouTube's sig-decode fn invariant: body starts with param=param.split("")
+        data class FnHit(val name: String, val param: String)
+        val hit: FnHit =
+            // Pattern A: assignment form, param 'a' (NPE pattern 5 — most common in current YouTube JS)
+            Regex("""([\w$]+)\s*=\s*function\(\s*a\s*\)\s*\{\s*a\s*=\s*a\.split\(\s*""\s*\)""")
+                .find(js)?.let { FnHit(it.groupValues[1], "a") }
+            // Pattern B: assignment form, backreference + semicolon (NPE pattern 6)
+            ?: Regex("""([\w$]+)\s*=\s*function\(([\w$]+)\)\s*\{\s*\2\s*=\s*\2\.split\(""\)\s*;""")
+                .find(js)?.let { FnHit(it.groupValues[1], it.groupValues[2]) }
+            // Pattern C: declaration form, param 'a'
+            ?: Regex("""function\s+([\w$]+)\(\s*a\s*\)\s*\{\s*a\s*=\s*a\.split\(\s*""\s*\)""")
+                .find(js)?.let { FnHit(it.groupValues[1], "a") }
+            // Pattern D: call-site fallback
+            ?: listOf(
+                Regex("""[\w$]+&&\([\w$]+=([a-zA-Z0-9_$]{2,})\(\d*,?decodeURIComponent"""),
+                Regex("""m=([a-zA-Z0-9_$]{2,})\(decodeURIComponent\(h\.s\)\)"""),
+                Regex("""c&&\(c=([a-zA-Z0-9_$]{2,})\(decodeURIComponent\(c\)\)"""),
+                Regex("""[;,=]\s*([a-zA-Z0-9_$]{2,})\(decodeURIComponent\([^)]+\.get\("s"\)"""),
+                Regex("""[;(,]\s*([a-zA-Z0-9_$]{2,})\([\w$]+\.get\("s"\)"""),
+            ).firstNotNullOfOrNull { it.find(js) }?.let { FnHit(it.groupValues[1], "a") }
+            ?: run { Log.w(TAG, "sig decode fn not found"); return null }
 
-        val fnName: String
-        val params: String
-        val fnBody: String
-        if (splitMatch != null) {
-            fnName = splitMatch.groupValues[1]
-            params = splitMatch.groupValues[2]
-            Log.d(TAG, "sig decode fn: $fnName (via split-body, param=$params)")
-            val fnDefIdx = js.indexOf("function $fnName(").takeIf { it >= 0 }
-                ?: js.indexOf("$fnName=function(").takeIf { it >= 0 }
-                ?: return null
-            val bodyOpen = js.indexOf("{", fnDefIdx).takeIf { it >= 0 } ?: return null
-            fnBody = extractBalanced(js, bodyOpen) ?: return null
-        } else {
-            // FALLBACK: find by call-site patterns
-            fnName = listOf(
-                Regex("""[;,=]\s*([a-zA-Z0-9$]{2,})\(decodeURIComponent\([^)]+\.get\("s"\)"""),
-                Regex("""c&&\(c=([a-zA-Z0-9$]{2,})\(decodeURIComponent"""),
-                Regex("""b=([a-zA-Z0-9$]{2,})\(decodeURIComponent\(b\.get\("s"\)"""),
-                Regex("""[;(,]\s*([a-zA-Z0-9$]{2,})\([a-zA-Z0-9$]+\.get\("s"\)"""),
-                Regex("""[a-zA-Z0-9$]+&&\([a-zA-Z0-9$]+=([a-zA-Z0-9$]{2,})\([a-zA-Z0-9$]+\)\)"""),
-                Regex("""[a-zA-Z0-9$]+\.set\("sig"\s*,\s*([a-zA-Z0-9$]{2,})\("""),
-                Regex("""\.sig\s*\|\|\s*([a-zA-Z0-9$]{2,})\("""),
-            ).firstNotNullOfOrNull { it.find(js) }?.groupValues?.get(1) ?: return null
-            Log.d(TAG, "sig decode fn: $fnName (via call-site)")
+        Log.d(TAG, "sig decode fn: '${hit.name}' param='${hit.param}'")
 
-            val fnDefIdx = js.indexOf("function $fnName(").takeIf { it >= 0 }
-                ?: js.indexOf("$fnName=function(").takeIf { it >= 0 }
-                ?: return null
-            val bodyOpen = js.indexOf("{", fnDefIdx).takeIf { it >= 0 } ?: return null
-            fnBody = extractBalanced(js, bodyOpen) ?: return null
-            val paramOpen = js.indexOf("(", fnDefIdx)
-            val paramEnd = js.indexOf(")", paramOpen)
-            params = js.substring(paramOpen + 1, paramEnd).trim()
-        }
+        // Locate function definition and extract body
+        val fnDefIdx = js.indexOf("function ${hit.name}(").takeIf { it >= 0 }
+            ?: js.indexOf("${hit.name}=function(").takeIf { it >= 0 }
+            ?: run { Log.w(TAG, "sig decode fn def '${hit.name}' not found"); return null }
+        val bodyOpen = js.indexOf("{", fnDefIdx).takeIf { it >= 0 } ?: return null
+        val fnBody = extractBalanced(js, bodyOpen) ?: return null
 
-        // Find helper object name using actual param name (YouTube uses a, b, c, etc.)
-        val helperName = Regex("""([a-zA-Z0-9$]+)\.[a-zA-Z0-9$]+\($params""")
-            .find(fnBody)?.groupValues?.get(1) ?: return null
-        Log.d(TAG, "sig helper obj: $helperName")
+        // Read actual param name from the definition
+        val paramOpen = js.indexOf("(", fnDefIdx)
+        val paramEnd = js.indexOf(")", paramOpen)
+        val params = js.substring(paramOpen + 1, paramEnd).trim().ifBlank { hit.param }
+
+        // Find helper name (dot notation or bracket notation)
+        val helperName =
+            Regex("""([\w$]+)\.[\w$]+\($params""").find(fnBody)?.groupValues?.get(1)
+            ?: Regex("""([\w$]+)\["[\w$]+"\]\($params""").find(fnBody)?.groupValues?.get(1)
+            ?: run { Log.w(TAG, "sig helper not found (params=$params body[${fnBody.take(120)}])"); return null }
+        Log.d(TAG, "sig helper: '$helperName'")
 
         // Extract helper object definition
-        val helperSearch = js.indexOf("var $helperName={")
-            .takeIf { it >= 0 }
+        val helperSearch = js.indexOf("var $helperName={").takeIf { it >= 0 }
             ?: js.indexOf(",$helperName={").takeIf { it >= 0 }?.plus(1)
-            ?: return null
+            ?: js.indexOf(";$helperName={").takeIf { it >= 0 }?.plus(1)
+            ?: run { Log.w(TAG, "sig helper def '$helperName' not found"); return null }
         val helperOpen = js.indexOf("{", helperSearch).takeIf { it >= 0 } ?: return null
         val helperBody = extractBalanced(js, helperOpen) ?: return null
 
-        // Build self-contained code block; exposes decodeSig_global in outer (WebView) scope
-        return "var $helperName=$helperBody;\nfunction $fnName($params) $fnBody\ndecodeSig_global=$fnName;"
+        // Return self-contained JS; decodeSig_global leaks to global scope (non-strict eval in IIFE)
+        return "var $helperName=$helperBody;\nfunction ${hit.name}($params) $fnBody\ndecodeSig_global=${hit.name};"
     }
 
     // Extract the YouTube n-parameter decode function from player JS.
