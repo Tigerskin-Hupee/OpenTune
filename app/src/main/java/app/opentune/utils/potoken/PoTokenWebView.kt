@@ -335,27 +335,45 @@ class PoTokenWebView private constructor(private val context: Context) {
     // Extract YouTube's signature-cipher decode code (helper object + main fn) from player JS.
     // The extracted code, when eval'd, sets decodeSig_global = mainFn so WebView can call it.
     private fun extractSigDecodeCode(js: String): String? {
-        // Find the function called to decode the 's' parameter from signatureCipher
-        val fnName = listOf(
-            Regex("""[;,=]\s*([a-zA-Z0-9$]{2,})\(decodeURIComponent\([^)]+\.get\("s"\)"""),
-            Regex("""c&&\(c=([a-zA-Z0-9$]{2,})\(decodeURIComponent"""),
-            Regex("""b=([a-zA-Z0-9$]{2,})\(decodeURIComponent\(b\.get\("s"\)"""),
-            Regex("""[;(,]\s*([a-zA-Z0-9$]{2,})\([a-zA-Z0-9$]+\.get\("s"\)"""),
-            Regex("""[a-zA-Z0-9$]+&&\([a-zA-Z0-9$]+=([a-zA-Z0-9$]{2,})\([a-zA-Z0-9$]+\)\)"""),
-            Regex("""[a-zA-Z0-9$]+\.set\("sig"\s*,\s*([a-zA-Z0-9$]{2,})\("""),
-            Regex("""\.sig\s*\|\|\s*([a-zA-Z0-9$]{2,})\("""),
-        ).firstNotNullOfOrNull { it.find(js) }?.groupValues?.get(1) ?: return null
-        Log.d(TAG, "sig decode fn: $fnName")
+        // PRIMARY: sig decode fn body ALWAYS starts with "param=param.split("")" — find by body.
+        val splitMatch =
+            Regex("""function ([a-zA-Z0-9$]{2,})\(([a-zA-Z0-9$])\)\{\2=\2\.split\(""\)""").find(js)
+            ?: Regex("""([a-zA-Z0-9$]{2,})=function\(([a-zA-Z0-9$])\)\{\2=\2\.split\(""\)""").find(js)
 
-        // Extract main function body — player JS uses both `function NAME(` and `NAME=function(`
-        val fnDefIdx = js.indexOf("function $fnName(").takeIf { it >= 0 }
-            ?: js.indexOf("$fnName=function(").takeIf { it >= 0 }
-            ?: return null
-        val bodyOpen = js.indexOf("{", fnDefIdx).takeIf { it >= 0 } ?: return null
-        val fnBody = extractBalanced(js, bodyOpen) ?: return null
-        val paramOpen = js.indexOf("(", fnDefIdx)
-        val paramEnd = js.indexOf(")", paramOpen)
-        val params = js.substring(paramOpen + 1, paramEnd).trim()
+        val fnName: String
+        val params: String
+        val fnBody: String
+        if (splitMatch != null) {
+            fnName = splitMatch.groupValues[1]
+            params = splitMatch.groupValues[2]
+            Log.d(TAG, "sig decode fn: $fnName (via split-body, param=$params)")
+            val fnDefIdx = js.indexOf("function $fnName(").takeIf { it >= 0 }
+                ?: js.indexOf("$fnName=function(").takeIf { it >= 0 }
+                ?: return null
+            val bodyOpen = js.indexOf("{", fnDefIdx).takeIf { it >= 0 } ?: return null
+            fnBody = extractBalanced(js, bodyOpen) ?: return null
+        } else {
+            // FALLBACK: find by call-site patterns
+            fnName = listOf(
+                Regex("""[;,=]\s*([a-zA-Z0-9$]{2,})\(decodeURIComponent\([^)]+\.get\("s"\)"""),
+                Regex("""c&&\(c=([a-zA-Z0-9$]{2,})\(decodeURIComponent"""),
+                Regex("""b=([a-zA-Z0-9$]{2,})\(decodeURIComponent\(b\.get\("s"\)"""),
+                Regex("""[;(,]\s*([a-zA-Z0-9$]{2,})\([a-zA-Z0-9$]+\.get\("s"\)"""),
+                Regex("""[a-zA-Z0-9$]+&&\([a-zA-Z0-9$]+=([a-zA-Z0-9$]{2,})\([a-zA-Z0-9$]+\)\)"""),
+                Regex("""[a-zA-Z0-9$]+\.set\("sig"\s*,\s*([a-zA-Z0-9$]{2,})\("""),
+                Regex("""\.sig\s*\|\|\s*([a-zA-Z0-9$]{2,})\("""),
+            ).firstNotNullOfOrNull { it.find(js) }?.groupValues?.get(1) ?: return null
+            Log.d(TAG, "sig decode fn: $fnName (via call-site)")
+
+            val fnDefIdx = js.indexOf("function $fnName(").takeIf { it >= 0 }
+                ?: js.indexOf("$fnName=function(").takeIf { it >= 0 }
+                ?: return null
+            val bodyOpen = js.indexOf("{", fnDefIdx).takeIf { it >= 0 } ?: return null
+            fnBody = extractBalanced(js, bodyOpen) ?: return null
+            val paramOpen = js.indexOf("(", fnDefIdx)
+            val paramEnd = js.indexOf(")", paramOpen)
+            params = js.substring(paramOpen + 1, paramEnd).trim()
+        }
 
         // Find helper object name using actual param name (YouTube uses a, b, c, etc.)
         val helperName = Regex("""([a-zA-Z0-9$]{2,})\.[a-zA-Z0-9$]+\($params""")
