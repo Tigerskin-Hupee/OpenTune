@@ -167,113 +167,88 @@ class InnertubeApi @Inject constructor(
     @Volatile private var sigOpsHint = "?"
 
     // Extract sig-decode operation sequence from player JS (natively in JVM — no WebView).
-    // Returns null if extraction fails; sets sigOpsHint for diagnostics.
+    // Strategy: anchor on .splice(0, which is ALWAYS in the sig helper object, regardless of
+    // how the sig-decode function itself is named or structured.
     private fun extractSigOps(js: String): List<SigOp>? {
-        sigOpsHint = "s1-fnNotFound"
-        // Step 1: Find function name. Use NPE-aligned patterns (NewPipeExtractor FUNCTION_REGEXES).
-        // YouTube's sig-decode fn ALWAYS starts with param=param.split("") — unique invariant.
-        // Support both double-quotes ("") and single-quotes ('') for the empty-string argument.
-        val splitQ = """(?:""|'')"""
-        data class FnHit(val name: String, val param: String, val via: String)
-        val hit: FnHit =
-            // Pattern A: assignment form, param hardcoded 'a' (NPE pattern 5 — most current)
-            Regex("""([\w$]+)\s*=\s*function\(\s*a\s*\)\s*\{\s*a\s*=\s*a\.split\(\s*$splitQ\s*\)""")
-                .find(js)?.let { FnHit(it.groupValues[1], "a", "A") }
-            // Pattern B: assignment form, backreference + semicolon (NPE pattern 6)
-            ?: Regex("""([\w$]+)\s*=\s*function\(([\w$]+)\)\s*\{\s*\2\s*=\s*\2\.split\($splitQ\)\s*;""")
-                .find(js)?.let { FnHit(it.groupValues[1], it.groupValues[2], "B") }
-            // Pattern C: declaration form, param 'a'
-            ?: Regex("""function\s+([\w$]+)\(\s*a\s*\)\s*\{\s*a\s*=\s*a\.split\(\s*$splitQ\s*\)""")
-                .find(js)?.let { FnHit(it.groupValues[1], "a", "C") }
-            // Pattern D: call-site fallbacks
-            ?: listOf(
-                Regex("""[\w$]+&&\([\w$]+=([a-zA-Z0-9_$]{2,})\(\d*,?decodeURIComponent\([\w$]+\)\)"""),
-                Regex("""[;,=]\s*([a-zA-Z0-9_$]{2,})\(decodeURIComponent\([^)]+\.get\("s"\)"""),
-                Regex("""[;(,]\s*([a-zA-Z0-9_$]{2,})\([\w$]+\.get\("s"\)"""),
-                Regex("""[\w$]+\.set\("sig"\s*,\s*([a-zA-Z0-9_$]{2,})\("""),
-                Regex("""\.sig\s*\|\|\s*([a-zA-Z0-9_$]{2,})\("""),
-            ).firstNotNullOfOrNull { it.find(js) }?.let { FnHit(it.groupValues[1], "a", "D") }
-            ?: run { Log.w(tag, "extractSigOps: fn not found (jsLen=${js.length})"); return null }
+        sigOpsHint = "s0-noSplice"
+        var searchFrom = 0
+        while (true) {
+            // Find next .splice(0, occurrence — always present in sig helper object
+            val spliceIdx = js.indexOf(".splice(0,", searchFrom).takeIf { it >= 0 }
+                ?: run { Log.w(tag, "extractSigOps: .splice(0, not found"); return null }
+            searchFrom = spliceIdx + 1
 
-        sigOpsHint = "s2-bodyFail(${hit.name})"
-        Log.d(tag, "extractSigOps: fn='${hit.name}' param='${hit.param}' via=${hit.via}")
+            // Go backward up to 2000 chars to find the enclosing helper object definition
+            val lbOff = maxOf(0, spliceIdx - 2000)
+            val lb = js.substring(lbOff, spliceIdx)
+            // Match: var NAME={  or  ;NAME={  or  ,NAME={  or  }NAME={  or  (NAME={
+            val hm = Regex("""(?:var\s+|[;,}\s(])([\w$]+)\s*=\s*\{""")
+                .findAll(lb).lastOrNull() ?: continue
+            val helperName = hm.groupValues[1]
+            val helperBraceIdx = lbOff + hm.range.first + hm.value.lastIndexOf('{')
+            val helperBody = extractBalancedJs(js, helperBraceIdx) ?: continue
 
-        // Step 2: Locate and extract the function body.
-        val fnIdx = js.indexOf("function ${hit.name}(").takeIf { it >= 0 }
-            ?: js.indexOf("${hit.name}=function(").takeIf { it >= 0 }
-            ?: run { Log.w(tag, "extractSigOps: fn def '${hit.name}' not found"); return null }
-        val bodyStart = js.indexOf("{", fnIdx).takeIf { it >= 0 } ?: return null
-        val fnBody = extractBalancedJs(js, bodyStart)
-            ?: run { Log.w(tag, "extractSigOps: fn body extraction failed"); return null }
-        val paramSlice = js.substring(fnIdx, minOf(js.length, fnIdx + 80))
-        val fnParam = Regex("""\(\s*([\w$]+)\s*\)""").find(paramSlice)?.groupValues?.get(1)
-            ?: hit.param
-        Log.d(tag, "extractSigOps: fnParam='$fnParam' bodyLen=${fnBody.length}")
+            // Validate: sig helper always has BOTH splice AND reverse
+            if (!helperBody.contains(".splice(0,") || !helperBody.contains(".reverse()")) continue
 
-        sigOpsHint = "s3-helperFail(${hit.name})"
+            Log.d(tag, "extractSigOps: helper='$helperName' bodyLen=${helperBody.length}")
+            sigOpsHint = "s1-opMapFail($helperName)"
 
-        // Step 3: Find the helper object name — dot notation (Obj.method) or bracket (Obj["m"]).
-        val helperName =
-            Regex("""([\w$]+)\.[\w$]+\($fnParam""").find(fnBody)?.groupValues?.get(1)
-            ?: Regex("""([\w$]+)\["[\w$]+"\]\($fnParam""").find(fnBody)?.groupValues?.get(1)
-            ?: run { Log.w(tag, "extractSigOps: helper not found in body[${fnBody.take(120)}]"); return null }
-        Log.d(tag, "extractSigOps: helper='$helperName'")
+            // Parse helper method → operation mapping
+            val opMap = mutableMapOf<String, SigOp>()
+            Regex("""([\w$]+)\s*:\s*function\s*\(\w+\)\s*\{[^}]*\.reverse\(\)""")
+                .findAll(helperBody).forEach { opMap[it.groupValues[1]] = SigOp.Reverse }
+            Regex("""([\w$]+)\s*:\s*function\s*\(\w+,\w+\)\s*\{[^}]*\.splice\(0,""")
+                .findAll(helperBody).forEach { opMap[it.groupValues[1]] = SigOp.Splice(0) }
+            Regex("""([\w$]+)\s*:\s*function\s*\(\w+,\w+\)\s*\{[^}]*\.length[^}]*\}""")
+                .findAll(helperBody).forEach { opMap[it.groupValues[1]] = SigOp.Swap(0) }
+            if (opMap.isEmpty()) { sigOpsHint = "s1-opMapEmpty($helperName)"; continue }
+            Log.d(tag, "extractSigOps: opMap=$opMap")
 
-        sigOpsHint = "s4-helperDefFail($helperName)"
+            sigOpsHint = "s2-fnFail($helperName)"
 
-        // Step 4: Extract the helper object definition.
-        // Try multiple patterns: var NAME={, ,NAME={, ;NAME={, }NAME={
-        val helperBodyStart = run {
-            listOf("var $helperName={", ",$helperName={", ";$helperName={", "}$helperName={")
-                .firstNotNullOfOrNull { token ->
-                    js.indexOf(token).takeIf { it >= 0 }?.let { it + token.length - 1 }
-                    // token.length - 1 = offset of the '{' character within the matched token
-                }
-        } ?: run { Log.w(tag, "extractSigOps: helper def '$helperName' not found"); return null }
-        val helperBody = extractBalancedJs(js, helperBodyStart)
-            ?: run { Log.w(tag, "extractSigOps: helper body extraction failed"); return null }
-        Log.d(tag, "extractSigOps: helperLen=${helperBody.length} preview[${helperBody.take(80)}]")
+            // Find sig decode fn: look for first CALL to helper AFTER its definition, then
+            // go backward to find the enclosing function definition
+            val afterHelper = helperBraceIdx + helperBody.length
+            val callIdx = js.indexOf("$helperName.", afterHelper).takeIf { it >= 0 } ?: continue
 
-        sigOpsHint = "s5-opMapEmpty"
+            val pre = js.substring(maxOf(0, callIdx - 500), callIdx)
+            val fd = Regex("""([\w$]+)\s*=\s*function\(\s*([\w$]+)\s*\)\s*\{""").findAll(pre).lastOrNull()
+                ?: Regex("""function\s+([\w$]+)\s*\(\s*([\w$]+)\s*\)\s*\{""").findAll(pre).lastOrNull()
+                ?: continue
 
-        // Step 5: Map helper method names → operations.
-        val opMap = mutableMapOf<String, SigOp>()
-        Regex("""([\w$]+)\s*:\s*function\s*\(\w+\)\s*\{[^}]*\.reverse\(\)""")
-            .findAll(helperBody).forEach { opMap[it.groupValues[1]] = SigOp.Reverse }
-        Regex("""([\w$]+)\s*:\s*function\s*\(\w+,\w+\)\s*\{[^}]*\.splice\(0,""")
-            .findAll(helperBody).forEach { opMap[it.groupValues[1]] = SigOp.Splice(0) }
-        Regex("""([\w$]+)\s*:\s*function\s*\(\w+,\w+\)\s*\{[^}]*\.length[^}]*\}""")
-            .findAll(helperBody).forEach { opMap[it.groupValues[1]] = SigOp.Swap(0) }
-        if (opMap.isEmpty()) {
-            Log.w(tag, "extractSigOps: opMap empty — helperBody[${helperBody.take(150)}]"); return null
-        }
-        Log.d(tag, "extractSigOps: opMap=$opMap")
+            val fnName = fd.groupValues[1]; val fnParam = fd.groupValues[2]
+            val fdAbsIdx = maxOf(0, callIdx - 500) + fd.range.first
+            val fnBraceIdx = js.indexOf("{", fdAbsIdx).takeIf { it >= 0 } ?: continue
+            val fnBody = extractBalancedJs(js, fnBraceIdx) ?: continue
+            Log.d(tag, "extractSigOps: fn='$fnName' param='$fnParam' bodyLen=${fnBody.length}")
 
-        sigOpsHint = "s6-noOpCalls"
+            sigOpsHint = "s3-noOpCalls($helperName/$fnName)"
 
-        // Step 6: Parse operation call sequence (dot notation, then bracket notation fallback).
-        val ops = mutableListOf<SigOp>()
-        val dotMatches = Regex("""${Regex.escape(helperName)}\.([\w$]+)\($fnParam(?:,(\d+))?\)""")
-            .findAll(fnBody).toList()
-        val callMatches = dotMatches.ifEmpty {
-            Regex("""${Regex.escape(helperName)}\["([\w$]+)"\]\($fnParam(?:,(\d+))?\)""")
+            // Parse operation calls (dot or bracket notation)
+            val ops = mutableListOf<SigOp>()
+            val dotM = Regex("""${Regex.escape(helperName)}\.([\w$]+)\($fnParam(?:,(\d+))?\)""")
                 .findAll(fnBody).toList()
-        }
-        for (m in callMatches) {
-            val method = m.groupValues[1]; val n = m.groupValues[2].toIntOrNull() ?: 0
-            when (opMap[method]) {
-                SigOp.Reverse -> ops.add(SigOp.Reverse)
-                is SigOp.Splice -> ops.add(SigOp.Splice(n))
-                is SigOp.Swap -> ops.add(SigOp.Swap(n))
-                null -> {
-                    sigOpsHint = "s6-unknownOp($method)"
-                    Log.w(tag, "extractSigOps: unknown op '$method' (map=$opMap)"); return null
+            val callM = dotM.ifEmpty {
+                Regex("""${Regex.escape(helperName)}\["([\w$]+)"\]\($fnParam(?:,(\d+))?\)""")
+                    .findAll(fnBody).toList()
+            }
+            var bad = false
+            for (m in callM) {
+                val method = m.groupValues[1]; val n = m.groupValues[2].toIntOrNull() ?: 0
+                when (opMap[method]) {
+                    SigOp.Reverse -> ops.add(SigOp.Reverse)
+                    is SigOp.Splice -> ops.add(SigOp.Splice(n))
+                    is SigOp.Swap -> ops.add(SigOp.Swap(n))
+                    null -> { sigOpsHint = "s3-unknownOp($method)"; bad = true; break }
                 }
             }
+            if (bad || ops.isEmpty()) continue
+
+            sigOpsHint = "ok-${ops.size}ops"
+            Log.d(tag, "extractSigOps: ${ops.size} ops OK via '$helperName'")
+            return ops
         }
-        Log.d(tag, "extractSigOps: ${ops.size} ops from ${callMatches.size} calls")
-        return ops.takeIf { it.isNotEmpty() }
-            ?: run { Log.w(tag, "extractSigOps: no op calls found"); null }
     }
 
     // Apply extracted sig-decode operations to a raw signature string.
