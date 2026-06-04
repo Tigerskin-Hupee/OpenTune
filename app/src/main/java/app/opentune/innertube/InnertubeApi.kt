@@ -166,63 +166,69 @@ class InnertubeApi @Inject constructor(
     // Extract sig-decode operation sequence from player JS (natively in JVM — no WebView).
     // Returns null if the pattern is not found (player JS obfuscation may have changed).
     private fun extractSigOps(js: String): List<SigOp>? {
-        // 1. Find the sig-decode function name (the function called on the 's' cipher param)
-        val fnName = listOf(
-            // With decodeURIComponent (older/common)
-            Regex("""[;,=]\s*([a-zA-Z0-9$]{2,})\(decodeURIComponent\([^)]+\.get\("s"\)"""),
-            Regex("""c&&\(c=([a-zA-Z0-9$]{2,})\(decodeURIComponent"""),
-            Regex("""b=([a-zA-Z0-9$]{2,})\(decodeURIComponent\(b\.get\("s"\)"""),
-            // Without decodeURIComponent (newer YouTube player format)
-            Regex("""[;(,]\s*([a-zA-Z0-9$]{2,})\([a-zA-Z0-9$]+\.get\("s"\)"""),
-            Regex("""[a-zA-Z0-9$]+&&\([a-zA-Z0-9$]+=([a-zA-Z0-9$]{2,})\([a-zA-Z0-9$]+\)\)"""),
-            // set("sig", ...) patterns — variable name can be anything
-            Regex("""[a-zA-Z0-9$]+\.set\("sig"\s*,\s*([a-zA-Z0-9$]{2,})\("""),
-            Regex("""\.sig\s*\|\|\s*([a-zA-Z0-9$]{2,})\("""),
-        ).firstNotNullOfOrNull { it.find(js) }?.groupValues?.get(1) ?: run {
-            Log.w(tag, "extractSigOps: fn name not found"); return null
+        // 1. Find the sig-decode function name.
+        // PRIMARY: Identify by body — sig decode always starts with "param=param.split("")"
+        // This is unique in the player JS and survives call-site obfuscation changes.
+        val splitMatch =
+            Regex("""function ([a-zA-Z0-9$]{2,})\(([a-zA-Z0-9$])\)\{\2=\2\.split\(""\)""").find(js)
+            ?: Regex("""([a-zA-Z0-9$]{2,})=function\(([a-zA-Z0-9$])\)\{\2=\2\.split\(""\)""").find(js)
+
+        val fnName: String
+        var fnParam: String
+        if (splitMatch != null) {
+            fnName = splitMatch.groupValues[1]
+            fnParam = splitMatch.groupValues[2]
+            Log.d(tag, "extractSigOps: '$fnName' via split-body (param=$fnParam)")
+        } else {
+            // FALLBACK: find by call-site patterns (how the function is invoked with "s" param)
+            fnName = listOf(
+                Regex("""[;,=]\s*([a-zA-Z0-9$]{2,})\(decodeURIComponent\([^)]+\.get\("s"\)"""),
+                Regex("""[;(,]\s*([a-zA-Z0-9$]{2,})\([a-zA-Z0-9$]+\.get\("s"\)"""),
+                Regex("""\.set\([a-zA-Z0-9$]+\.get\("sp"\)\s*,\s*([a-zA-Z0-9$]{2,})\("""),
+                Regex("""[a-zA-Z0-9$]+\.set\("sig"\s*,\s*([a-zA-Z0-9$]{2,})\("""),
+                Regex("""\.sig\s*\|\|\s*([a-zA-Z0-9$]{2,})\("""),
+                Regex("""[a-zA-Z0-9$]+&&\([a-zA-Z0-9$]+=([a-zA-Z0-9$]{2,})\([a-zA-Z0-9$]+\)\)"""),
+            ).firstNotNullOfOrNull { it.find(js) }?.groupValues?.get(1) ?: run {
+                Log.w(tag, "extractSigOps: fn name not found"); return null
+            }
+            fnParam = "a"
         }
 
-        // 2. Extract the function body — YouTube player JS uses BOTH declaration forms:
-        //    `function NAME(a){...}` and `NAME=function(a){...}`
+        // 2. Extract the function body
         val fnIdx = js.indexOf("function $fnName(").takeIf { it >= 0 }
             ?: js.indexOf("$fnName=function(").takeIf { it >= 0 }
             ?: run { Log.w(tag, "extractSigOps: fn '$fnName' not found"); return null }
         val bodyStart = js.indexOf("{", fnIdx).takeIf { it >= 0 } ?: return null
         val fnBody = extractBalancedJs(js, bodyStart) ?: return null
-        // Extract the actual parameter name (YouTube uses different letters: a, b, c, etc.)
-        val fnParam = Regex("""function\s+[a-zA-Z0-9$]*\s*\(\s*([a-zA-Z0-9$]+)\s*\)""")
-            .find(js.substring(fnIdx, minOf(js.length, fnIdx + 100)))?.groupValues?.get(1)
-            ?: Regex("""[a-zA-Z0-9$]+=function\s*\(\s*([a-zA-Z0-9$]+)\s*\)""")
+        // If param was not known from split-match, extract it from the definition
+        if (splitMatch == null) {
+            fnParam = Regex("""function\s+[a-zA-Z0-9$]*\s*\(\s*([a-zA-Z0-9$]+)\s*\)""")
                 .find(js.substring(fnIdx, minOf(js.length, fnIdx + 100)))?.groupValues?.get(1)
-            ?: "a"
+                ?: Regex("""[a-zA-Z0-9$]+=function\s*\(\s*([a-zA-Z0-9$]+)\s*\)""")
+                    .find(js.substring(fnIdx, minOf(js.length, fnIdx + 100)))?.groupValues?.get(1)
+                ?: fnParam
+        }
 
-        // 3. Find the helper object name (first `OBJ.method(PARAM` reference in body)
+        // 3. Find the helper object name
         val helperName = Regex("""([a-zA-Z0-9$]{2,})\.[a-zA-Z0-9$]+\($fnParam""")
             .find(fnBody)?.groupValues?.get(1) ?: return null
 
-        // 4. Extract helper object to map method names → operation types
-        val helperSearch = js.indexOf("var $helperName={")
-            .takeIf { it >= 0 }
+        // 4. Extract helper object body
+        val helperSearch = js.indexOf("var $helperName={").takeIf { it >= 0 }
             ?: js.indexOf(",$helperName={").takeIf { it >= 0 }?.plus(1)
             ?: return null
         val helperObjStart = js.indexOf("{", helperSearch).takeIf { it >= 0 } ?: return null
         val helperBody = extractBalancedJs(js, helperObjStart) ?: return null
 
         val opMap = mutableMapOf<String, SigOp>()
-        // Reverse: single param, calls .reverse()
         Regex("""([a-zA-Z0-9$]+)\s*:\s*function\s*\(\w+\)\s*\{[^}]*\.reverse\(\)""")
             .findAll(helperBody).forEach { opMap[it.groupValues[1]] = SigOp.Reverse }
-        // Splice: two params, calls .splice(0,
         Regex("""([a-zA-Z0-9$]+)\s*:\s*function\s*\(\w+,\w+\)\s*\{[^}]*\.splice\(0,""")
             .findAll(helperBody).forEach { opMap[it.groupValues[1]] = SigOp.Splice(0) }
-        // Swap: two params, uses b%a.length modulo index — this is the unique marker.
-        // The old pattern ([^;]*=\w\[0\][^}]*=\w\[0\]) fails for the standard YouTube form
-        // {var c=a[0];a[0]=a[b%a.length];a[b%a.length]=c} because the second assignment
-        // ends in =c, not =\w[0]. Use .length as the discriminator instead.
         Regex("""([a-zA-Z0-9$]+)\s*:\s*function\s*\(\w+,\w+\)\s*\{[^}]*\.length[^}]*\}""")
             .findAll(helperBody).forEach { opMap[it.groupValues[1]] = SigOp.Swap(0) }
 
-        // 5. Parse operation calls from function body, extracting numeric arguments
+        // 5. Parse operation calls
         val ops = mutableListOf<SigOp>()
         Regex("""${Regex.escape(helperName)}\.([a-zA-Z0-9$]+)\($fnParam(?:,(\d+))?\)""")
             .findAll(fnBody).forEach { m ->
