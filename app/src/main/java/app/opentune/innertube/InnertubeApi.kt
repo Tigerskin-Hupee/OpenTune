@@ -170,8 +170,8 @@ class InnertubeApi @Inject constructor(
         // PRIMARY: Identify by body — sig decode always starts with "param=param.split("")"
         // This is unique in the player JS and survives call-site obfuscation changes.
         val splitMatch =
-            Regex("""function ([a-zA-Z0-9$]{2,})\(([a-zA-Z0-9$])\)\{\2=\2\.split\(""\)""").find(js)
-            ?: Regex("""([a-zA-Z0-9$]{2,})=function\(([a-zA-Z0-9$])\)\{\2=\2\.split\(""\)""").find(js)
+            Regex("""function ([a-zA-Z0-9$]+)\(([a-zA-Z0-9$])\)\s*\{\s*\2\s*=\s*\2\.split\(""\)""").find(js)
+            ?: Regex("""([a-zA-Z0-9$]+)=function\(([a-zA-Z0-9$])\)\s*\{\s*\2\s*=\s*\2\.split\(""\)""").find(js)
 
         val fnName: String
         var fnParam: String
@@ -210,7 +210,7 @@ class InnertubeApi @Inject constructor(
         }
 
         // 3. Find the helper object name
-        val helperName = Regex("""([a-zA-Z0-9$]{2,})\.[a-zA-Z0-9$]+\($fnParam""")
+        val helperName = Regex("""([a-zA-Z0-9$]+)\.[a-zA-Z0-9$]+\($fnParam""")
             .find(fnBody)?.groupValues?.get(1) ?: return null
 
         // 4. Extract helper object body
