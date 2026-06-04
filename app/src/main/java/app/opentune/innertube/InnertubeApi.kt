@@ -163,32 +163,39 @@ class InnertubeApi @Inject constructor(
         return null
     }
 
+    // Diagnostic: captures which step of extractSigOps failed; included in error messages.
+    @Volatile private var sigOpsHint = "?"
+
     // Extract sig-decode operation sequence from player JS (natively in JVM — no WebView).
-    // Returns null if extraction fails; sets lastSigOpsHint for diagnostics.
+    // Returns null if extraction fails; sets sigOpsHint for diagnostics.
     private fun extractSigOps(js: String): List<SigOp>? {
+        sigOpsHint = "s1-fnNotFound"
         // Step 1: Find function name. Use NPE-aligned patterns (NewPipeExtractor FUNCTION_REGEXES).
         // YouTube's sig-decode fn ALWAYS starts with param=param.split("") — unique invariant.
+        // Support both double-quotes ("") and single-quotes ('') for the empty-string argument.
+        val splitQ = """(?:""|'')"""
         data class FnHit(val name: String, val param: String, val via: String)
         val hit: FnHit =
             // Pattern A: assignment form, param hardcoded 'a' (NPE pattern 5 — most current)
-            Regex("""([\w$]+)\s*=\s*function\(\s*a\s*\)\s*\{\s*a\s*=\s*a\.split\(\s*""\s*\)""")
-                .find(js)?.let { FnHit(it.groupValues[1], "a", "A-assign-a") }
-            // Pattern B: assignment form, backreference + semicolon required (NPE pattern 6)
-            ?: Regex("""([\w$]+)\s*=\s*function\(([\w$]+)\)\s*\{\s*\2\s*=\s*\2\.split\(""\)\s*;""")
-                .find(js)?.let { FnHit(it.groupValues[1], it.groupValues[2], "B-assign-ref") }
+            Regex("""([\w$]+)\s*=\s*function\(\s*a\s*\)\s*\{\s*a\s*=\s*a\.split\(\s*$splitQ\s*\)""")
+                .find(js)?.let { FnHit(it.groupValues[1], "a", "A") }
+            // Pattern B: assignment form, backreference + semicolon (NPE pattern 6)
+            ?: Regex("""([\w$]+)\s*=\s*function\(([\w$]+)\)\s*\{\s*\2\s*=\s*\2\.split\($splitQ\)\s*;""")
+                .find(js)?.let { FnHit(it.groupValues[1], it.groupValues[2], "B") }
             // Pattern C: declaration form, param 'a'
-            ?: Regex("""function\s+([\w$]+)\(\s*a\s*\)\s*\{\s*a\s*=\s*a\.split\(\s*""\s*\)""")
-                .find(js)?.let { FnHit(it.groupValues[1], "a", "C-decl-a") }
-            // Pattern D: call-site fallbacks (NPE patterns 1-4 equivalent)
+            ?: Regex("""function\s+([\w$]+)\(\s*a\s*\)\s*\{\s*a\s*=\s*a\.split\(\s*$splitQ\s*\)""")
+                .find(js)?.let { FnHit(it.groupValues[1], "a", "C") }
+            // Pattern D: call-site fallbacks
             ?: listOf(
                 Regex("""[\w$]+&&\([\w$]+=([a-zA-Z0-9_$]{2,})\(\d*,?decodeURIComponent\([\w$]+\)\)"""),
                 Regex("""[;,=]\s*([a-zA-Z0-9_$]{2,})\(decodeURIComponent\([^)]+\.get\("s"\)"""),
                 Regex("""[;(,]\s*([a-zA-Z0-9_$]{2,})\([\w$]+\.get\("s"\)"""),
                 Regex("""[\w$]+\.set\("sig"\s*,\s*([a-zA-Z0-9_$]{2,})\("""),
                 Regex("""\.sig\s*\|\|\s*([a-zA-Z0-9_$]{2,})\("""),
-            ).firstNotNullOfOrNull { it.find(js) }?.let { FnHit(it.groupValues[1], "a", "D-callsite") }
+            ).firstNotNullOfOrNull { it.find(js) }?.let { FnHit(it.groupValues[1], "a", "D") }
             ?: run { Log.w(tag, "extractSigOps: fn not found (jsLen=${js.length})"); return null }
 
+        sigOpsHint = "s2-bodyFail(${hit.name})"
         Log.d(tag, "extractSigOps: fn='${hit.name}' param='${hit.param}' via=${hit.via}")
 
         // Step 2: Locate and extract the function body.
@@ -198,11 +205,12 @@ class InnertubeApi @Inject constructor(
         val bodyStart = js.indexOf("{", fnIdx).takeIf { it >= 0 } ?: return null
         val fnBody = extractBalancedJs(js, bodyStart)
             ?: run { Log.w(tag, "extractSigOps: fn body extraction failed"); return null }
-        // Re-read the actual param from the function definition (may differ from hit.param)
         val paramSlice = js.substring(fnIdx, minOf(js.length, fnIdx + 80))
         val fnParam = Regex("""\(\s*([\w$]+)\s*\)""").find(paramSlice)?.groupValues?.get(1)
             ?: hit.param
         Log.d(tag, "extractSigOps: fnParam='$fnParam' bodyLen=${fnBody.length}")
+
+        sigOpsHint = "s3-helperFail(${hit.name})"
 
         // Step 3: Find the helper object name — dot notation (Obj.method) or bracket (Obj["m"]).
         val helperName =
@@ -211,15 +219,22 @@ class InnertubeApi @Inject constructor(
             ?: run { Log.w(tag, "extractSigOps: helper not found in body[${fnBody.take(120)}]"); return null }
         Log.d(tag, "extractSigOps: helper='$helperName'")
 
+        sigOpsHint = "s4-helperDefFail($helperName)"
+
         // Step 4: Extract the helper object definition.
-        val helperAt = js.indexOf("var $helperName={").takeIf { it >= 0 }
-            ?: js.indexOf(",$helperName={").takeIf { it >= 0 }?.plus(1)
-            ?: js.indexOf(";$helperName={").takeIf { it >= 0 }?.plus(1)
-            ?: run { Log.w(tag, "extractSigOps: helper def '$helperName' not found"); return null }
-        val helperBodyStart = js.indexOf("{", helperAt).takeIf { it >= 0 } ?: return null
+        // Try multiple patterns: var NAME={, ,NAME={, ;NAME={, }NAME={
+        val helperBodyStart = run {
+            listOf("var $helperName={", ",$helperName={", ";$helperName={", "}$helperName={")
+                .firstNotNullOfOrNull { token ->
+                    js.indexOf(token).takeIf { it >= 0 }?.let { it + token.length - 1 }
+                    // token.length - 1 = offset of the '{' character within the matched token
+                }
+        } ?: run { Log.w(tag, "extractSigOps: helper def '$helperName' not found"); return null }
         val helperBody = extractBalancedJs(js, helperBodyStart)
             ?: run { Log.w(tag, "extractSigOps: helper body extraction failed"); return null }
         Log.d(tag, "extractSigOps: helperLen=${helperBody.length} preview[${helperBody.take(80)}]")
+
+        sigOpsHint = "s5-opMapEmpty"
 
         // Step 5: Map helper method names → operations.
         val opMap = mutableMapOf<String, SigOp>()
@@ -233,6 +248,8 @@ class InnertubeApi @Inject constructor(
             Log.w(tag, "extractSigOps: opMap empty — helperBody[${helperBody.take(150)}]"); return null
         }
         Log.d(tag, "extractSigOps: opMap=$opMap")
+
+        sigOpsHint = "s6-noOpCalls"
 
         // Step 6: Parse operation call sequence (dot notation, then bracket notation fallback).
         val ops = mutableListOf<SigOp>()
@@ -248,7 +265,10 @@ class InnertubeApi @Inject constructor(
                 SigOp.Reverse -> ops.add(SigOp.Reverse)
                 is SigOp.Splice -> ops.add(SigOp.Splice(n))
                 is SigOp.Swap -> ops.add(SigOp.Swap(n))
-                null -> { Log.w(tag, "extractSigOps: unknown op '$method' (map=$opMap)"); return null }
+                null -> {
+                    sigOpsHint = "s6-unknownOp($method)"
+                    Log.w(tag, "extractSigOps: unknown op '$method' (map=$opMap)"); return null
+                }
             }
         }
         Log.d(tag, "extractSigOps: ${ops.size} ops from ${callMatches.size} calls")
@@ -681,7 +701,7 @@ class InnertubeApi @Inject constructor(
                     Log.d(tag, "fetchAudioStreamNative($videoId) ok via ${client.name} bitrate=$bestBitrate alr=${bestUrl.contains("alr=yes")}")
                     return Triple(finalUrl, client.name, errors.toList())
                 }
-                errors += "${client.name}: no audio URL in ${formats.length()} formats (sigTs=$cachedSigTs sigOps=${cachedSigOps?.size ?: "null"})"
+                errors += "${client.name}: no audio URL in ${formats.length()} formats (sigTs=$cachedSigTs sigOps=${cachedSigOps?.size ?: "null"} hint=$sigOpsHint)"
 
             } catch (e: Exception) {
                 errors += "${client.name}: ${e.javaClass.simpleName} ${e.message?.take(80)}"
