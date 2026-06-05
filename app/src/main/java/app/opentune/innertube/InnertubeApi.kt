@@ -578,17 +578,18 @@ class InnertubeApi @Inject constructor(
         val xorVar = xorM.groupValues[1]
         sigOpsHint = "d3-noTableVar($dispName/$xorVar)"
 
-        // Step 4: string-table variable ("u" from "u[xorVar^48]")
-        val tvM = Regex("""([\w$]+)\s*\[${Regex.escape(xorVar)}\^48\]""").find(dispBody)
+        // Step 4: string-table variable — find any "TABLE[xorVar^N]" access.
+        // The XOR constant was 48 for player 5cabb421 (p=60, split@12, 60^12=48),
+        // but is player-specific. Use \d+ to match any constant.
+        val tvM = Regex("""([\w$]+)\s*\[${Regex.escape(xorVar)}\^\d+\]""").find(dispBody)
             ?: run { sigOpsHint = "d3-noTableVar($dispName/$xorVar/body)"; return null }
         val tableVar = tvM.groupValues[1]
         sigOpsHint   = "d4-noHelperVar($dispName/$tableVar)"
 
         // Step 4b: find the split-result array variable name.
-        // "var b = x[u[p^48]](u[2])" → splitVar = "b".
-        // Must NOT confuse this with the helper-object lookup that follows.
+        // "var b = sig[u[p^N]](u[2])" — N is player-specific, use \d+.
         val eT0 = Regex.escape(tableVar); val eX0 = Regex.escape(xorVar)
-        val splitResM = Regex("""var\s+([\w$]+)\s*=\s*\w+\[$eT0\[$eX0\^48\]\]\($eT0\[2\]\)""").find(dispBody)
+        val splitResM = Regex("""var\s+([\w$]+)\s*=\s*\w+\[$eT0\[$eX0\^\d+\]\]\($eT0\[2\]\)""").find(dispBody)
         val splitVar  = splitResM?.groupValues?.get(1) ?: "b"
 
         // Step 5: helper-object name ("Pw" from "Pw[tableVar[xorVar^XOR]](splitVar,…)").
@@ -609,19 +610,13 @@ class InnertubeApi @Inject constructor(
         val u   = tableRaw.split(tableSep)
         sigOpsHint = "d6-noTableVerify($dispName/p=$p)"
 
-        // Step 7: verify p (split index ^ 48 == p, u[p^5] == "join")
-        val splitIdx = u.indexOf("split").takeIf { it >= 0 }
-            ?: run { sigOpsHint = "d6-noSplitInTable"; return null }
-        if ((splitIdx xor 48) != p) {
-            sigOpsHint = "d6-pMismatch(table=${splitIdx xor 48}/call=$p)"; return null
-        }
-        if (u.getOrNull(p xor 5) != "join") {
-            sigOpsHint = "d6-noJoinVerify"; return null
-        }
-        val reverseIdx = u.indexOf("reverse").takeIf { it >= 0 }
-            ?: run { sigOpsHint = "d6-noReverseInTable"; return null }
-        val spliceIdx  = u.indexOf("splice").takeIf  { it >= 0 }
-            ?: run { sigOpsHint = "d6-noSpliceInTable"; return null }
+        // Step 7: verify string table has all required op names.
+        // The XOR constants (^48 for split, ^5 for join) are player-specific — don't check them.
+        // Just confirm the four required strings exist in the table.
+        val splitIdx   = u.indexOf("split").takeIf   { it >= 0 } ?: run { sigOpsHint = "d6-noSplitInTable";   return null }
+        val joinIdx    = u.indexOf("join").takeIf    { it >= 0 } ?: run { sigOpsHint = "d6-noJoinInTable";    return null }
+        val reverseIdx = u.indexOf("reverse").takeIf { it >= 0 } ?: run { sigOpsHint = "d6-noReverseInTable"; return null }
+        val spliceIdx  = u.indexOf("splice").takeIf  { it >= 0 } ?: run { sigOpsHint = "d6-noSpliceInTable";  return null }
         sigOpsHint = "d7-noPwDef($helperName)"
 
         // Step 8: Pw helper object — methods reference string table for method names
