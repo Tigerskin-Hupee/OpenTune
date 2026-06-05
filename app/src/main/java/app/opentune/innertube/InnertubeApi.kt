@@ -167,20 +167,33 @@ class InnertubeApi @Inject constructor(
     @Volatile private var sigOpsHint = "?"
 
     // Build the helper-method → SigOp mapping from the helper object body.
-    // Supports splice(0,n), slice(n) (YouTube 2026 variant), and swap patterns.
+    // Accepts both classic  "function(x){" syntax and ES6 arrow "(x)=>{?" syntax,
+    // since YouTube 2026 helper methods use arrow functions.
     private fun buildOpMap(helperBody: String): Map<String, SigOp>? {
         val m = mutableMapOf<String, SigOp>()
-        Regex("""([\w$]+)\s*:\s*function\s*\(\w+\)\s*\{[^}]*\.reverse\(\)""")
+        // 1-param method head: function(a){ | (a)=>{ | (a)=> | a=>{  | a=>
+        val h1 = """(?:function\s*\(\w+\)\s*\{|\(\w+\)\s*=>\s*\{?|\w+\s*=>\s*\{?)"""
+        // 2-param method head: function(a,b){ | (a,b)=>{ | (a,b)=>
+        val h2 = """(?:function\s*\(\w+,\w+\)\s*\{|\(\w+,\w+\)\s*=>\s*\{?)"""
+
+        // Reverse (1 param, calls .reverse())
+        Regex("""([\w$]+)\s*:\s*$h1[^}]*\.reverse\(\)""")
             .findAll(helperBody).forEach { m[it.groupValues[1]] = SigOp.Reverse }
-        Regex("""([\w$]+)\s*:\s*function\s*\(\w+,\w+\)\s*\{[^}]*\.splice\(0,""")
+
+        // Splice cut (2 params, calls .splice(0,)
+        Regex("""([\w$]+)\s*:\s*$h2[^}]*\.splice\(0,""")
             .findAll(helperBody).forEach { m[it.groupValues[1]] = SigOp.Splice(0) }
-        // YouTube 2026: splice(0,b) replaced by a=a.slice(b) — same semantics
-        Regex("""([\w$]+)\s*:\s*function\s*\((\w+),\w+\)\s*\{[^}]*\2\s*=\s*\2\.slice\(""")
+
+        // Slice cut (2 params, assigns param=param.slice() — YouTube 2026 variant)
+        Regex("""([\w$]+)\s*:\s*$h2[^}]*=\w+\.slice\(""")
             .findAll(helperBody).filter { m[it.groupValues[1]] == null }
             .forEach { m[it.groupValues[1]] = SigOp.Splice(0) }
-        Regex("""([\w$]+)\s*:\s*function\s*\(\w+,\w+\)\s*\{[^}]*\.length[^}]*\}""")
+
+        // Swap (2 params, uses %param.length — unique to swap operation)
+        Regex("""([\w$]+)\s*:\s*$h2[^}]*%\w+\.length""")
             .findAll(helperBody).filter { m[it.groupValues[1]] == null }
             .forEach { m[it.groupValues[1]] = SigOp.Swap(0) }
+
         return m.ifEmpty { null }
     }
 
