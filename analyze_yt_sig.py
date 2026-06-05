@@ -286,11 +286,26 @@ if not player_url:
 if not player_url:
     sys.exit(1)
 
-print(f"\nFetching player JS …")
-js = fetch(player_url)
-if len(js) < 50000:
-    print(f"ERROR: only {len(js)} bytes returned."); sys.exit(1)
-print(f"OK ({len(js):,} bytes)\n")
+# If we got es6, also try the ias variant (Android app gets ias)
+ias_url = player_url.replace("player_es6.vflset", "player_ias.vflset")
+
+js = None
+for try_url, label in [(ias_url, "player_ias (preferred)"), (player_url, "player_es6 (fallback)")]:
+    if try_url == player_url and label.startswith("player_ias"):
+        # es6 URL wasn't substituted (already ias or no es6 in URL)
+        pass
+    print(f"\nFetching {label} …  {try_url}")
+    candidate = fetch(try_url)
+    if len(candidate) > 100000:
+        js = candidate
+        print(f"OK ({len(js):,} bytes)")
+        break
+    else:
+        print(f"  got only {len(candidate)} bytes, trying next …")
+
+if not js:
+    print("ERROR: could not fetch any player JS"); sys.exit(1)
+print()
 
 print("Running extraction …")
 ops, fn_name = extract_sig_ops(js)
