@@ -664,37 +664,54 @@ print("OpenTune sig-decode tester  (v1.2.63 — Strategy 4: flat-dispatcher)")
 print("="*70)
 print(f"Using UA: {UA}\n")
 
-SOURCE_URLS = [
-    "https://www.youtube.com/watch?v=jNQXAC9IVRw",
-    "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-    "https://www.youtube.com",
-]
+# ── Optional: target a specific player hash from app diagnostics ─────────────
+# e.g. if logcat shows  hint=allFail(2487210b ...)  enter  2487210b
+print("Player hash override (from app logcat, e.g. 2487210b) — Enter to auto-detect:")
+_hash_input = input(">> ").strip()
 
-player_url = None
-for page in SOURCE_URLS:
-    print(f"Trying {page} &")
-    html = fetch(page)
-    player_url = find_player_url(html) if html else None
-    if player_url: print(f"Found: {player_url}"); break
-
-if not player_url:
-    print("\nAuto-detection failed.")
-    player_url = input("Paste player JS URL: ").strip()
-if not player_url:
-    sys.exit(1)
-
-# Prefer player_ias (same as InnertubeApi.kt)
-ias_url = player_url.replace("player_es6.vflset", "player_ias.vflset")
 js = None
-for try_url, label in [(ias_url, "player_ias (preferred)"), (player_url, "fallback")]:
-    print(f"\nFetching {label} &  {try_url}")
-    candidate = fetch(try_url)
-    if len(candidate) > 100_000:
-        js = candidate
+player_url = None
+
+if _hash_input:
+    player_url = f"https://www.youtube.com/s/player/{_hash_input}/player_ias.vflset/en_US/base.js"
+    print(f"\nFetching player {_hash_input} directly ...")
+    js_candidate = fetch(player_url)
+    if len(js_candidate) > 100_000:
+        js = js_candidate
         print(f"OK ({len(js):,} bytes)")
-        break
     else:
-        print(f"  got only {len(candidate)} bytes")
+        print(f"  got only {len(js_candidate)} bytes — hash may be wrong or expired")
+        player_url = None
+
+if not js:
+    SOURCE_URLS = [
+        "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "https://www.youtube.com",
+    ]
+    for page in SOURCE_URLS:
+        print(f"Trying {page} &")
+        html = fetch(page)
+        player_url = find_player_url(html) if html else None
+        if player_url: print(f"Found: {player_url}"); break
+
+    if not player_url:
+        print("\nAuto-detection failed.")
+        player_url = input("Paste player JS URL: ").strip()
+    if not player_url:
+        sys.exit(1)
+
+    # Prefer player_ias (same as InnertubeApi.kt)
+    ias_url = player_url.replace("player_es6.vflset", "player_ias.vflset")
+    for try_url, label in [(ias_url, "player_ias (preferred)"), (player_url, "fallback")]:
+        print(f"\nFetching {label} &  {try_url}")
+        candidate = fetch(try_url)
+        if len(candidate) > 100_000:
+            js = candidate
+            print(f"OK ({len(js):,} bytes)")
+            break
+        else:
+            print(f"  got only {len(candidate)} bytes")
 
 if not js:
     print("ERROR: could not fetch player JS"); sys.exit(1)
