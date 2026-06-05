@@ -561,11 +561,9 @@ class InnertubeApi @Inject constructor(
         return null
     }
 
-    // Fallback p discovery: derive p from the split call pattern directly.
-    // Handles players where discoverPFromTable finds no consistent XOR triple
-    // (e.g. because the dispatcher only calls the table a few times).
-    // Pattern: var RESULT = INPUT[TABLE[XVAR^CONST]](...) with >= 2 helper calls on RESULT.
-    private fun discoverPFromSplitCall(js: String, tableVar: String, u: List<String>): Pair<Int, String>? {
+    // Returns Triple(p, xorVar, resultVar) — resultVar is the array produced by split,
+    // used directly as splitVar so the caller doesn't need to re-detect it.
+    private fun discoverPFromSplitCall(js: String, tableVar: String, u: List<String>): Triple<Int, String, String>? {
         val splitIdx = u.indexOf("split").takeIf { it >= 0 } ?: return null
         val eT = Regex.escape(tableVar)
         val re = Regex("""var\s+([\w$]+)\s*=\s*[\w$]+\[$eT\[([\w$]+)\^(\d+)\]\]\s*\(""")
@@ -579,8 +577,8 @@ class InnertubeApi @Inject constructor(
             val fnBody    = extractBalancedJs(js, braceIdx) ?: continue
             val eX = Regex.escape(xorVar); val eR = Regex.escape(resultVar)
             val helperCount = Regex("""[\w$]+\[$eT\[$eX\^\d+\]\]\($eR""").findAll(fnBody).count()
-            Log.d(tag, "discoverPFromSplitCall: candidate xv=$xorVar const=$xorConst pCand=$pCand helperCalls=$helperCount")
-            if (helperCount >= 2) return pCand to xorVar
+            Log.d(tag, "discoverPFromSplitCall: xv=$xorVar const=$xorConst p=$pCand resultVar=$resultVar helperCalls=$helperCount")
+            if (helperCount >= 2) return Triple(pCand, xorVar, resultVar)
         }
         return null
     }
@@ -602,13 +600,15 @@ class InnertubeApi @Inject constructor(
                 continue
             }
 
-            val discovered = discoverPFromTable(js, tableVar, u)
-                ?: discoverPFromSplitCall(js, tableVar, u)
-            if (discovered == null) {
+            val tableDiscovered = discoverPFromTable(js, tableVar, u)
+            val splitDiscovered = if (tableDiscovered == null) discoverPFromSplitCall(js, tableVar, u) else null
+            if (tableDiscovered == null && splitDiscovered == null) {
                 bestHint = "d0-tf-noP($tableVar/$sep)"; continue
             }
-            val (p, xorVar) = discovered
-            Log.d(tag, "extractSigOps(tf): table=$tableVar sep=$sep p=$p xorVar=$xorVar")
+            val p        = tableDiscovered?.first  ?: splitDiscovered!!.first
+            val xorVar   = tableDiscovered?.second ?: splitDiscovered!!.second
+            val splitVarHint = splitDiscovered?.third  // non-null only when found via splitCall
+            Log.d(tag, "extractSigOps(tf): table=$tableVar sep=$sep p=$p xorVar=$xorVar splitVarHint=$splitVarHint")
 
             // Find dispatcher body: function containing "var xorVar = A^B"
             // with at least 3 TABLE[xorVar^N] accesses (confirms it is the dispatcher).
@@ -630,8 +630,11 @@ class InnertubeApi @Inject constructor(
             val reverseIdx = u.indexOf("reverse")
             val spliceIdx  = u.indexOf("splice")
             val eT = Regex.escape(tableVar); val eX = Regex.escape(xorVar)
-            val splitVar = Regex("""var\s+([\w$]+)\s*=\s*\w+\[$eT\[$eX\^\d+\]\]\($eT\[\d+\]\)""").find(body)?.groupValues?.get(1)
+            // splitVarHint from discoverPFromSplitCall is authoritative — it IS the var from the split call.
+            val splitVar = splitVarHint
+                ?: Regex("""var\s+([\w$]+)\s*=\s*\w+\[$eT\[$eX\^\d+\]\]\($eT\[\d+\]\)""").find(body)?.groupValues?.get(1)
                 ?: Regex("""var\s+([\w$]+)\s*=\s*\w+\[$eT\[$eX\^\d+\]\]\(""\)""").find(body)?.groupValues?.get(1)
+                ?: Regex("""var\s+([\w$]+)\s*=\s*\w+\[$eT\[$eX\^\d+\]\]\($eT\[$eX\^\d+\]\)""").find(body)?.groupValues?.get(1)
                 ?: Regex("""return\s+([\w$]+)\[$eT\[$eX\^\d+\]\]""").find(body)?.groupValues?.get(1)
                 ?: "b"
             val eS2 = Regex.escape(splitVar)
