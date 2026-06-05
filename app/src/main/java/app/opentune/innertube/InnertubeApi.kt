@@ -148,15 +148,46 @@ class InnertubeApi @Inject constructor(
     // Extract bracket-balanced substring from js starting at position `start`.
     private fun extractBalancedJs(js: String, start: Int): String? {
         if (start < 0 || start >= js.length) return null
-        val close = when (js[start]) { '[' -> ']'; '{' -> '}'; '(' -> ')'; else -> return null }
-        var depth = 0; var inStr = false; var strCh = ' '; var i = start
+        when (js[start]) { '[', '{', '(' -> Unit; else -> return null }
+        // State machine that understands JS strings, template literals, regex literals,
+        // and comments — so that { } inside them are not counted as brace depth.
+        var depth = 0
+        // 0=code 1=str" 2=str' 3=str` 4=regex 5=regex-charclass 6=line-comment 7=block-comment
+        var state = 0
+        var regexCtx = true   // true → next '/' starts a regex literal
+        var i = start
         while (i < js.length) {
             val c = js[i]
-            if (inStr) { if (c == strCh && js[i - 1] != '\\') inStr = false }
-            else when (c) {
-                '"', '\'', '`' -> { inStr = true; strCh = c }
-                '[', '{', '(' -> depth++
-                ']', '}', ')' -> { depth--; if (depth == 0) return js.substring(start, i + 1) }
+            when (state) {
+                6 -> if (c == '\n') state = 0
+                7 -> if (c == '*' && i + 1 < js.length && js[i + 1] == '/') { state = 0; i++ }
+                1 -> when { c == '\\' -> i++; c == '"'  -> { state = 0; regexCtx = false } }
+                2 -> when { c == '\\' -> i++; c == '\'' -> { state = 0; regexCtx = false } }
+                3 -> when { c == '\\' -> i++; c == '`'  -> { state = 0; regexCtx = false } }
+                4 -> when { c == '\\' -> i++; c == '[' -> state = 5; c == '/' -> { state = 0; regexCtx = false } }
+                5 -> when { c == '\\' -> i++; c == ']' -> state = 4 }
+                else -> when {
+                    c == '/' && i + 1 < js.length -> when {
+                        js[i + 1] == '/' -> { state = 6; i++ }
+                        js[i + 1] == '*' -> { state = 7; i++ }
+                        regexCtx         -> { state = 4 }
+                        else             ->   regexCtx = true
+                    }
+                    c == '"'  -> { state = 1; regexCtx = false }
+                    c == '\'' -> { state = 2; regexCtx = false }
+                    c == '`'  -> { state = 3; regexCtx = false }
+                    c == '[' || c == '{' || c == '(' -> { depth++; regexCtx = true }
+                    c == ']' || c == '}' || c == ')' -> {
+                        depth--
+                        if (depth == 0) return js.substring(start, i + 1)
+                        regexCtx = false
+                    }
+                    c == ';' || c == ',' -> regexCtx = true
+                    c == '=' || c == '+' || c == '-' || c == '*' || c == '!' ||
+                    c == '<' || c == '>' || c == '~' || c == '^' || c == '&' ||
+                    c == '|' || c == '?' || c == ':' || c == '%' -> regexCtx = true
+                    c.isLetterOrDigit() || c == '_' || c == '$' -> regexCtx = false
+                }
             }
             i++
         }
