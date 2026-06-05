@@ -374,66 +374,91 @@ def show_dispatcher_analysis(js):
 
 # ── Auto-fetch signatureCipher from YouTube ───────────────────────────────────
 
-# YTMusic-exclusive video IDs (these typically need signatureCipher decoding)
+# Well-known music video IDs (mix of international/K-pop/VEVO, available in most regions).
+# WEB_REMIX client (YouTube Music) reliably returns signatureCipher for these.
 YTMUSIC_VIDEOS = [
-    "IvH98EGWAQQ",  # typically returns signatureCipher via WEB clients
-    "kN0iD0pI3o0",
-    "9W3F1gQKpao",
-    "BYMnqjN4E1c",
-    "Sb-OrkrVa5w",
+    "jNQXAC9IVRw",  # PSY - Gangnam Style (VEVO, universal)
+    "gdZLi9oWNZg",  # BTS - Dynamite
+    "ioNng23DkIM",  # BLACKPINK - How You Like That
+    "fRh_vgS2dFE",  # Justin Bieber - Sorry
+    "DyDfgMOUjCI",  # Billie Eilish - bad guy
+    "2Vv-BfVoq4g",  # Ed Sheeran - Perfect
+    "dQw4w9WgXcQ",  # Rick Astley - Never Gonna Give You Up
+    "hT_nvWreIhg",  # OneRepublic - Counting Stars
 ]
 
-def fetch_cipher_from_youtube(video_id):
-    """
-    Make a WEB_EMBEDDED_PLAYER API call to get signatureCipher.
-    Returns (cipher_string, base_url) or (None, None).
-    """
-    body = json.dumps({
-        "videoId": video_id,
-        "contentCheckOk": True,
-        "racyCheckOk": True,
-        "context": {
-            "client": {
-                "clientName": "WEB_EMBEDDED_PLAYER",
-                "clientVersion": "1.20250101.09.00",
-                "hl": "en", "gl": "US",
-                "timeZone": "UTC", "utcOffsetMinutes": 0,
-            },
-            "thirdParty": {"embedUrl": f"https://www.youtube.com/watch?v={video_id}"}
-        }
-    }).encode("utf-8")
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
-        "Content-Type": "application/json",
-        "X-YouTube-Client-Name": "56",
-        "X-YouTube-Client-Version": "1.20250101.09.00",
-        "Origin": "https://www.youtube.com",
-        "Referer": f"https://www.youtube.com/watch?v={video_id}",
-        "Cookie": "SOCS=CAI=",
-    }
-    raw = fetch("https://www.youtube.com/youtubei/v1/player", data=body, headers=headers)
-    if not raw:
-        return None, None
+def _extract_cipher_from_response(raw):
+    """Parse a player API response and return (cipher, base_url) or (None, None)."""
     try:
         root = json.loads(raw)
         status = root.get("playabilityStatus", {}).get("status", "?")
         if status != "OK":
             reason = root.get("playabilityStatus", {}).get("reason", "")
-            print(f"    status={status} {reason}")
-            return None, None
+            return None, None, f"status={status} {reason}"
         for fmt in root.get("streamingData", {}).get("adaptiveFormats", []):
             if "audio/" not in fmt.get("mimeType", ""):
                 continue
             cipher = fmt.get("signatureCipher") or fmt.get("cipher")
             if cipher:
-                # Parse cipher: url=...&s=...&sp=...
                 params = {}
                 for part in cipher.split("&"):
                     if "=" in part:
                         k, v = part.split("=", 1)
                         params[k] = urllib.parse.unquote(v)
-                return cipher, params.get("url", "")
-        return None, None
+                return cipher, params.get("url", ""), "ok"
+        # No cipher — direct URL (video doesn't need sig decode)
+        return None, None, "no-cipher(directURL)"
+    except Exception as e:
+        return None, None, f"parse-error:{e}"
+
+def fetch_cipher_from_youtube(video_id, sig_ts=0):
+    """
+    Try WEB_EMBEDDED_PLAYER then WEB_REMIX to get signatureCipher.
+    Returns (cipher_string, base_url) or (None, None).
+    """
+    sig_ts_frag = (f',"playbackContext":{{"contentPlaybackContext":{{"signatureTimestamp":{sig_ts}}}}}'
+                   if sig_ts > 0 else "")
+
+    clients = [
+        # WEB_EMBEDDED_PLAYER — same as OpenTune's primary client
+        {
+            "name": "WEB_EMBEDDED_PLAYER", "id": "56", "version": "1.20250101.09.00",
+            "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+            "url": "https://www.youtube.com/youtubei/v1/player",
+            "extra_context": f'"thirdParty":{{"embedUrl":"https://www.youtube.com/watch?v={video_id}"}}',
+        },
+        # WEB_REMIX — YouTube Music client, very likely to return signatureCipher
+        {
+            "name": "WEB_REMIX", "id": "67", "version": "1.20260213.01.00",
+            "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0",
+            "url": "https://music.youtube.com/youtubei/v1/player",
+            "extra_context": "",
+        },
+    ]
+    for cl in clients:
+        extra_ctx = f',{cl["extra_context"]}' if cl["extra_context"] else ""
+        body = (
+            f'{{"videoId":"{video_id}","contentCheckOk":true,"racyCheckOk":true,'
+            f'"context":{{"client":{{"clientName":"{cl["name"]}","clientVersion":"{cl["version"]}",'
+            f'"hl":"en","gl":"US","timeZone":"UTC","utcOffsetMinutes":0}}{extra_ctx}}}{sig_ts_frag}}}'
+        ).encode("utf-8")
+        headers = {
+            "User-Agent": cl["ua"],
+            "Content-Type": "application/json",
+            "X-YouTube-Client-Name": cl["id"],
+            "X-YouTube-Client-Version": cl["version"],
+            "Origin": cl["url"].rsplit("/youtubei", 1)[0],
+            "Cookie": "SOCS=CAI=",
+        }
+        raw = fetch(cl["url"], data=body, headers=headers)
+        if not raw:
+            continue
+        cipher, base_url, msg = _extract_cipher_from_response(raw)
+        if cipher:
+            print(f"    [{cl['name']}] got signatureCipher ✓")
+            return cipher, base_url
+        print(f"    [{cl['name']}] {msg}")
+    return None, None
     except Exception as e:
         print(f"    parse error: {e}"); return None, None
 
@@ -515,6 +540,11 @@ if not js:
     print("ERROR: could not fetch player JS"); sys.exit(1)
 print()
 
+# Extract signatureTimestamp from player JS (needed for WEB client API calls)
+sig_ts_m = re.search(r'signatureTimestamp[=:]\s*(\d+)', js)
+sig_ts = int(sig_ts_m.group(1)) if sig_ts_m else 0
+if sig_ts: print(f"signatureTimestamp: {sig_ts}")
+
 print("Running extraction …")
 ops, fn_name = extract_sig_ops(js)
 
@@ -541,11 +571,10 @@ else:
     cipher = None
     for vid in YTMUSIC_VIDEOS:
         print(f"Fetching cipher for video {vid} …")
-        cipher, base_url = fetch_cipher_from_youtube(vid)
+        cipher, base_url = fetch_cipher_from_youtube(vid, sig_ts)
         if cipher:
             print(f"  Got signatureCipher ({len(cipher)} chars)")
             break
-        print(f"  No signatureCipher found")
 
     if cipher:
         decoded_url = decode_cipher_url(cipher, ops)
