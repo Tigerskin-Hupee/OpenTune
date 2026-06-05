@@ -146,6 +146,136 @@ FN_PATTERNS = [
 SPLIT_TOKENS = ['.split("")', ".split('')", "Array.from(", "[..."]
 JOIN_TOKENS  = ['.join("")',  ".join('')"]
 
+def decode_dispatcher(js):
+    """Decode the new flat-dispatcher sig pattern (YouTube 2026+).
+
+    Structure:
+      Qp=function(R,K,x,...){ var p=K^R; ... var b=x[u[p^48]](u[2]); Pw[u[p^117]](b,2); ... t=b[u[p^5]](u[2]) }
+    where u is a {-delimited string table and Pw is the helper object.
+    """
+    print("\n" + "="*70)
+    print("DISPATCHER PATTERN DECODER")
+    print("="*70)
+
+    # 1. Find the Qp dispatcher function (contains the sig decode block)
+    qp_match = re.search(r'(\w+)=function\(\w+,\w+,\w+[^)]*\)\{[^{]*var p=\w+\^\w+[^}]{0,3000}decodeURIComponent', js)
+    if not qp_match:
+        # Try broader: any function that has both p=K^R and decodeURIComponent and Pw[
+        qp_match = re.search(r'(\w+)=function\([^)]+\)\{[^{]*var p=[^;]+\^[^;]+;.*?decodeURIComponent.*?\bPw\b', js, re.DOTALL)
+    if qp_match:
+        fn_name = qp_match.group(1)
+        fn_brace = js.find("{", qp_match.start())
+        fn_body = extract_balanced(js, fn_brace)
+        print(f"\n[1] Dispatcher function: {fn_name!r}")
+        if fn_body:
+            print(f"    Body ({len(fn_body)} chars):")
+            for chunk in [fn_body[i:i+120] for i in range(0, min(len(fn_body), 800), 120)]:
+                print(f"      {repr(chunk)}")
+    else:
+        fn_name = None
+        print("\n[1] Could not find dispatcher function automatically")
+        # Show the sig decode block we found at @37497 manually
+        print("    Known block @37497 (from previous run):")
+        ctx = js[max(0,37000):38500]
+        for chunk in [ctx[i:i+120] for i in range(0, len(ctx), 120)]:
+            print(f"      {repr(chunk)}")
+
+    # 2. Find the Pw helper object (traditional reverse/splice/swap methods)
+    print("\n[2] Finding Pw helper object:")
+    pw_patterns = [
+        r'\bPw\s*=\s*\{',
+        r'var\s+Pw\s*=\s*\{',
+    ]
+    for pat in pw_patterns:
+        m = re.search(pat, js)
+        if m:
+            brace = js.find("{", m.start())
+            body = extract_balanced(js, brace)
+            if body:
+                print(f"  Found Pw at @{m.start()}: {repr(body[:400])}")
+                h1 = r'(?:function\s*\(\w+\)\s*\{|\(\w+\)\s*=>\s*\{?|\w+\s*=>\s*\{?)'
+                h2 = r'(?:function\s*\(\w+,\w+\)\s*\{|\(\w+,\w+\)\s*=>\s*\{?)'
+                op_map = build_op_map(body)
+                print(f"  Pw opMap: {op_map}")
+                break
+    else:
+        print("  Pw not found via standard patterns")
+
+    # 3. Find the string table u: a string literal containing "split","join","reverse","splice"
+    #    delimited by some separator char
+    print("\n[3] Finding string table u (should contain split,join,reverse,splice):")
+    found_table = False
+    for sep in ['{', '|', ';', ',']:
+        # Search for a string literal containing all key words
+        for m in re.finditer(r'"([^"\n]{100,})"', js):
+            content = m.group(1)
+            if ('split' in content and 'join' in content and
+                    'reverse' in content and sep in content):
+                entries = content.split(sep)
+                if len(entries) > 20:
+                    print(f"  Candidate table at @{m.start()}, sep={repr(sep)}, {len(entries)} entries")
+                    # Find key method indices
+                    idx = {e: i for i, e in enumerate(entries)}
+                    for key in ['', 'split', 'join', 'reverse', 'splice']:
+                        if key in idx:
+                            print(f"    u[{idx[key]}] = {repr(key)}")
+                    # Try to find p: if split at index s → p = s^48
+                    if 'split' in idx and 'join' in idx:
+                        p_from_split = idx['split'] ^ 48
+                        p_from_join  = idx['join'] ^ 5
+                        print(f"    p (from split index {idx['split']}^48) = {p_from_split}")
+                        print(f"    p (from join  index {idx['join']}^5)  = {p_from_join}")
+                        if p_from_split == p_from_join:
+                            p = p_from_split
+                            print(f"  *** p CONFIRMED = {p} ***")
+                            # Decode operation method names
+                            print(f"  Decoded Pw methods:")
+                            for xor_idx, label in [(117,'op_117'),(123,'op_123'),(44,'op_44')]:
+                                table_idx = p ^ xor_idx
+                                method = entries[table_idx] if table_idx < len(entries) else "?"
+                                print(f"    Pw[u[p^{xor_idx}]] = Pw[u[{table_idx}]] = Pw['{method}']")
+                            # Decode argument values
+                            print(f"  Decoded arguments (p={p}):")
+                            for arg_xor, label in [(14,'arg1'),(45,'arg2'),(27,'arg3'),(127,'arg4'),(50,'arg5'),(18,'arg6')]:
+                                print(f"    p^{arg_xor} = {p^arg_xor}")
+                            # Full decoded op sequence
+                            print(f"\n  *** FULL OP SEQUENCE ***")
+                            ops_lookup = [(117,2),(123,p^14),(117,2),(44,p^45),(123,p^27),(44,p^127),(44,p^50),(123,p^18)]
+                            for i, (xor_idx, arg) in enumerate(ops_lookup):
+                                table_idx = p ^ xor_idx
+                                method = entries[table_idx] if table_idx < len(entries) else "?"
+                                print(f"    op{i+1}: Pw['{method}'](b, {arg})")
+                            found_table = True
+                        else:
+                            print(f"    p mismatch: split gives {p_from_split}, join gives {p_from_join}")
+                    if found_table:
+                        break
+        if found_table:
+            break
+    if not found_table:
+        # Show the known fragment and try partial decode
+        print("  Full table not found. Showing the fragment from @3482:")
+        ctx = js[max(0,3400):4200]
+        print(f"  {repr(ctx)}")
+
+    # 4. Find calls to the dispatcher near signatureCipher context
+    print("\n[4] Calls to Qp (or the dispatcher) for sig decode:")
+    # Search for the dispatcher function name called near decodeURIComponent
+    if fn_name:
+        for m in re.finditer(re.escape(fn_name) + r'\s*\(', js):
+            ctx = js[max(0, m.start()-100): m.end()+200]
+            if 'decodeURIComponent' in ctx or 'get("s")' in ctx or '.s)' in ctx:
+                print(f"  CALL @{m.start()}: {repr(ctx)}")
+
+    # Also search for where Qp is called in general (first 5)
+    if fn_name:
+        calls = [(m.start(), js[max(0,m.start()-60):m.end()+100])
+                 for m in re.finditer(re.escape(fn_name) + r'\s*\(', js)]
+        print(f"\n  Total {fn_name!r} calls: {len(calls)}")
+        for pos, ctx in calls[:5]:
+            print(f"  @{pos}: {repr(ctx)}")
+
+
 def deep_analysis(js):
     """Extra diagnostics for when Strategy 1/3 both fail."""
     print("\n" + "="*70)
@@ -395,6 +525,7 @@ print("Running extraction …")
 ops, fn_name = extract_sig_ops(js)
 
 if not ops:
+    decode_dispatcher(js)
     deep_analysis(js)
 
 # Optional: test with a real signatureCipher
