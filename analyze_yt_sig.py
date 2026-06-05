@@ -1,188 +1,356 @@
 #!/usr/bin/env python3
 """
-YouTube player JS sig-decode structure analyzer.
-Fetches the current player JS and reports which function-definition format
-the signature decoder uses (= assignment, colon property, arrow, etc.).
+OpenTune sig-decode tester.
+Fetches the YouTube player JS and runs the same 3-strategy extraction
+logic as InnertubeApi.kt — shows exactly where it succeeds or fails.
 
 Run:  py analyze_yt_sig.py   (Windows)
       python3 analyze_yt_sig.py  (Mac/Linux)
-Requires Python 3.7+, no third-party packages needed.
 """
 import re, sys, urllib.request, urllib.error
 
-UA_DESKTOP = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/125.0.0.0 Safari/537.36"
-)
-UA_MOBILE = (
-    "Mozilla/5.0 (Linux; Android 13; Pixel 7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/125.0.0.0 Mobile Safari/537.36"
-)
+UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+      "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
 
-def fetch(url, ua=UA_DESKTOP):
+def fetch(url, ua=UA):
     req = urllib.request.Request(url, headers={
         "User-Agent": ua,
         "Accept-Language": "en-US,en;q=0.9",
-        "Accept": "text/html,application/xhtml+xml,*/*",
+        "Accept": "*/*",
+        "Accept-Encoding": "identity",
     })
     try:
-        return urllib.request.urlopen(req, timeout=20).read().decode("utf-8", errors="replace")
+        return urllib.request.urlopen(req, timeout=25).read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as e:
-        print(f"  HTTP {e.code} for {url}")
         return ""
     except Exception as e:
-        print(f"  Error fetching {url}: {e}")
         return ""
 
-PLAYER_PAT = re.compile(
-    r'(?:https://www\.youtube\.com)?'
-    r'(/s/player/[a-f0-9]+/player_ias\.vflset/[^/"\'\\]+/base\.js)'
-)
+# ─────────────────────────────────────────────────────────────────────────────
+# extract_balanced: same logic as extractBalancedJs in InnertubeApi.kt
+# ─────────────────────────────────────────────────────────────────────────────
+def extract_balanced(js, start):
+    openers = {'{': '}', '(': ')', '[': ']'}
+    close_ch = openers.get(js[start] if start < len(js) else '')
+    if close_ch is None:
+        return None
+    depth = 0; in_str = False; str_ch = ''; i = start
+    while i < len(js):
+        c = js[i]
+        if in_str:
+            if c == str_ch and js[i-1] != '\\':
+                in_str = False
+        else:
+            if c in ('"', "'", '`'):
+                in_str = True; str_ch = c
+            elif c in openers:
+                depth += 1
+            elif c == close_ch:
+                depth -= 1
+                if depth == 0:
+                    return js[start:i+1]
+        i += 1
+    return None
 
-def find_player_url(html):
-    m = PLAYER_PAT.search(html)
-    return ("https://www.youtube.com" + m.group(1)) if m else None
+# ─────────────────────────────────────────────────────────────────────────────
+# build_op_map: mirrors buildOpMap in InnertubeApi.kt
+# ─────────────────────────────────────────────────────────────────────────────
+def build_op_map(helper_body):
+    h1 = r'(?:function\s*\(\w+\)\s*\{|\(\w+\)\s*=>\s*\{?|\w+\s*=>\s*\{?)'
+    h2 = r'(?:function\s*\(\w+,\w+\)\s*\{|\(\w+,\w+\)\s*=>\s*\{?)'
+    ops = {}
+    for m in re.finditer(fr'([\w$]+)\s*:\s*{h1}[^}}]*\.reverse\(\)', helper_body):
+        ops[m.group(1)] = ('reverse', 0)
+    for m in re.finditer(fr'([\w$]+)\s*:\s*{h2}[^}}]*\.splice\(0,', helper_body):
+        ops[m.group(1)] = ('splice', 0)
+    for m in re.finditer(fr'([\w$]+)\s*:\s*{h2}[^}}]*=\w+\.slice\(', helper_body):
+        if m.group(1) not in ops:
+            ops[m.group(1)] = ('splice', 0)
+    for m in re.finditer(fr'([\w$]+)\s*:\s*{h2}[^}}]*%\w+\.length', helper_body):
+        if m.group(1) not in ops:
+            ops[m.group(1)] = ('swap', 0)
+    return ops if ops else None
 
-# ── 1. Find player JS URL ─────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# find_helper_body: mirrors findHelperBody in InnertubeApi.kt
+# ─────────────────────────────────────────────────────────────────────────────
+def find_helper_body(js, helper_name, before_idx):
+    before = js[:before_idx]
+    start = -1
+    for prefix in [f"var {helper_name}={{", f"const {helper_name}={{",
+                   f"let {helper_name}={{", f";{helper_name}={{", f",{helper_name}={{"]:
+        idx = before.rfind(prefix)
+        if idx >= 0:
+            start = idx; break
+    if start < 0:
+        for prefix in [f"var {helper_name}={{", f"const {helper_name}={{",
+                       f"let {helper_name}={{", f";{helper_name}={{", f",{helper_name}={{"]:
+            idx = js.find(prefix, before_idx)
+            if idx >= 0:
+                start = idx; break
+    if start < 0:
+        return None
+    brace_idx = js.find("{", start)
+    if brace_idx < 0:
+        return None
+    body = extract_balanced(js, brace_idx)
+    return body
+
+# ─────────────────────────────────────────────────────────────────────────────
+# parse_op_calls: mirrors parseOpCalls in InnertubeApi.kt
+# ─────────────────────────────────────────────────────────────────────────────
+def parse_op_calls(fn_body, fn_param, helper_name, op_map):
+    ops = []
+    pat = re.compile(r'%s\.([\w$]+)\(%s(?:,(\d+))?\)' % (re.escape(helper_name), re.escape(fn_param)))
+    for m in pat.finditer(fn_body):
+        method = m.group(1)
+        n = int(m.group(2)) if m.group(2) else 0
+        if method not in op_map:
+            return None
+        kind, _ = op_map[method]
+        ops.append((kind, n))
+    return ops if ops else None
+
+# ─────────────────────────────────────────────────────────────────────────────
+# apply_ops: apply decoded ops to the raw signature
+# ─────────────────────────────────────────────────────────────────────────────
+def apply_ops(sig, ops):
+    a = list(sig)
+    for kind, n in ops:
+        if kind == 'reverse':
+            a.reverse()
+        elif kind == 'splice':
+            del a[:n]
+        elif kind == 'swap':
+            if a:
+                idx = n % len(a)
+                a[0], a[idx] = a[idx], a[0]
+    return ''.join(a)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# extract_sig_ops: mirrors extractSigOps in InnertubeApi.kt (all 3 strategies)
+# ─────────────────────────────────────────────────────────────────────────────
+def extract_sig_ops(js):
+    split_tokens = ['.split("")', ".split('')", "Array.from(", "[..."]
+    join_tokens  = ['.join("")',  ".join('')"]
+
+    sp = ""
+    if '.split("")' in js:  sp += "dq"
+    if ".split('')" in js:  sp += "sq"
+    if "Array.from(" in js: sp += "af"
+    jn = "dq" if '.join("")' in js else ""
+    hint = f"len={len(js)} sp={sp} jn={jn} rev={'.reverse()' in js} spl={'.splice(0,' in js}"
+    print(f"  JS fingerprint: {hint}")
+
+    FN_PATTERNS = [
+        (r'([\w$]+)\s*=\s*function\(\s*([\w$]+)\s*\)\s*\{',    "NAME=function(a){"),
+        (r'function\s+([\w$]+)\s*\(\s*([\w$]+)\s*\)\s*\{',     "function NAME(a){"),
+        (r'([\w$]+)\s*=\s*\(\s*([\w$]+)\s*\)\s*=>\s*\{',       "NAME=(a)=>{"),
+        (r'([\w$]+)\s*=\s*([\w$]+)\s*=>\s*\{',                 "NAME=a=>{"),
+        (r'([\w$]+)\s*:\s*function\s*\(\s*([\w$]+)\s*\)\s*\{', "NAME:function(a){ [colon]"),
+        (r'([\w$]+)\s*:\s*\(\s*([\w$]+)\s*\)\s*=>\s*\{',       "NAME:(a)=>{ [colon]"),
+        (r'([\w$]+)\s*:\s*([\w$]+)\s*=>\s*\{',                 "NAME:a=>{ [colon]"),
+    ]
+
+    # ── Strategy 1: join-anchor ───────────────────────────────────────────────
+    print("\n  [Strategy 1: join-anchor]")
+    sig_ops_hint = "s0-noJoin"
+    j_from = 0
+    join_positions = [m.start() for m in re.finditer(r'\.join\(""\)', js)]
+    print(f"  .join(\"\") count: {len(join_positions)}")
+
+    for join_idx in join_positions:
+        lb_off = max(0, join_idx - 10000)
+        seg = js[lb_off: join_idx]
+        has_split = any(t in seg for t in split_tokens)
+        if not has_split:
+            continue
+
+        fd = None; fd_style = ""
+        for pat, desc in FN_PATTERNS:
+            matches = list(re.finditer(pat, seg))
+            if matches:
+                fd = matches[-1]; fd_style = desc; break
+        if fd is None:
+            print(f"    join@{join_idx}: has split, but NO fn-def pattern matched")
+            print(f"      seg tail 300: {repr(seg[-300:])}")
+            continue
+
+        fn_name = fd.group(1); fn_param = fd.group(2)
+        fd_abs = lb_off + fd.start()
+        fn_brace = js.find("{", fd_abs)
+        if fn_brace < 0: continue
+        fn_body = extract_balanced(js, fn_brace)
+        if fn_body is None: continue
+
+        fn_has_split = any(t in fn_body for t in split_tokens)
+        fn_has_join  = any(t in fn_body for t in join_tokens)
+        if not fn_has_split or not fn_has_join:
+            print(f"    join@{join_idx}: fn={fn_name!r} ({fd_style})")
+            print(f"      body missing: split={fn_has_split} join={fn_has_join}")
+            print(f"      body: {repr(fn_body[:200])}")
+            continue
+
+        sig_ops_hint = f"s1-noHelper/{fn_name}"
+        helper_m = re.search(r'([\w$]+)\.([\w$]+)\(' + fn_param, fn_body)
+        if not helper_m:
+            helper_m = re.search(r'([\w$]+)\["[\w$]+"\]\(' + fn_param, fn_body)
+        if not helper_m:
+            print(f"    join@{join_idx}: fn={fn_name!r} — no helper call in body")
+            print(f"      fn_body: {repr(fn_body[:300])}")
+            continue
+
+        helper_name = helper_m.group(1)
+        sig_ops_hint = f"s2-noHelperDef/{helper_name}"
+        helper_body = find_helper_body(js, helper_name, fd_abs)
+        if not helper_body:
+            print(f"    join@{join_idx}: fn={fn_name!r} helper={helper_name!r} — helper body NOT FOUND")
+            continue
+
+        op_map = build_op_map(helper_body)
+        if not op_map:
+            print(f"    join@{join_idx}: fn={fn_name!r} helper={helper_name!r} — opMap empty")
+            print(f"      helper_body: {repr(helper_body[:300])}")
+            continue
+
+        ops = parse_op_calls(fn_body, fn_param, helper_name, op_map)
+        if not ops:
+            print(f"    join@{join_idx}: fn={fn_name!r} helper={helper_name!r} — op calls not parsed")
+            print(f"      fn_body: {repr(fn_body[:300])}")
+            print(f"      opMap: {op_map}")
+            continue
+
+        print(f"    SUCCESS via join-anchor!")
+        print(f"      fn={fn_name!r} ({fd_style}), param={fn_param!r}, helper={helper_name!r}")
+        print(f"      ops: {ops}")
+        return ops, fn_name
+
+    print(f"  Strategy 1 hint: {sig_ops_hint}")
+
+    # ── Strategy 2: splice-anchor ─────────────────────────────────────────────
+    print("\n  [Strategy 2: splice-anchor]")
+    splice_positions = [m.start() for m in re.finditer(r'\.splice\(0,', js)]
+    print(f"  .splice(0, count: {len(splice_positions)}")
+    for splice_idx in splice_positions[:10]:
+        lb_off = max(0, splice_idx - 2000)
+        lb = js[lb_off: splice_idx]
+        hm = re.findall(r'(?:var\s+|[;,}\s(])([\w$]+)\s*=\s*\{', lb)
+        if hm:
+            helper_name = hm[-1]
+            print(f"    splice@{splice_idx}: potential helper={helper_name!r}")
+    print(f"  (skipping full Strategy 2 detail for brevity)")
+
+    # ── Strategy 3: call-site anchor ─────────────────────────────────────────
+    print("\n  [Strategy 3: call-site anchor]")
+    cs_patterns = [
+        (r'\b[\w$]+&&\([\w$]+=([a-zA-Z0-9_$]+)\((?:\d+,)?decodeURIComponent', "&&(X=FN(decodeURI...)"),
+        (r'\bc&&\(c=([a-zA-Z0-9$]+)\(decodeURIComponent',                       "c&&(c=FN(...))"),
+        (r'[;,=]\s*([a-zA-Z0-9$]+)\(decodeURIComponent\([^)]+\.get\("s"\)',     "X=FN(get(s))"),
+        (r'\.set\(["\']sig["\'],([a-zA-Z0-9$]+)\(',                             ".set('sig',FN(...))"),
+        (r'b=([a-zA-Z0-9$]+)\(decodeURIComponent\(b\.get\("s"\)\)\)',           "b=FN(get(s))"),
+        (r'[;({,\s=]([a-zA-Z0-9$]{2,})\s*\(\s*decodeURIComponent\(',           "FN(decodeURI(...) [broad]"),
+        (r'([\w$]+\.[\w$]+)\s*\(\s*decodeURIComponent\(',                       "OBJ.FN(decodeURI(...) [obj-method]"),
+    ]
+    dc_count = len(re.findall(r'decodeURIComponent', js))
+    print(f"  decodeURIComponent count: {dc_count}")
+    found_cs = False
+    for pat, desc in cs_patterns:
+        mm = re.search(pat, js)
+        if mm:
+            ctx = js[max(0, mm.start()-60): mm.end()+120]
+            print(f"  call-site FOUND [{desc}]")
+            print(f"    captured: {mm.group(1)!r}")
+            print(f"    context: {repr(ctx)}")
+            found_cs = True
+            break
+    if not found_cs:
+        print("  No call-site pattern matched!")
+        # Show all decodeURIComponent contexts
+        for m in re.finditer(r'decodeURIComponent', js):
+            ctx = js[max(0, m.start()-80): m.end()+60]
+            print(f"    decodeURIComponent@{m.start()}: {repr(ctx)}")
+
+    return None, None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main
+# ─────────────────────────────────────────────────────────────────────────────
+def find_player_url_from_html(html):
+    for pat in [
+        r'"PLAYER_JS_URL"\s*:\s*"(/s/player/[^"]+base\.js)"',
+        r'(/s/player/[a-f0-9]+/player_ias\.vflset/[^/"\']+/base\.js)',
+        r'(/s/player/[a-f0-9]+/player_es6\.vflset/[^/"\']+/base\.js)',
+        r'src="(/s/player/[^"]+base\.js)"',
+    ]:
+        m = re.search(pat, html)
+        if m:
+            return "https://www.youtube.com" + m.group(1)
+    return None
+
+print("="*70)
+print("OpenTune sig-decode tester")
+print("="*70)
+
 player_url = None
-attempts = [
-    ("https://www.youtube.com/", UA_DESKTOP),
-    ("https://www.youtube.com/watch?v=dQw4w9WgXcQ", UA_DESKTOP),
-    ("https://www.youtube.com/watch?v=dQw4w9WgXcQ", UA_MOBILE),
-    ("https://m.youtube.com/watch?v=dQw4w9WgXcQ", UA_MOBILE),
-]
-for url, ua in attempts:
-    print(f"Trying {url} …")
-    html = fetch(url, ua)
-    player_url = find_player_url(html)
+for page in [
+    "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    "https://music.youtube.com/watch?v=dQw4w9WgXcQ",
+    "https://www.youtube.com/",
+]:
+    print(f"\nTrying {page} …")
+    html = fetch(page)
+    player_url = find_player_url_from_html(html) if html else None
     if player_url:
-        print(f"Found player URL: {player_url}")
-        break
-    # also search ytInitialPlayerResponse / ytcfg
-    m2 = re.search(r'"PLAYER_JS_URL"\s*:\s*"(/s/player/[^"]+base\.js)"', html)
-    if m2:
-        player_url = "https://www.youtube.com" + m2.group(1)
-        print(f"Found player URL (ytcfg): {player_url}")
+        print(f"Found: {player_url}")
         break
 
 if not player_url:
-    print("\nCould not auto-detect player JS URL.")
-    print("Please open https://www.youtube.com/watch?v=dQw4w9WgXcQ in Chrome,")
-    print('open DevTools → Network tab → filter "base.js" → copy the URL here.')
-    player_url = input("Paste player JS URL: ").strip()
-    if not player_url:
-        sys.exit(1)
+    print("\nAuto-detection failed.")
+    print("Get the URL from Chrome DevTools → Network → filter 'base.js'.")
+    player_url = input("Paste player JS URL (or press Enter to skip): ").strip()
 
-# ── 2. Fetch player JS ────────────────────────────────────────────────────────
-print("\nFetching player JS (may take a few seconds) …")
-js = fetch(player_url)
-if len(js) < 10000:
-    print(f"ERROR: player JS too short ({len(js)} bytes) — fetch failed.")
-    sys.exit(1)
-print(f"Player JS size: {len(js):,} bytes\n")
+if player_url:
+    print(f"\nFetching player JS …")
+    js = fetch(player_url)
+    if len(js) < 50000:
+        print(f"ERROR: fetch returned only {len(js)} bytes.")
+        js = None
+    else:
+        print(f"OK ({len(js):,} bytes)\n")
+        print("Running extraction …")
+        ops, fn_name = extract_sig_ops(js)
+else:
+    js = None
+    ops = None
 
-# ── 3. Function-definition patterns ──────────────────────────────────────────
-FN_PATTERNS = [
-    (r'([\w$]+)\s*=\s*function\(\s*([\w$]+)\s*\)\s*\{',       "style1: NAME=function(a){"),
-    (r'function\s+([\w$]+)\s*\(\s*([\w$]+)\s*\)\s*\{',        "style2: function NAME(a){"),
-    (r'([\w$]+)\s*=\s*\(\s*([\w$]+)\s*\)\s*=>\s*\{',          "style3: NAME=(a)=>{"),
-    (r'([\w$]+)\s*=\s*([\w$]+)\s*=>\s*\{',                    "style4: NAME=a=>{"),
-    (r'([\w$]+)\s*:\s*function\s*\(\s*([\w$]+)\s*\)\s*\{',    "style5: NAME:function(a){  [COLON]"),
-    (r'([\w$]+)\s*:\s*\(\s*([\w$]+)\s*\)\s*=>\s*\{',          "style6: NAME:(a)=>{        [COLON]"),
-    (r'([\w$]+)\s*:\s*([\w$]+)\s*=>\s*\{',                    "style7: NAME:a=>{          [COLON]"),
-]
+# ── Optional: test with a real signatureCipher ────────────────────────────────
+print("\n" + "="*70)
+print("Optional: test with a real signatureCipher")
+print("="*70)
+print("You can get one from the OpenTune app log (look for 'signatureCipher' or 's=...')")
+print("Or press Enter to skip.\n")
+cipher_input = input("Paste signatureCipher (or raw s= value): ").strip()
 
-split_tokens = ['.split("")', ".split('')", "Array.from(", "[..."]
-join_tokens  = ['.join("")',  ".join('')"]
+if cipher_input and ops:
+    # Parse the cipher string
+    raw_sig = None
+    if "s=" in cipher_input and "url=" in cipher_input:
+        parts = dict(p.split("=", 1) for p in cipher_input.split("&") if "=" in p)
+        raw_sig = urllib.parse.unquote(parts.get("s", "")) if parts.get("s") else None
+        import urllib.parse
+    elif cipher_input:
+        raw_sig = cipher_input
 
-print("=" * 70)
-print("PART 1: Sig-decode function definition style")
-print("=" * 70)
-
-hits = []
-join_positions = [m.start() for m in re.finditer(r'\.join\(""\)', js)]
-print(f"Total .join(\"\") occurrences: {len(join_positions)}")
-
-for joinIdx in join_positions:
-    seg = js[max(0, joinIdx - 10000): joinIdx]
-    if not any(t in seg for t in split_tokens):
-        continue
-    matched_style = fn_name = fn_param = ""
-    ctx = js[max(0, joinIdx - 400): joinIdx + 30]
-    for pat, desc in FN_PATTERNS:
-        all_m = list(re.finditer(pat, seg))
-        if all_m:
-            last = all_m[-1]
-            matched_style = desc
-            fn_name = last.group(1)
-            fn_param = last.group(2)
-            break
-    hits.append((joinIdx, matched_style or "NO_MATCH", fn_name, fn_param, ctx))
-
-print(f"Occurrences with split+join (candidate sig fns): {len(hits)}\n")
-
-style_counts = {}
-for _, style, _, _, _ in hits:
-    style_counts[style] = style_counts.get(style, 0) + 1
-print("Summary of function-definition styles found near .join(\"\"):")
-for k, v in sorted(style_counts.items(), key=lambda x: -x[1]):
-    marker = " <<<" if "COLON" in k else ("  *** BUG" if k == "NO_MATCH" else "")
-    print(f"  {v:3d}x  {k}{marker}")
-
-no_match = [(j, s, fn, p, c) for (j, s, fn, p, c) in hits if s == "NO_MATCH"]
-if no_match:
-    print(f"\nUnmatched joins ({len(no_match)}) — showing first 2:")
-    for joinIdx, _, _, _, ctx in no_match[:2]:
-        print(f"\n  join at offset {joinIdx}")
-        lines = ctx.replace(";", ";\n").split("\n")
-        for ln in lines[-10:]:
-            print(f"    {ln[:120]}")
-
-# ── 4. Call-site patterns ─────────────────────────────────────────────────────
-print("\n" + "=" * 70)
-print("PART 2: How the sig function is called (call-site patterns)")
-print("=" * 70)
-cs_patterns = [
-    (r'\b[\w$]+&&\([\w$]+=([a-zA-Z0-9_$]+)\((?:\d+,)?decodeURIComponent',  "&&(X=FN(decodeURI...)"),
-    (r'\bc&&\(c=([a-zA-Z0-9$]+)\(decodeURIComponent',                        "c&&(c=FN(decodeURI...)"),
-    (r'[;,=]\s*([a-zA-Z0-9$]+)\(decodeURIComponent\([^)]+\.get\("s"\)',      "X=FN(decodeURI(x.get('s')...)"),
-    (r'\.set\(["\']sig["\'],([a-zA-Z0-9$]+)\(',                              ".set('sig',FN(...)"),
-    (r'b=([a-zA-Z0-9$]+)\(decodeURIComponent\(b\.get\("s"\)\)\)',            "b=FN(decodeURI(b.get('s')))"),
-    (r'\b[\w$]+&&\([\w$]+=([\w$]+\.[\w$]+)\((?:\d+,)?decodeURIComponent',   "&&(X=OBJ.METHOD(decodeURI...) [COLON CALL]"),
-    (r'c&&\(c=([\w$]+\.[\w$]+)\(decodeURIComponent',                         "c&&(c=OBJ.METHOD(decodeURI...) [COLON CALL]"),
-    (r'[;({,\s=]([a-zA-Z0-9$]{2,})\s*\(\s*decodeURIComponent\(',            "generic FN(decodeURI(...)"),
-]
-found_any = False
-for pat, desc in cs_patterns:
-    mm = re.search(pat, js)
-    if mm:
-        ctx = js[max(0, mm.start() - 40): mm.end() + 100]
-        print(f"  FOUND: {desc}")
-        print(f"    captured name: {mm.group(1)}")
-        print(f"    context: ...{repr(ctx[-160:])}...")
-        print()
-        found_any = True
-if not found_any:
-    print("  No call-site patterns matched!")
-
-# ── 5. Helper object method styles ───────────────────────────────────────────
-print("=" * 70)
-print("PART 3: Helper object method styles (near .splice and .reverse)")
-print("=" * 70)
-for anchor, label in [(".splice(0,", "splice"), (".reverse()", "reverse")]:
-    positions = [m.start() for m in re.finditer(re.escape(anchor), js)]
-    print(f"\n{label} occurrences: {len(positions)} — checking first 5:")
-    for idx in positions[:5]:
-        chunk = js[max(0, idx - 300): idx + 20]
-        for pat, desc in FN_PATTERNS:
-            mm_list = list(re.finditer(pat, chunk))
-            if mm_list:
-                last_mm = mm_list[-1]
-                snippet = chunk[max(0, last_mm.start() - 5): last_mm.end() + 60]
-                print(f"  offset {idx}: {desc}")
-                print(f"    {repr(snippet)}")
-                break
+    if raw_sig:
+        import urllib.parse
+        decoded = apply_ops(urllib.parse.unquote(raw_sig), ops)
+        print(f"\nRaw sig: {raw_sig[:60]}…")
+        print(f"Decoded: {decoded[:60]}…")
+        print(f"Ops applied: {ops}")
+    else:
+        print("Could not parse signatureCipher.")
+elif cipher_input and not ops:
+    print("Extraction failed so cannot decode the cipher.")
 
 print("\nDone.")
