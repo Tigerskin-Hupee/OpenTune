@@ -540,13 +540,14 @@ class InnertubeApi @Inject constructor(
         val diffSR = splitIdx xor reverseIdx
         val diffSS = splitIdx xor spliceIdx
         val eT = Regex.escape(tableVar)
-        // Collect XOR constants by xorVar candidate:  VAR[TABLE[XV^K]]
         val byXorVar = mutableMapOf<String, MutableSet<Int>>()
         Regex("""([\w$]+)\[$eT\[([\w$]+)\^(\d+)\]\]""").findAll(js).forEach { m ->
             val xv = m.groupValues[2]
             val k  = m.groupValues[3].toIntOrNull() ?: return@forEach
             if (xv != tableVar) byXorVar.getOrPut(xv) { mutableSetOf() }.add(k)
         }
+        Log.d(tag, "discoverPFromTable: $tableVar split@$splitIdx rev@$reverseIdx splice@$spliceIdx " +
+            "candidates=${byXorVar.entries.sortedByDescending { it.value.size }.take(4).map { "${it.key}:${it.value.size}k" }}")
         for ((xv, constants) in byXorVar) {
             for (k1 in constants) {
                 val k2 = k1 xor diffSR; val k3 = k1 xor diffSS
@@ -556,6 +557,30 @@ class InnertubeApi @Inject constructor(
                         return pCand to xv
                 }
             }
+        }
+        return null
+    }
+
+    // Fallback p discovery: derive p from the split call pattern directly.
+    // Handles players where discoverPFromTable finds no consistent XOR triple
+    // (e.g. because the dispatcher only calls the table a few times).
+    // Pattern: var RESULT = INPUT[TABLE[XVAR^CONST]](...) with >= 2 helper calls on RESULT.
+    private fun discoverPFromSplitCall(js: String, tableVar: String, u: List<String>): Pair<Int, String>? {
+        val splitIdx = u.indexOf("split").takeIf { it >= 0 } ?: return null
+        val eT = Regex.escape(tableVar)
+        val re = Regex("""var\s+([\w$]+)\s*=\s*[\w$]+\[$eT\[([\w$]+)\^(\d+)\]\]\s*\(""")
+        for (m in re.findAll(js)) {
+            val resultVar = m.groupValues[1]
+            val xorVar    = m.groupValues[2]
+            val xorConst  = m.groupValues[3].toIntOrNull() ?: continue
+            val pCand     = splitIdx xor xorConst
+            val fnStart   = js.lastIndexOf("function", m.range.first).takeIf { it >= 0 } ?: continue
+            val braceIdx  = js.indexOf("{", fnStart).takeIf { it >= 0 } ?: continue
+            val fnBody    = extractBalancedJs(js, braceIdx) ?: continue
+            val eX = Regex.escape(xorVar); val eR = Regex.escape(resultVar)
+            val helperCount = Regex("""[\w$]+\[$eT\[$eX\^\d+\]\]\($eR""").findAll(fnBody).count()
+            Log.d(tag, "discoverPFromSplitCall: candidate xv=$xorVar const=$xorConst pCand=$pCand helperCalls=$helperCount")
+            if (helperCount >= 2) return pCand to xorVar
         }
         return null
     }
@@ -578,6 +603,7 @@ class InnertubeApi @Inject constructor(
             }
 
             val discovered = discoverPFromTable(js, tableVar, u)
+                ?: discoverPFromSplitCall(js, tableVar, u)
             if (discovered == null) {
                 bestHint = "d0-tf-noP($tableVar/$sep)"; continue
             }
