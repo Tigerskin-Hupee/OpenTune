@@ -459,8 +459,6 @@ def fetch_cipher_from_youtube(video_id, sig_ts=0):
             return cipher, base_url
         print(f"    [{cl['name']}] {msg}")
     return None, None
-    except Exception as e:
-        print(f"    parse error: {e}"); return None, None
 
 def decode_cipher_url(cipher, ops):
     """Apply ops to the raw sig in cipher and return the decoded URL."""
