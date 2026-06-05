@@ -514,9 +514,144 @@ class InnertubeApi @Inject constructor(
         }
 
         val s3hint = sigOpsHint.substringBefore("(")
-        sigOpsHint = "allFail($diag [$s1hint|$s2hint|$s3hint])"
-        Log.w(tag, "extractSigOps: all strategies failed, $diag [$s1hint|$s2hint|$s3hint]")
+
+        // ── Strategy 4: flat-dispatcher (YouTube 2026+) ──────────────────────
+        // YouTube eliminated the traditional split/join helper entirely.
+        // All ops flow through a single XOR-obfuscated dispatcher function.
+        extractSigOpsDispatcher(js)?.let { return it }
+        val s4hint = sigOpsHint.substringBefore("(")
+
+        sigOpsHint = "allFail($diag [$s1hint|$s2hint|$s3hint|$s4hint])"
+        Log.w(tag, "extractSigOps: all strategies failed, $diag [$s1hint|$s2hint|$s3hint|$s4hint]")
         return null
+    }
+
+    // YouTube 2026+ flat-dispatcher sig extraction.
+    //
+    // The player eliminated the traditional sig-fn-calls-helper pattern. Instead, a single
+    // dispatcher function (e.g. Qp) handles all URL transforms:
+    //   Qp(25,37,  Qp(51,3416, I.s))
+    //       ↑ outer: sig ops (p = 37^25 = 60)
+    //                 ↑ inner: decodeURIComponent(I.s)
+    //
+    // Inside the dispatcher:
+    //   var p = K^R;
+    //   b = x[u[p^48]](u[2]);          // x.split("") via string table u
+    //   Pw[u[p^117]](b, 2);             // splice(0,2) via helper Pw + string table
+    //   Pw[u[p^123]](b, p^14);          // reverse
+    //   …
+    //   t = b[u[p^5]](u[2]);            // b.join("")
+    //
+    // We find: call site → dispatcher fn → xor var → table var → helper var →
+    //          string table → verify p → Pw opMap → extract ops in order.
+    private fun extractSigOpsDispatcher(js: String): List<SigOp>? {
+        // Step 1: nested call site  FNAME(R1,K1, FNAME(R2,K2, SIG.s))
+        // The outer call R1^K1 = p.  The inner call wraps `.s` (raw signature).
+        val csRe = Regex("""(\w+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\s*\(\s*\d+\s*,\s*\d+\s*,\s*\w+\.s\s*\)\s*\)""")
+        val cs = csRe.find(js) ?: run { sigOpsHint = "d0-noCallSite"; return null }
+        val dispName = cs.groupValues[1]
+        val outerR   = cs.groupValues[2].toIntOrNull() ?: return null
+        val outerK   = cs.groupValues[3].toIntOrNull() ?: return null
+        val p        = outerR xor outerK
+        sigOpsHint   = "d1-noDispFn($dispName)"
+
+        // Step 2: dispatcher function body
+        val dispFnIdx = js.indexOf("$dispName=function(").takeIf { it >= 0 }
+            ?: js.indexOf("var $dispName=function(").takeIf { it >= 0 }
+            ?: run { sigOpsHint = "d1-noFnDef($dispName)"; return null }
+        val dispBrace = js.indexOf("{", dispFnIdx).takeIf { it >= 0 } ?: return null
+        val dispBody  = extractBalancedJs(js, dispBrace) ?: return null
+        sigOpsHint    = "d2-noXorVar($dispName)"
+
+        // Step 3: XOR variable ("p" from "var p = K^R")
+        val xorM = Regex("""var\s+([\w$]+)\s*=\s*[\w$]+\s*\^\s*[\w$]+""").find(dispBody)
+            ?: run { sigOpsHint = "d2-noXorVar($dispName/body)"; return null }
+        val xorVar = xorM.groupValues[1]
+        sigOpsHint = "d3-noTableVar($dispName/$xorVar)"
+
+        // Step 4: string-table variable ("u" from "u[xorVar^48]")
+        val tvM = Regex("""([\w$]+)\s*\[${Regex.escape(xorVar)}\^48\]""").find(dispBody)
+            ?: run { sigOpsHint = "d3-noTableVar($dispName/$xorVar/body)"; return null }
+        val tableVar = tvM.groupValues[1]
+        sigOpsHint   = "d4-noHelperVar($dispName/$tableVar)"
+
+        // Step 5: helper-object name ("Pw" from "Pw[tableVar[xorVar^...]]")
+        val hvM = Regex("""([\w$]+)\s*\[${Regex.escape(tableVar)}\[${Regex.escape(xorVar)}\^""").find(dispBody)
+            ?: run { sigOpsHint = "d4-noHelperVar($dispName/$tableVar/body)"; return null }
+        val helperName = hvM.groupValues[1]
+        sigOpsHint     = "d5-noTable($dispName/$helperName)"
+
+        // Step 6: string table  tableVar = "...".split("{")
+        val tRe = Regex("""(?<![.\w])${Regex.escape(tableVar)}\s*=\s*"([^"]{300,})"\s*\.split\s*\(\s*"\{"\s*\)""")
+        val tM  = tRe.find(js) ?: run { sigOpsHint = "d5-noTableStr($tableVar)"; return null }
+        val u   = tM.groupValues[1].split("{")
+        sigOpsHint = "d6-noTableVerify($dispName/p=$p)"
+
+        // Step 7: verify p (split index ^ 48 == p, u[p^5] == "join")
+        val splitIdx = u.indexOf("split").takeIf { it >= 0 }
+            ?: run { sigOpsHint = "d6-noSplitInTable"; return null }
+        if ((splitIdx xor 48) != p) {
+            sigOpsHint = "d6-pMismatch(table=${splitIdx xor 48}/call=$p)"; return null
+        }
+        if (u.getOrNull(p xor 5) != "join") {
+            sigOpsHint = "d6-noJoinVerify"; return null
+        }
+        val reverseIdx = u.indexOf("reverse").takeIf { it >= 0 }
+            ?: run { sigOpsHint = "d6-noReverseInTable"; return null }
+        val spliceIdx  = u.indexOf("splice").takeIf  { it >= 0 }
+            ?: run { sigOpsHint = "d6-noSpliceInTable"; return null }
+        sigOpsHint = "d7-noPwDef($helperName)"
+
+        // Step 8: Pw helper object — methods reference string table for method names
+        // e.g. bi:function(R){R[u[48]]()}  jR:function(R,K){R[u[17]](0,K)}  ue:swap
+        val (_, helperBody) = findHelperBody(js, helperName, dispFnIdx)
+            ?: run { sigOpsHint = "d7-noPwBody($helperName)"; return null }
+        val pwMap = mutableMapOf<String, SigOp>()
+        val mRe   = Regex("""([\w$]+)\s*:\s*function\s*\(([^)]*)\)\s*\{([^}]*)\}""")
+        for (m in mRe.findAll(helperBody)) {
+            val mn  = m.groupValues[1]
+            val nParams = m.groupValues[2].split(",").count { it.isNotBlank() }
+            val body    = m.groupValues[3]
+            when {
+                nParams == 1 && body.contains("u[$reverseIdx]") -> pwMap[mn] = SigOp.Reverse
+                nParams == 2 && body.contains("u[$spliceIdx]")  -> pwMap[mn] = SigOp.Splice(0)
+                nParams == 2 && body.contains("%") && mn !in pwMap -> pwMap[mn] = SigOp.Swap(0)
+            }
+        }
+        if (pwMap.size < 2) {
+            sigOpsHint = "d7-pwMapSmall($helperName/${pwMap.size})"; return null
+        }
+        sigOpsHint = "d8-noOps($dispName/$helperName)"
+
+        // Step 9: extract ordered ops from dispatcher body
+        // Each op call: helperName[tableVar[xorVar^METHOD_XOR]](b, xorVar^ARG_XOR | LITERAL)
+        val eH = Regex.escape(helperName)
+        val eT = Regex.escape(tableVar)
+        val eX = Regex.escape(xorVar)
+        val opRe = Regex("""$eH\[$eT\[$eX\^(\d+)\]\]\(b(?:,$eX\^(\d+)|,(\d+))?\)""")
+        val ops  = mutableListOf<SigOp>()
+        for (m in opRe.findAll(dispBody)) {
+            val methodXor = m.groupValues[1].toIntOrNull() ?: continue
+            val methodIdx = p xor methodXor
+            val methodNm  = u.getOrNull(methodIdx) ?: continue
+            val baseOp    = pwMap[methodNm] ?: continue
+            val arg = when {
+                m.groupValues[2].isNotEmpty() -> p xor m.groupValues[2].toInt()
+                m.groupValues[3].isNotEmpty() -> m.groupValues[3].toInt()
+                else -> 0
+            }
+            ops.add(when (baseOp) {
+                SigOp.Reverse    -> SigOp.Reverse
+                is SigOp.Splice  -> SigOp.Splice(arg)
+                is SigOp.Swap    -> SigOp.Swap(arg)
+            })
+        }
+        if (ops.isEmpty()) {
+            sigOpsHint = "d8-emptyOps($dispName/$helperName)"; return null
+        }
+        sigOpsHint = "ok-d-${ops.size}ops"
+        Log.d(tag, "extractSigOps(dispatcher): ${ops.size} ops OK '$dispName'/'$helperName' p=$p pwMap=$pwMap")
+        return ops
     }
 
     // Apply extracted sig-decode operations to a raw signature string.
