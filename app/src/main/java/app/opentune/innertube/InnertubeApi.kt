@@ -218,6 +218,30 @@ class InnertubeApi @Inject constructor(
         return ops.ifEmpty { null }
     }
 
+    // Parse sig-cipher operations that are inlined directly in the function body.
+    // Used when no helper object is found (YouTube 2026+ may inline operations).
+    // Variable-agnostic: matches any identifier, not just the function parameter.
+    private fun parseInlineOps(fnBody: String): List<SigOp>? {
+        val opPositions = mutableListOf<Pair<Int, SigOp>>()
+        // Reverse: ANYVAR.reverse()
+        Regex("""[\w$]+\.reverse\(\)""").findAll(fnBody).forEach { m ->
+            opPositions.add(m.range.first to SigOp.Reverse)
+        }
+        // Splice cut: ANYVAR.splice(0,N)
+        Regex("""[\w$]+\.splice\(0,(\d+)\)""").findAll(fnBody).forEach { m ->
+            val n = m.groupValues[1].toIntOrNull() ?: 0
+            opPositions.add(m.range.first to SigOp.Splice(n))
+        }
+        // Swap: N%ANYVAR.length — each distinct N is one swap, deduplicate (pattern appears twice per swap)
+        val seenN = mutableSetOf<Int>()
+        Regex("""(\d+)%[\w$]+\.length""").findAll(fnBody).forEach { m ->
+            val n = m.groupValues[1].toIntOrNull() ?: return@forEach
+            if (seenN.add(n)) opPositions.add(m.range.first to SigOp.Swap(n))
+        }
+        if (opPositions.size < 2) return null
+        return opPositions.sortedBy { it.first }.map { it.second }
+    }
+
     // Find the helper object body given its name.
     // Searches backward from beforeIdx first (typical: helper before decode fn),
     // then forward (fallback: helper after decode fn).
@@ -276,9 +300,10 @@ class InnertubeApi @Inject constructor(
             val joinIdx = joinTokens.map { js.indexOf(it, jFrom) }.filter { it >= 0 }.minOrNull() ?: break
             jFrom = joinIdx + 1
 
-            // Sig fn must also have a split within 10000 chars before the join
+            // Sig fn must also have a split/conversion within 10000 chars before the join.
+            // Includes spread [... (ES2025+: [...a] replaces a.split("") or Array.from(a))
             val seg = js.substring(maxOf(0, joinIdx - 10000), joinIdx)
-            val hasSplit = splitTokens.any { seg.contains(it) } || seg.contains("Array.from(")
+            val hasSplit = splitTokens.any { seg.contains(it) } || seg.contains("Array.from(") || seg.contains("[...")
             if (!hasSplit) continue
 
             // Find the enclosing function definition (regular or arrow)
@@ -293,7 +318,7 @@ class InnertubeApi @Inject constructor(
             val fnBraceIdx = js.indexOf("{", fdAbsIdx).takeIf { it >= 0 } ?: continue
             val fnBody = extractBalancedJs(js, fnBraceIdx) ?: continue
 
-            val fnHasSplit = splitTokens.any { fnBody.contains(it) } || fnBody.contains("Array.from(")
+            val fnHasSplit = splitTokens.any { fnBody.contains(it) } || fnBody.contains("Array.from(") || fnBody.contains("[...")
             val fnHasJoin  = joinTokens.any { fnBody.contains(it) }
             if (!fnHasSplit || !fnHasJoin) continue
 
@@ -301,6 +326,16 @@ class InnertubeApi @Inject constructor(
             val helperName =
                 Regex("""([\w$]+)\.([\w$]+)\($fnParam""").find(fnBody)?.groupValues?.get(1)
                     ?: Regex("""([\w$]+)\["[\w$]+"\]\($fnParam""").find(fnBody)?.groupValues?.get(1)
+                    ?: run {
+                        // No helper-object call found: try parsing operations inlined directly
+                        val inlineOps = parseInlineOps(fnBody)
+                        if (inlineOps != null) {
+                            sigOpsHint = "ok-inline-${inlineOps.size}ops"
+                            Log.d(tag, "extractSigOps: ${inlineOps.size} inline ops OK via join-anchor/'$fnName'")
+                            return inlineOps
+                        }
+                        null
+                    }
                     ?: continue
 
             sigOpsHint = "s2-noHelperDef($diag/$helperName)"
@@ -330,7 +365,24 @@ class InnertubeApi @Inject constructor(
 
             val lbOff = maxOf(0, spliceIdx - 2000)
             val lb = js.substring(lbOff, spliceIdx)
-            val hm = Regex("""(?:var\s+|[;,}\s(])([\w$]+)\s*=\s*\{""").findAll(lb).lastOrNull() ?: continue
+            val hm = Regex("""(?:var\s+|[;,}\s(])([\w$]+)\s*=\s*\{""").findAll(lb).lastOrNull()
+            if (hm == null) {
+                // No helper-object literal found; the splice may be inlined in the sig fn.
+                // Look for an enclosing function and try inline op parsing.
+                val fd2 = Regex("""([\w$]+)\s*=\s*function\(\s*([\w$]+)\s*\)\s*\{""").findAll(lb).lastOrNull()
+                    ?: Regex("""function\s+([\w$]+)\s*\(\s*([\w$]+)\s*\)\s*\{""").findAll(lb).lastOrNull()
+                    ?: Regex("""([\w$]+)\s*=\s*\(\s*([\w$]+)\s*\)\s*=>\s*\{""").findAll(lb).lastOrNull()
+                    ?: Regex("""([\w$]+)\s*=\s*([\w$]+)\s*=>\s*\{""").findAll(lb).lastOrNull()
+                    ?: continue
+                val fdAbsIdx2 = lbOff + fd2.range.first
+                val fnBrace2 = js.indexOf("{", fdAbsIdx2).takeIf { it >= 0 } ?: continue
+                val fnBody2 = extractBalancedJs(js, fnBrace2) ?: continue
+                if (!joinTokens.any { fnBody2.contains(it) }) continue
+                val inlineOps = parseInlineOps(fnBody2) ?: continue
+                sigOpsHint = "ok-inline-f-${inlineOps.size}ops"
+                Log.d(tag, "extractSigOps: ${inlineOps.size} inline ops OK via splice-anchor (inline)")
+                return inlineOps
+            }
             val helperName = hm.groupValues[1]
             val helperBraceIdx = lbOff + hm.range.first + hm.value.lastIndexOf('{')
             val helperBody = extractBalancedJs(js, helperBraceIdx) ?: continue
@@ -378,6 +430,10 @@ class InnertubeApi @Inject constructor(
             Regex("""\.set\(["']sig["'],([a-zA-Z0-9$]+)\("""),
             // b=FN(decodeURIComponent(b.get("s")))
             Regex("""b=([a-zA-Z0-9$]+)\(decodeURIComponent\(b\.get\("s"\)\)\)"""),
+            // YouTube 2026+: generic — any 2+-char function call directly wrapping decodeURIComponent
+            Regex("""[;({,\s=]([a-zA-Z0-9$]{2,})\s*\(\s*decodeURIComponent\("""),
+            // .get("s") nearby any function call (broader match)
+            Regex("""([a-zA-Z0-9$]{2,})\(decodeURIComponent\([^)]{1,80}\.get\(["']s["']\)"""),
         )
         for (csp in csPatterns) {
             val csm = csp.find(js) ?: continue
