@@ -333,48 +333,59 @@ class PoTokenWebView private constructor(private val context: Context) {
     }
 
     // Extract YouTube's signature-cipher decode code (helper object + main fn) from player JS.
-    // Primary strategy (join-anchor): sig fn always ends with .join("") and starts near .split("").
-    // Fallback (splice-anchor): for older player variants that use splice(0,n) in the helper.
+    // Three strategies in order: join-anchor → splice-anchor → call-site.
     private fun extractSigDecodeCode(js: String): String? {
-        Log.d(TAG, "extractSigDecodeCode: js=${js.length}b hasSplit=${js.contains(".split(\"\")")} hasSplice=${js.contains(".splice(0,")} hasJoin=${js.contains(".join(\"\")") || js.contains(".join('')")}")
+        val len = js.length
+        val sp = buildString {
+            if (js.contains(".split(\"\")")) append("dq")
+            if (js.contains(".split('')")) append("sq")
+            if (js.contains(".split(``)")) append("bt")
+            if (js.contains("Array.from(")) append("af")
+        }
+        val jn = buildString {
+            if (js.contains(".join(\"\")")) append("dq")
+            if (js.contains(".join('')")) append("sq")
+            if (js.contains(".join(``)")) append("bt")
+        }
+        Log.d(TAG, "extractSigDecodeCode: ${len}b sp=$sp jn=$jn rev=${js.contains(".reverse()")} spl=${js.contains(".splice(0,")}")
+
+        val splitTokens = listOf(".split(\"\")", ".split('')", ".split(``)")
+        val joinTokens  = listOf(".join(\"\")",  ".join('')",  ".join(``)")
 
         // Strategy 1: join-anchor
-        val joinTokens = listOf(".join(\"\")", ".join('')")
         var jFrom = 0
         while (true) {
             val joinIdx = joinTokens.map { js.indexOf(it, jFrom) }.filter { it >= 0 }.minOrNull() ?: break
             jFrom = joinIdx + 1
-            val seg = js.substring(maxOf(0, joinIdx - 3000), joinIdx)
-            if (!seg.contains(".split(\"\")") && !seg.contains(".split('')")) continue
+            val lbOff = maxOf(0, joinIdx - 10000)
+            val seg = js.substring(lbOff, joinIdx)
+            val hasSplit = splitTokens.any { seg.contains(it) } || seg.contains("Array.from(")
+            if (!hasSplit) continue
 
-            val lbOff = maxOf(0, joinIdx - 3000)
             val fd = Regex("""([\w$]+)\s*=\s*function\(\s*([\w$]+)\s*\)\s*\{""").findAll(seg).lastOrNull()
                 ?: Regex("""function\s+([\w$]+)\s*\(\s*([\w$]+)\s*\)\s*\{""").findAll(seg).lastOrNull()
+                ?: Regex("""([\w$]+)\s*=\s*\(\s*([\w$]+)\s*\)\s*=>\s*\{""").findAll(seg).lastOrNull()
+                ?: Regex("""([\w$]+)\s*=\s*([\w$]+)\s*=>\s*\{""").findAll(seg).lastOrNull()
                 ?: continue
             val fnName = fd.groupValues[1]; val fnParam = fd.groupValues[2]
             val fdAbsIdx = lbOff + fd.range.first
             val fnBraceIdx = js.indexOf("{", fdAbsIdx).takeIf { it >= 0 } ?: continue
             val fnBody = extractBalanced(js, fnBraceIdx) ?: continue
-            if (!fnBody.contains("split") || !fnBody.contains("join")) continue
+            val fnHasSplit = splitTokens.any { fnBody.contains(it) } || fnBody.contains("Array.from(")
+            val fnHasJoin  = joinTokens.any { fnBody.contains(it) }
+            if (!fnHasSplit || !fnHasJoin) continue
 
             val helperName =
                 Regex("""([\w$]+)\.([\w$]+)\($fnParam""").find(fnBody)?.groupValues?.get(1)
                     ?: Regex("""([\w$]+)\["[\w$]+"\]\($fnParam""").find(fnBody)?.groupValues?.get(1)
                     ?: continue
-
-            val before = js.substring(0, fdAbsIdx)
-            val helperStart = before.lastIndexOf("var $helperName={").takeIf { it >= 0 }
-                ?: before.lastIndexOf(";$helperName={").let { if (it >= 0) it + 1 else -1 }.takeIf { it >= 0 }
-                ?: before.lastIndexOf(",$helperName={").let { if (it >= 0) it + 1 else -1 }.takeIf { it >= 0 }
-                ?: continue
-            val helperBraceIdx = js.indexOf("{", helperStart).takeIf { it >= 0 } ?: continue
-            val helperBody = extractBalanced(js, helperBraceIdx) ?: continue
+            val (_, helperBody) = findHelper(js, helperName, fdAbsIdx) ?: continue
 
             Log.d(TAG, "extractSigDecodeCode(join): fn='$fnName' helper='$helperName'")
             return "var $helperName=$helperBody;\nfunction $fnName($fnParam) $fnBody\ndecodeSig_global=$fnName;"
         }
 
-        // Strategy 2: splice-anchor fallback
+        // Strategy 2: splice-anchor
         var sFrom = 0
         while (true) {
             val spliceIdx = js.indexOf(".splice(0,", sFrom).takeIf { it >= 0 } ?: break
@@ -402,8 +413,50 @@ class PoTokenWebView private constructor(private val context: Context) {
             return "var $helperName=$helperBody;\nfunction $fnName($fnParam) $fnBody\ndecodeSig_global=$fnName;"
         }
 
-        Log.w(TAG, "extractSigDecodeCode: all strategies failed, js=${js.length}b")
+        // Strategy 3: call-site anchor (find fn by where it's called near decodeURIComponent)
+        val csPatterns = listOf(
+            Regex("""\b[\w$]+&&\([\w$]+=([a-zA-Z0-9_$]+)\((?:\d+,)?decodeURIComponent"""),
+            Regex("""\bc&&\(c=([a-zA-Z0-9$]+)\(decodeURIComponent"""),
+            Regex("""\bm=([a-zA-Z0-9$]+)\(decodeURIComponent\(h\.s\)\)"""),
+            Regex("""[;,=]\s*([a-zA-Z0-9$]+)\(decodeURIComponent\([^)]+\.get\("s"\)"""),
+            Regex("""\.set\(["']sig["'],([a-zA-Z0-9$]+)\("""),
+            Regex("""b=([a-zA-Z0-9$]+)\(decodeURIComponent\(b\.get\("s"\)\)\)"""),
+        )
+        for (csp in csPatterns) {
+            val csm = csp.find(js) ?: continue
+            val fnName = csm.groupValues[1]; if (fnName.isBlank()) continue
+            val fnDefIdx = js.indexOf("var $fnName=function(").takeIf { it >= 0 }
+                ?: js.indexOf("$fnName=function(").takeIf { it >= 0 }
+                ?: js.indexOf("function $fnName(").takeIf { it >= 0 } ?: continue
+            val paramOpen = js.indexOf("(", fnDefIdx).takeIf { it >= 0 } ?: continue
+            val paramClose = js.indexOf(")", paramOpen).takeIf { it >= 0 } ?: continue
+            val fnParam = js.substring(paramOpen + 1, paramClose).trim().takeIf { it.isNotBlank() } ?: continue
+            val fnBraceIdx = js.indexOf("{", paramClose).takeIf { it >= 0 } ?: continue
+            val fnBody = extractBalanced(js, fnBraceIdx) ?: continue
+
+            val helperName =
+                Regex("""([\w$]+)\.([\w$]+)\($fnParam""").find(fnBody)?.groupValues?.get(1)
+                    ?: Regex("""([\w$]+)\["[\w$]+"\]\($fnParam""").find(fnBody)?.groupValues?.get(1)
+                    ?: continue
+            val (_, helperBody) = findHelper(js, helperName, fnDefIdx) ?: continue
+
+            Log.d(TAG, "extractSigDecodeCode(cs): fn='$fnName' param='$fnParam' helper='$helperName'")
+            return "var $helperName=$helperBody;\nfunction $fnName($fnParam) $fnBody\ndecodeSig_global=$fnName;"
+        }
+
+        Log.w(TAG, "extractSigDecodeCode: all strategies failed, ${len}b sp=$sp jn=$jn")
         return null
+    }
+
+    private fun findHelper(js: String, name: String, beforeIdx: Int): Pair<Int, String>? {
+        val before = js.substring(0, beforeIdx)
+        val start = before.lastIndexOf("var $name={").takeIf { it >= 0 }
+            ?: before.lastIndexOf(";$name={").let { if (it >= 0) it + 1 else -1 }.takeIf { it >= 0 }
+            ?: before.lastIndexOf(",$name={").let { if (it >= 0) it + 1 else -1 }.takeIf { it >= 0 }
+            ?: return null
+        val braceIdx = js.indexOf("{", start).takeIf { it >= 0 } ?: return null
+        val body = extractBalanced(js, braceIdx) ?: return null
+        return braceIdx to body
     }
 
     // Extract the YouTube n-parameter decode function from player JS.

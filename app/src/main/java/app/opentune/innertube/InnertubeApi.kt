@@ -219,54 +219,77 @@ class InnertubeApi @Inject constructor(
 
     // Extract sig-decode operation sequence from player JS (natively in JVM — no WebView).
     //
-    // Primary strategy (join-anchor): the sig fn always converts string→array via split(""),
-    // applies ops via a helper object, then joins back with join(""). Anchoring on join("") +
-    // validating split("") in lookback identifies the sig fn regardless of obfuscation.
+    // Primary strategy (join-anchor): the sig fn always converts string→array via split,
+    // applies ops via a helper object, then joins back. Anchoring on join("") variants
+    // identifies the sig fn regardless of obfuscation.
     //
     // Fallback strategy (splice-anchor): for older player variants that use splice(0,n).
     private fun extractSigOps(js: String): List<SigOp>? {
         val len = js.length
-        Log.d(tag, "extractSigOps: js=${len}b hasSplit=${js.contains(".split(\"\")")} hasSplice=${js.contains(".splice(0,")} hasReverse=${js.contains(".reverse()")} hasJoin=${js.contains(".join(\"\")") || js.contains(".join('')")}")
+
+        // Content analysis — baked into hint so it's visible in the error even without logcat.
+        val sp = buildString {
+            if (js.contains(".split(\"\")")) append("dq")
+            if (js.contains(".split('')")) append("sq")
+            if (js.contains(".split(``)")) append("bt")
+            if (js.contains("Array.from(")) append("af")
+        }
+        val jn = buildString {
+            if (js.contains(".join(\"\")")) append("dq")
+            if (js.contains(".join('')")) append("sq")
+            if (js.contains(".join(``)")) append("bt")
+        }
+        val diag = "${len}b sp=$sp jn=$jn rev=${js.contains(".reverse()")} spl=${js.contains(".splice(0,")}"
+        Log.d(tag, "extractSigOps: $diag")
+
+        // All known split/join variants (double-quote, single-quote, backtick template literal)
+        val splitTokens = listOf(".split(\"\")", ".split('')", ".split(``)")
+        val joinTokens  = listOf(".join(\"\")",  ".join('')",  ".join(``)")
 
         // ── Strategy 1: join-anchor ──────────────────────────────────────────────
-        sigOpsHint = "s0-noJoin(${len}b)"
-        val joinTokens = listOf(".join(\"\")", ".join('')")
+        sigOpsHint = "s0-noJoin($diag)"
         var jFrom = 0
         while (true) {
             val joinIdx = joinTokens.map { js.indexOf(it, jFrom) }.filter { it >= 0 }.minOrNull() ?: break
             jFrom = joinIdx + 1
 
-            // Sig fn must also have split("") within 3000 chars before the join
-            val seg = js.substring(maxOf(0, joinIdx - 3000), joinIdx)
-            if (!seg.contains(".split(\"\")") && !seg.contains(".split('')")) continue
+            // Sig fn must also have a split within 10000 chars before the join
+            val seg = js.substring(maxOf(0, joinIdx - 10000), joinIdx)
+            val hasSplit = splitTokens.any { seg.contains(it) } || seg.contains("Array.from(")
+            if (!hasSplit) continue
 
-            // Find the enclosing function definition
-            val lbOff = maxOf(0, joinIdx - 3000)
+            // Find the enclosing function definition (regular or arrow)
+            val lbOff = maxOf(0, joinIdx - 10000)
             val fd = Regex("""([\w$]+)\s*=\s*function\(\s*([\w$]+)\s*\)\s*\{""").findAll(seg).lastOrNull()
                 ?: Regex("""function\s+([\w$]+)\s*\(\s*([\w$]+)\s*\)\s*\{""").findAll(seg).lastOrNull()
+                ?: Regex("""([\w$]+)\s*=\s*\(\s*([\w$]+)\s*\)\s*=>\s*\{""").findAll(seg).lastOrNull()
+                ?: Regex("""([\w$]+)\s*=\s*([\w$]+)\s*=>\s*\{""").findAll(seg).lastOrNull()
                 ?: continue
             val fnName = fd.groupValues[1]; val fnParam = fd.groupValues[2]
             val fdAbsIdx = lbOff + fd.range.first
             val fnBraceIdx = js.indexOf("{", fdAbsIdx).takeIf { it >= 0 } ?: continue
             val fnBody = extractBalancedJs(js, fnBraceIdx) ?: continue
-            if (!fnBody.contains("split") || !fnBody.contains("join")) continue
 
-            sigOpsHint = "s1-noHelper(${len}b/$fnName)"
+            val fnHasSplit = splitTokens.any { fnBody.contains(it) } || fnBody.contains("Array.from(")
+            val fnHasJoin  = joinTokens.any { fnBody.contains(it) }
+            if (!fnHasSplit || !fnHasJoin) continue
+
+            sigOpsHint = "s1-noHelper($diag/$fnName)"
             val helperName =
                 Regex("""([\w$]+)\.([\w$]+)\($fnParam""").find(fnBody)?.groupValues?.get(1)
                     ?: Regex("""([\w$]+)\["[\w$]+"\]\($fnParam""").find(fnBody)?.groupValues?.get(1)
                     ?: continue
 
-            sigOpsHint = "s2-noHelperDef(${len}b/$helperName)"
+            sigOpsHint = "s2-noHelperDef($diag/$helperName)"
             val (_, helperBody) = findHelperBody(js, helperName, fdAbsIdx) ?: continue
 
             val opMap = buildOpMap(helperBody)
-                ?: run { sigOpsHint = "s2-opMapEmpty(${len}b/$helperName)"; continue }
+                ?: run { sigOpsHint = "s2-opMapEmpty($diag/$helperName)"; continue }
 
-            sigOpsHint = "s3-noOpCalls(${len}b/$helperName/$fnName)"
+            sigOpsHint = "s3-noOpCalls($diag/$helperName/$fnName)"
             Log.d(tag, "extractSigOps(join): fn='$fnName' helper='$helperName' opMap=$opMap")
             val ops = parseOpCalls(fnBody, fnParam, helperName, opMap)
-                ?: run { sigOpsHint = "s3-opCallsFail(${len}b/$helperName/$fnName)"; continue }
+                ?: run { sigOpsHint = "s3-opCallsFail($diag/$helperName/$fnName)"; continue }
 
             sigOpsHint = "ok-${ops.size}ops"
             Log.d(tag, "extractSigOps: ${ops.size} ops OK via join-anchor/'$helperName'")
@@ -274,7 +297,7 @@ class InnertubeApi @Inject constructor(
         }
 
         // ── Strategy 2: splice-anchor (fallback for older player JS) ────────────
-        sigOpsHint = "f0-noSplice(${len}b)"
+        sigOpsHint = "f0-noSplice($diag)"
         var sFrom = 0
         while (true) {
             val spliceIdx = js.indexOf(".splice(0,", sFrom).takeIf { it >= 0 } ?: break
@@ -311,8 +334,67 @@ class InnertubeApi @Inject constructor(
             return ops
         }
 
-        sigOpsHint = "allFail(${len}b)"
-        Log.w(tag, "extractSigOps: all strategies failed, js=${len}b")
+        // ── Strategy 3: call-site anchor ────────────────────────────────────────
+        // Find the sig fn name from WHERE it is called (near decodeURIComponent/.get("s")),
+        // then locate its definition without relying on split/join/splice patterns.
+        sigOpsHint = "cs0-noCallSite($diag)"
+        val csPatterns = listOf(
+            // X&&(X=FN(decodeURIComponent(...))) — NPE patterns 1/2 with 1-char names allowed
+            Regex("""\b[\w$]+&&\([\w$]+=([a-zA-Z0-9_$]+)\((?:\d+,)?decodeURIComponent"""),
+            // c&&(c=FN(decodeURIComponent — NPE pattern 4
+            Regex("""\bc&&\(c=([a-zA-Z0-9$]+)\(decodeURIComponent"""),
+            // m=FN(decodeURIComponent(h.s)) — NPE pattern 3
+            Regex("""\bm=([a-zA-Z0-9$]+)\(decodeURIComponent\(h\.s\)\)"""),
+            // X=FN(decodeURIComponent(X.get("s")))
+            Regex("""[;,=]\s*([a-zA-Z0-9$]+)\(decodeURIComponent\([^)]+\.get\("s"\)"""),
+            // .set("sig", FN(
+            Regex("""\.set\(["']sig["'],([a-zA-Z0-9$]+)\("""),
+            // b=FN(decodeURIComponent(b.get("s")))
+            Regex("""b=([a-zA-Z0-9$]+)\(decodeURIComponent\(b\.get\("s"\)\)\)"""),
+        )
+        for (csp in csPatterns) {
+            val csm = csp.find(js) ?: continue
+            val fnName = csm.groupValues[1]
+            if (fnName.length < 1) continue
+
+            // Find the function definition
+            val fnDefIdx = js.indexOf("var $fnName=function(").takeIf { it >= 0 }
+                ?: js.indexOf("$fnName=function(").takeIf { it >= 0 }
+                ?: js.indexOf("function $fnName(").takeIf { it >= 0 }
+                ?: run { sigOpsHint = "cs1-noFnDef($diag/$fnName)"; continue }
+
+            val paramOpen = js.indexOf("(", fnDefIdx).takeIf { it >= 0 } ?: continue
+            val paramClose = js.indexOf(")", paramOpen).takeIf { it >= 0 } ?: continue
+            val fnParam = js.substring(paramOpen + 1, paramClose).trim().takeIf { it.isNotBlank() }
+                ?: run { sigOpsHint = "cs1-noParam($diag/$fnName)"; continue }
+
+            val fnBraceIdx = js.indexOf("{", paramClose).takeIf { it >= 0 } ?: continue
+            val fnBody = extractBalancedJs(js, fnBraceIdx) ?: continue
+
+            sigOpsHint = "cs2-noHelper($diag/$fnName)"
+            val helperName =
+                Regex("""([\w$]+)\.([\w$]+)\($fnParam""").find(fnBody)?.groupValues?.get(1)
+                    ?: Regex("""([\w$]+)\["[\w$]+"\]\($fnParam""").find(fnBody)?.groupValues?.get(1)
+                    ?: run { sigOpsHint = "cs2-noHelperName($diag/$fnName)"; continue }
+
+            sigOpsHint = "cs3-noHelperDef($diag/$helperName)"
+            val (_, helperBody) = findHelperBody(js, helperName, fnDefIdx) ?: continue
+
+            val opMap = buildOpMap(helperBody)
+                ?: run { sigOpsHint = "cs3-opMapEmpty($diag/$helperName)"; continue }
+
+            sigOpsHint = "cs4-noOpCalls($diag/$helperName/$fnName)"
+            Log.d(tag, "extractSigOps(cs): fn='$fnName' param='$fnParam' helper='$helperName' opMap=$opMap")
+            val ops = parseOpCalls(fnBody, fnParam, helperName, opMap)
+                ?: run { sigOpsHint = "cs4-opCallsFail($diag/$helperName/$fnName)"; continue }
+
+            sigOpsHint = "ok-cs-${ops.size}ops"
+            Log.d(tag, "extractSigOps: ${ops.size} ops OK via call-site/'$helperName'")
+            return ops
+        }
+
+        sigOpsHint = "allFail($diag)"
+        Log.w(tag, "extractSigOps: all strategies failed, $diag")
         return null
     }
 
