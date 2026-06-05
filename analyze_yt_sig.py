@@ -241,13 +241,15 @@ def extract_dispatcher_ops(js):
     if not pw_body:
         return None, f"d7-noPwBody({helper_name})"
     pw_map = {}
+    rev_mark = f'{table_var}[{reverse_idx}]'
+    spl_mark = f'{table_var}[{splice_idx}]'
     for m in re.finditer(r'([\w$]+)\s*:\s*function\s*\(([^)]*)\)\s*\{([^}]*)\}', pw_body):
         mn = m.group(1)
         n_params = len([x for x in m.group(2).split(',') if x.strip()])
         body = m.group(3)
-        if n_params == 1 and f'u[{reverse_idx}]' in body:
+        if n_params == 1 and rev_mark in body:
             pw_map[mn] = ('reverse', 0)
-        elif n_params == 2 and f'u[{splice_idx}]' in body:
+        elif n_params == 2 and spl_mark in body:
             pw_map[mn] = ('splice', 0)
         elif n_params == 2 and '%' in body and mn not in pw_map:
             pw_map[mn] = ('swap', 0)

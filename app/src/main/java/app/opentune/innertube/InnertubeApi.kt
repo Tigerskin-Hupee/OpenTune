@@ -601,20 +601,11 @@ class InnertubeApi @Inject constructor(
         sigOpsHint     = "d5-noTable($dispName/$helperName)"
 
         // Step 6: string table — tableVar = "...".split("<sep>")
-        // YouTube uses "{" as separator; allow "|" fallback in case it changes.
-        val tableRaw: String
-        val tableSep: String
-        run {
-            val sepCandidates = listOf("{", "|")
-            var found: Pair<String, String>? = null
-            for (sep in sepCandidates) {
-                val re = Regex("""(?<![.\w])${Regex.escape(tableVar)}\s*=\s*"([^"]{300,})"\s*\.split\s*\(\s*"${Regex.escape(sep)}"\s*\)""")
-                val m = re.find(js)
-                if (m != null) { found = m.groupValues[1] to sep; break }
-            }
-            if (found == null) { sigOpsHint = "d5-noTableStr($tableVar)"; return null }
-            tableRaw = found.first; tableSep = found.second
-        }
+        // YouTube uses "{" as separator; "|" tried as fallback in case it changes.
+        val (tableRaw, tableSep) = listOf("{", "|").firstNotNullOfOrNull { sep ->
+            val re = Regex("""(?<![.\w])${Regex.escape(tableVar)}\s*=\s*"([^"]{300,})"\s*\.split\s*\(\s*"${Regex.escape(sep)}"\s*\)""")
+            re.find(js)?.let { it.groupValues[1] to sep }
+        } ?: run { sigOpsHint = "d5-noTableStr($tableVar)"; return null }
         val u   = tableRaw.split(tableSep)
         sigOpsHint = "d6-noTableVerify($dispName/p=$p)"
 
@@ -639,13 +630,15 @@ class InnertubeApi @Inject constructor(
             ?: run { sigOpsHint = "d7-noPwBody($helperName)"; return null }
         val pwMap = mutableMapOf<String, SigOp>()
         val mRe   = Regex("""([\w$]+)\s*:\s*function\s*\(([^)]*)\)\s*\{([^}]*)\}""")
+        val revMark = "$tableVar[$reverseIdx]"
+        val splMark = "$tableVar[$spliceIdx]"
         for (m in mRe.findAll(helperBody)) {
             val mn  = m.groupValues[1]
             val nParams = m.groupValues[2].split(",").count { it.isNotBlank() }
             val body    = m.groupValues[3]
             when {
-                nParams == 1 && body.contains("u[$reverseIdx]") -> pwMap[mn] = SigOp.Reverse
-                nParams == 2 && body.contains("u[$spliceIdx]")  -> pwMap[mn] = SigOp.Splice(0)
+                nParams == 1 && body.contains(revMark) -> pwMap[mn] = SigOp.Reverse
+                nParams == 2 && body.contains(splMark)  -> pwMap[mn] = SigOp.Splice(0)
                 nParams == 2 && body.contains("%") && mn !in pwMap -> pwMap[mn] = SigOp.Swap(0)
             }
         }
