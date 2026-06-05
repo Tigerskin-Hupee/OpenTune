@@ -587,19 +587,28 @@ class InnertubeApi @Inject constructor(
         sigOpsHint   = "d4-noHelperVar($dispName/$tableVar)"
 
         // Step 4b: find the split-result array variable name.
-        // "var b = sig[u[p^N]](u[2])" — N is player-specific, use \d+.
+        // Separator can be u[M] (table-indexed) or literal ""; try both.
+        // Final fallback: use the return/join call's subject (the array joined at the end).
         val eT0 = Regex.escape(tableVar); val eX0 = Regex.escape(xorVar)
-        val splitResM = Regex("""var\s+([\w$]+)\s*=\s*\w+\[$eT0\[$eX0\^\d+\]\]\($eT0\[2\]\)""").find(dispBody)
-        val splitVar  = splitResM?.groupValues?.get(1) ?: "b"
+        val splitVar = Regex("""var\s+([\w$]+)\s*=\s*\w+\[$eT0\[$eX0\^\d+\]\]\($eT0\[\d+\]\)""").find(dispBody)?.groupValues?.get(1)
+            ?: Regex("""var\s+([\w$]+)\s*=\s*\w+\[$eT0\[$eX0\^\d+\]\]\(""\)""").find(dispBody)?.groupValues?.get(1)
+            ?: Regex("""return\s+([\w$]+)\[$eT0\[$eX0\^\d+\]\]""").find(dispBody)?.groupValues?.get(1)
+            ?: "b"
 
-        // Step 5: helper-object name ("Pw" from "Pw[tableVar[xorVar^XOR]](splitVar,…)").
-        // We require the SPLIT RESULT (splitVar) as first arg to avoid matching the split call
-        // itself: x[u[p^48]](u[2]) — there the first arg is u[2], not the array.
+        // Step 5: helper-object name.
+        // Primary: "HELPER[TABLE[XOR^N]](SPLIT_VAR" — splitVar as first arg avoids matching
+        //          the split call itself where the first arg is u[M] or "".
+        // Fallback: the variable subscripted with TABLE[XOR^N] that is called 2+ times
+        //           (helper is invoked once per sig op; split/join are only called once each).
         val eS0 = Regex.escape(splitVar)
-        val hvM = Regex("""([\w$]+)\s*\[$eT0\[$eX0\^\d+\]\]\s*\($eS0""").find(dispBody)
+        val helperName = Regex("""([\w$]+)\s*\[$eT0\[$eX0\^\d+\]\]\s*\($eS0""").find(dispBody)?.groupValues?.get(1)
+            ?: Regex("""([\w$]+)\[$eT0\[$eX0\^\d+\]\]\(""").findAll(dispBody)
+                .map { it.groupValues[1] }
+                .filter { it != tableVar && it != xorVar && it != splitVar }
+                .groupingBy { it }.eachCount()
+                .maxByOrNull { it.value }?.takeIf { it.value >= 2 }?.key
             ?: run { sigOpsHint = "d4-noHelperVar($dispName/$tableVar/$splitVar/body)"; return null }
-        val helperName = hvM.groupValues[1]
-        sigOpsHint     = "d5-noTable($dispName/$helperName)"
+        sigOpsHint = "d5-noTable($dispName/$helperName)"
 
         // Step 6: string table — tableVar = "...".split("<sep>")
         // YouTube uses "{" as separator; "|" tried as fallback in case it changes.

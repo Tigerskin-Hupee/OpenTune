@@ -183,23 +183,33 @@ def extract_dispatcher_ops(js):
         return None, f"d3-noTableVar({disp_name}/{xor_var})"
     table_var = tm.group(1)
 
-    # Step 4b: find the split-result array variable name (typically "b").
-    # "var b = sig[u[p^N]](u[2])" — N is player-specific, use \d+.
-    split_res_m = re.search(
-        r'var\s+([\w$]+)\s*=\s*\w+\[' + re.escape(table_var) + r'\[' + re.escape(xor_var) + r'\^\d+\]\]\(' + re.escape(table_var) + r'\[2\]\)',
-        disp_body
-    )
-    split_var = split_res_m.group(1) if split_res_m else 'b'
+    # Step 4b: find the split-result array variable name.
+    # Separator can be u[M] (table-indexed) or literal ""; try both.
+    # Final fallback: return/join call subject (array joined at end of dispatcher).
+    eT = re.escape(table_var); eX = re.escape(xor_var)
+    _sr = (re.search(r'var\s+([\w$]+)\s*=\s*\w+\[' + eT + r'\[' + eX + r'\^\d+\]\]\(' + eT + r'\[\d+\]\)', disp_body)
+        or re.search(r'var\s+([\w$]+)\s*=\s*\w+\[' + eT + r'\[' + eX + r'\^\d+\]\]\(""\)', disp_body)
+        or re.search(r'return\s+([\w$]+)\[' + eT + r'\[' + eX + r'\^\d+\]\]', disp_body))
+    split_var = _sr.group(1) if _sr else 'b'
 
-    # Step 5: helper object name — require SPLIT_VAR as first arg to avoid matching the split
-    # call itself: sig[u[p^N]](u[2]) whose first arg is u[2], not the array variable.
-    hm = re.search(
-        r'([\w$]+)\[' + re.escape(table_var) + r'\[' + re.escape(xor_var) + r'\^\d+\]\]\s*\(' + re.escape(split_var),
-        disp_body
-    )
+    # Step 5: helper object name.
+    # Primary: "HELPER[TABLE[XOR^N]](SPLIT_VAR" — splitVar as first arg.
+    # Fallback: variable subscripted TABLE[XOR^N] called 2+ times (helper called per op).
+    eS = re.escape(split_var)
+    hm = re.search(r'([\w$]+)\[' + eT + r'\[' + eX + r'\^\d+\]\]\s*\(' + eS, disp_body)
     if not hm:
-        return None, f"d4-noHelperVar({disp_name}/{table_var}/{split_var})"
-    helper_name = hm.group(1)
+        from collections import Counter
+        _counts = Counter(
+            m.group(1) for m in re.finditer(r'([\w$]+)\[' + eT + r'\[' + eX + r'\^\d+\]\]\(', disp_body)
+            if m.group(1) not in (table_var, xor_var, split_var)
+        )
+        _best = _counts.most_common(1)
+        if _best and _best[0][1] >= 2:
+            helper_name = _best[0][0]
+        else:
+            return None, f"d4-noHelperVar({disp_name}/{table_var}/{split_var})"
+    else:
+        helper_name = hm.group(1)
     print(f"  [Strategy 4] dispatcher={disp_name} xorVar={xor_var} tableVar={table_var} splitVar={split_var} helper={helper_name}")
 
     # Step 6: string table — tableVar = "...".split("<sep>")
