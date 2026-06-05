@@ -306,12 +306,15 @@ class InnertubeApi @Inject constructor(
             val hasSplit = splitTokens.any { seg.contains(it) } || seg.contains("Array.from(") || seg.contains("[...")
             if (!hasSplit) continue
 
-            // Find the enclosing function definition (regular or arrow)
+            // Find the enclosing function definition (regular, arrow, or colon object-property)
             val lbOff = maxOf(0, joinIdx - 10000)
             val fd = Regex("""([\w$]+)\s*=\s*function\(\s*([\w$]+)\s*\)\s*\{""").findAll(seg).lastOrNull()
                 ?: Regex("""function\s+([\w$]+)\s*\(\s*([\w$]+)\s*\)\s*\{""").findAll(seg).lastOrNull()
                 ?: Regex("""([\w$]+)\s*=\s*\(\s*([\w$]+)\s*\)\s*=>\s*\{""").findAll(seg).lastOrNull()
                 ?: Regex("""([\w$]+)\s*=\s*([\w$]+)\s*=>\s*\{""").findAll(seg).lastOrNull()
+                ?: Regex("""([\w$]+)\s*:\s*function\s*\(\s*([\w$]+)\s*\)\s*\{""").findAll(seg).lastOrNull()
+                ?: Regex("""([\w$]+)\s*:\s*\(\s*([\w$]+)\s*\)\s*=>\s*\{""").findAll(seg).lastOrNull()
+                ?: Regex("""([\w$]+)\s*:\s*([\w$]+)\s*=>\s*\{""").findAll(seg).lastOrNull()
                 ?: continue
             val fnName = fd.groupValues[1]; val fnParam = fd.groupValues[2]
             val fdAbsIdx = lbOff + fd.range.first
@@ -373,6 +376,9 @@ class InnertubeApi @Inject constructor(
                     ?: Regex("""function\s+([\w$]+)\s*\(\s*([\w$]+)\s*\)\s*\{""").findAll(lb).lastOrNull()
                     ?: Regex("""([\w$]+)\s*=\s*\(\s*([\w$]+)\s*\)\s*=>\s*\{""").findAll(lb).lastOrNull()
                     ?: Regex("""([\w$]+)\s*=\s*([\w$]+)\s*=>\s*\{""").findAll(lb).lastOrNull()
+                    ?: Regex("""([\w$]+)\s*:\s*function\s*\(\s*([\w$]+)\s*\)\s*\{""").findAll(lb).lastOrNull()
+                    ?: Regex("""([\w$]+)\s*:\s*\(\s*([\w$]+)\s*\)\s*=>\s*\{""").findAll(lb).lastOrNull()
+                    ?: Regex("""([\w$]+)\s*:\s*([\w$]+)\s*=>\s*\{""").findAll(lb).lastOrNull()
                     ?: continue
                 val fdAbsIdx2 = lbOff + fd2.range.first
                 val fnBrace2 = js.indexOf("{", fdAbsIdx2).takeIf { it >= 0 } ?: continue

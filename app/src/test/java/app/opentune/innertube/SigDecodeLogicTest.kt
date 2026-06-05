@@ -122,6 +122,77 @@ class SigDecodeLogicTest {
         signatureTimestamp=20100
     """.trimIndent()
 
+    // Style D: YouTube 2026 — all methods (including the decode fn) live inside one
+    // helper object using colon + arrow syntax; call site is OBJ.METHOD(...).
+    // The four existing `=`-based fd patterns miss this; the colon patterns added in
+    // v1.2.57 are required.
+    private val jsStyleD = """
+        var Tp={Yh:(a)=>{a=a.split("");Tp.Xh(a,3);Tp.Ah(a);Tp.Wh(a,5);return a.join("")},Xh:(a,b)=>{a.splice(0,b)},Ah:(a)=>{a.reverse()},Wh:(a,b)=>{var c=a[0];a[0]=a[b%a.length];a[b%a.length]=c}};
+        c&&(c=Tp.Yh(decodeURIComponent(c.get("s"))))
+        signatureTimestamp=20400
+    """.trimIndent()
+
+    // Join-anchor strategy that also handles colon object-property fn definitions.
+    // Mirrors InnertubeApi Strategy 1 with the v1.2.57 fix.
+    private fun extractSigOpsJoinAnchor(js: String): List<SigOp>? {
+        val splitTokens = listOf(".split(\"\")", ".split('')", ".split(``)")
+        val joinTokens  = listOf(".join(\"\")",  ".join('')",  ".join(``)")
+        var jFrom = 0
+        while (true) {
+            val joinIdx = joinTokens.map { js.indexOf(it, jFrom) }.filter { it >= 0 }.minOrNull() ?: break
+            jFrom = joinIdx + 1
+            val lbOff = maxOf(0, joinIdx - 10000)
+            val seg = js.substring(lbOff, joinIdx)
+            if (!splitTokens.any { seg.contains(it) } && !seg.contains("Array.from(") && !seg.contains("[...")) continue
+
+            val fd = Regex("""([\w$]+)\s*=\s*function\(\s*([\w$]+)\s*\)\s*\{""").findAll(seg).lastOrNull()
+                ?: Regex("""function\s+([\w$]+)\s*\(\s*([\w$]+)\s*\)\s*\{""").findAll(seg).lastOrNull()
+                ?: Regex("""([\w$]+)\s*=\s*\(\s*([\w$]+)\s*\)\s*=>\s*\{""").findAll(seg).lastOrNull()
+                ?: Regex("""([\w$]+)\s*=\s*([\w$]+)\s*=>\s*\{""").findAll(seg).lastOrNull()
+                ?: Regex("""([\w$]+)\s*:\s*function\s*\(\s*([\w$]+)\s*\)\s*\{""").findAll(seg).lastOrNull()
+                ?: Regex("""([\w$]+)\s*:\s*\(\s*([\w$]+)\s*\)\s*=>\s*\{""").findAll(seg).lastOrNull()
+                ?: Regex("""([\w$]+)\s*:\s*([\w$]+)\s*=>\s*\{""").findAll(seg).lastOrNull()
+                ?: continue
+            val fnParam = fd.groupValues[2]
+            val fdAbsIdx = lbOff + fd.range.first
+            val fnBraceIdx = js.indexOf("{", fdAbsIdx).takeIf { it >= 0 } ?: continue
+            val fnBody = extractBalanced(js, fnBraceIdx) ?: continue
+            if (!splitTokens.any { fnBody.contains(it) } || !joinTokens.any { fnBody.contains(it) }) continue
+
+            val helperName = Regex("""([\w$]+)\.([\w$]+)\($fnParam""").find(fnBody)?.groupValues?.get(1) ?: continue
+            val hSearch = js.indexOf("var $helperName={").takeIf { it >= 0 }
+                ?: js.indexOf("$helperName={").takeIf { it >= 0 } ?: continue
+            val hBrace = js.indexOf("{", hSearch).takeIf { it >= 0 } ?: continue
+            val helperBody = extractBalanced(js, hBrace) ?: continue
+
+            val h1 = """(?:function\s*\(\w+\)\s*\{|\(\w+\)\s*=>\s*\{?|\w+\s*=>\s*\{?)"""
+            val h2 = """(?:function\s*\(\w+,\w+\)\s*\{|\(\w+,\w+\)\s*=>\s*\{?)"""
+            val opMap = mutableMapOf<String, SigOp>()
+            Regex("""([\w$]+)\s*:\s*$h1[^}]*\.reverse\(\)""").findAll(helperBody)
+                .forEach { opMap[it.groupValues[1]] = SigOp.Reverse }
+            Regex("""([\w$]+)\s*:\s*$h2[^}]*\.splice\(0,""").findAll(helperBody)
+                .forEach { opMap[it.groupValues[1]] = SigOp.Splice(0) }
+            Regex("""([\w$]+)\s*:\s*$h2[^}]*%\w+\.length""").findAll(helperBody)
+                .filter { opMap[it.groupValues[1]] == null }
+                .forEach { opMap[it.groupValues[1]] = SigOp.Swap(0) }
+            if (opMap.isEmpty()) continue
+
+            val ops = mutableListOf<SigOp>()
+            Regex("""${Regex.escape(helperName)}\.([\w$]+)\($fnParam(?:,(\d+))?\)""").findAll(fnBody)
+                .forEach { m ->
+                    val n = m.groupValues[2].toIntOrNull() ?: 0
+                    when (val base = opMap[m.groupValues[1]]) {
+                        SigOp.Reverse -> ops.add(SigOp.Reverse)
+                        is SigOp.Splice -> ops.add(SigOp.Splice(n))
+                        is SigOp.Swap -> ops.add(SigOp.Swap(n))
+                        null -> {}
+                    }
+                }
+            if (ops.isNotEmpty()) return ops
+        }
+        return null
+    }
+
     // ── Tests for extractSigOps ───────────────────────────────────────────────────
 
     @Test
@@ -263,5 +334,52 @@ class SigDecodeLogicTest {
         }.joinToString("")
 
         assertEquals("End-to-end style B decode mismatch", step3, decoded)
+    }
+
+    // ── Style D: colon + arrow syntax (YouTube 2026) ─────────────────────────────
+
+    @Test
+    fun `extractSigOps — old call-site strategy fails on style D (documents the bug)`() {
+        // The call site is Tp.Yh(...) — the old extractSigOps captures "Tp" as fnName,
+        // then can't find "function Tp(" or "Tp=function(" → returns null.
+        // This test documents the known limitation of the call-site strategy for style D.
+        val ops = extractSigOps(jsStyleD)
+        assertNull(
+            "extractSigOps (call-site strategy) should return null for style D " +
+            "because Tp.Yh call site is not handled — this documents the bug fixed in v1.2.57",
+            ops
+        )
+    }
+
+    @Test
+    fun `extractSigOpsJoinAnchor — colon-arrow object property form (style D, v1257 fix)`() {
+        val ops = extractSigOpsJoinAnchor(jsStyleD)
+        assertNotNull(
+            "extractSigOpsJoinAnchor returned null for style D.\n" +
+            "The join-anchor strategy with colon patterns (v1.2.57 fix) must handle:\n" +
+            "  Yh:(a)=>{...} inside var Tp={...}",
+            ops
+        )
+        assertEquals("Expected 3 ops for style D", 3, ops!!.size)
+        // Tp.Xh(a,3) = Splice(3), Tp.Ah(a) = Reverse, Tp.Wh(a,5) = Swap(5)
+        assertEquals(SigOp.Splice(3), ops[0])
+        assertEquals(SigOp.Reverse,   ops[1])
+        assertEquals(SigOp.Swap(5),   ops[2])
+    }
+
+    @Test
+    fun `end-to-end — style D extraction + apply produces correct decoded sig`() {
+        val ops = extractSigOpsJoinAnchor(jsStyleD)!!
+        val rawSig = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwx"
+        val decoded = applySigOps(rawSig, ops)
+
+        // Style D ops: Splice(3), Reverse, Swap(5)
+        val step1 = rawSig.drop(3)                      // Splice(3)
+        val step2 = step1.reversed()                    // Reverse
+        val step3 = step2.toMutableList().also { a ->
+            val idx = 5 % a.size; val t = a[0]; a[0] = a[idx]; a[idx] = t
+        }.joinToString("")                              // Swap(5)
+
+        assertEquals("End-to-end style D decode mismatch", step3, decoded)
     }
 }
