@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-OpenTune sig-decode tester  (v1.2.59 logic — Strategy 4: flat-dispatcher).
+OpenTune sig-decode tester  (v1.2.60 logic — Strategy 4: flat-dispatcher).
 Mirrors InnertubeApi.kt extractSigOps — shows exactly where it succeeds or fails,
 then auto-fetches a real signatureCipher and verifies the decode end-to-end.
 
@@ -133,9 +133,23 @@ def extract_dispatcher_ops(js):
     Returns (ops_list, status_string) or (None, error_string).
     ops_list is like [('splice',2),('reverse',0),('swap',17),...]
     """
-    # Step 1: nested call site  FNAME(R1,K1, FNAME(R2,K2, SIG.s))
-    cs = re.search(
-        r'(\w+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\s*\(\s*\d+\s*,\s*\d+\s*,\s*\w+\.s\s*\)\s*\)', js)
+    # Step 1: nested call site  FNAME(R1,K1, FNAME(R2,K2, SIG.??))
+    # Try from most specific to most broad so we confirm the sig-decoding outer call.
+    _cs_patterns = [
+        # exact: inner last arg is OBJ.s  (original / 5cabb421)
+        r'(\w+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\s*\(\s*\d+\s*,\s*\d+\s*,\s*\w+\.s\s*\)\s*\)',
+        # sig property renamed (OBJ.sig, OBJ.sc, OBJ.se, ...)
+        r'(\w+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\s*\(\s*\d+\s*,\s*\d+\s*,\s*\w+\.\w+\s*\)\s*\)',
+        # inner call ends with any short expression (≤60 chars, no parens nesting)
+        r'(\w+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\s*\(\s*\d+\s*,\s*\d+\s*,[^\(\)]{1,60}\)\s*\)',
+    ]
+    cs = None
+    cs_variant = ""
+    for _pat in _cs_patterns:
+        cs = re.search(_pat, js)
+        if cs:
+            cs_variant = _pat[:30]
+            break
     if not cs:
         return None, "d0-noCallSite"
     disp_name = cs.group(1)
@@ -187,12 +201,18 @@ def extract_dispatcher_ops(js):
     helper_name = hm.group(1)
     print(f"  [Strategy 4] dispatcher={disp_name} xorVar={xor_var} tableVar={table_var} splitVar={split_var} helper={helper_name}")
 
-    # Step 6: string table (tableVar = "...long...".split("{"))
-    te = re.search(
-        r'(?<![.\w])' + re.escape(table_var) + r'\s*=\s*"([^"]{300,})"\s*\.split\s*\(\s*"\{"\s*\)', js)
+    # Step 6: string table — tableVar = "...".split("<sep>")
+    # YouTube uses "{" as separator; try "|" as fallback.
+    te = None; table_sep = '{'
+    for _sep in ['{', '|']:
+        te = re.search(
+            r'(?<![.\w])' + re.escape(table_var) + r'\s*=\s*"([^"]{300,})"\s*\.split\s*\(\s*"' + re.escape(_sep) + r'"\s*\)', js)
+        if te:
+            table_sep = _sep
+            break
     if not te:
         return None, f"d5-noTableStr({table_var})"
-    u = te.group(1).split('{')
+    u = te.group(1).split(table_sep)
 
     # Step 7: verify p
     if 'split' not in u:
@@ -354,23 +374,80 @@ def show_dispatcher_analysis(js):
     print("\n" + "="*70)
     print("DISPATCHER PATTERN ANALYSIS")
     print("="*70)
-    cs = re.search(
-        r'(\w+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\s*\(\s*\d+\s*,\s*\d+\s*,\s*\w+\.s\s*\)\s*\)', js)
-    if cs:
-        print(f"Call site found: {js[max(0,cs.start()-30):cs.end()+30]!r}")
-    for m in re.finditer(r'"([^"\n]{500,})"', js):
-        content = m.group(1)
-        if 'split' in content and 'join' in content and 'reverse' in content and '{' in content:
-            u = content.split('{')
-            if len(u) > 20:
-                idx = {e: i for i, e in enumerate(u)}
-                if 'split' in idx and 'join' in idx:
-                    p = idx['split'] ^ 48
-                    if (idx['join'] ^ 5) == p:
-                        print(f"\nString table at @{m.start()}: {len(u)} entries, p={p}")
-                        for key in ['split', 'join', 'reverse', 'splice', '']:
-                            if key in idx: print(f"  u[{idx[key]}] = {repr(key)}")
-                        break
+
+    # A: All call-site variants (from broadest to narrowest)
+    _pats = [
+        (r'(\w+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\s*\(\s*\d+\s*,\s*\d+\s*,\s*\w+\.s\s*\)\s*\)', 'OBJ.s'),
+        (r'(\w+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\s*\(\s*\d+\s*,\s*\d+\s*,\s*\w+\.\w+\s*\)\s*\)', 'OBJ.any'),
+        (r'(\w+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\s*\(\s*\d+\s*,\s*\d+\s*,[^\(\)]{1,60}\)\s*\)', 'anyArg'),
+        # even broader: nested same-func call (no inner arg constraint)
+        (r'(\w+)\s*\(\s*\d+\s*,\s*\d+\s*,\s*\1\s*\(', 'nested-same-fn'),
+    ]
+    found_cs = False
+    for _p, _label in _pats:
+        cs = re.search(_p, js)
+        if cs:
+            snippet = js[max(0, cs.start()-40):cs.end()+40]
+            print(f"Call site [{_label}]: {snippet!r}")
+            found_cs = True
+            break
+    if not found_cs:
+        print("No call site found (tried all variants).")
+        # Show any double-nested calls of the form FNAME(N,N,
+        for m in re.finditer(r'(\b\w{1,6})\s*\(\s*\d+\s*,\s*\d+\s*,', js):
+            fn = m.group(1)
+            # check it appears twice nested in nearby 200-char window
+            window = js[m.start():m.start()+200]
+            if re.search(r'\b' + re.escape(fn) + r'\s*\(\s*\d', window[m.end()-m.start():]):
+                print(f"  Candidate nested fn: {fn!r}  context: {window[:100]!r}")
+                break
+
+    # B: String tables — try multiple separators
+    sep_found = False
+    for sep in ['{', '|', '~', '^']:
+        for m in re.finditer(r'"([^"\n]{300,})"', js):
+            content = m.group(1)
+            if sep not in content:
+                continue
+            parts = content.split(sep)
+            if len(parts) < 20:
+                continue
+            idx = {e: i for i, e in enumerate(parts)}
+            if 'split' not in idx or 'join' not in idx or 'reverse' not in idx:
+                continue
+            p_candidate = idx['split'] ^ 48
+            if (idx['join'] ^ 5) == p_candidate:
+                print(f"\nString table (sep={sep!r}) at @{m.start()}: {len(parts)} entries, p={p_candidate}")
+                for key in ['split', 'join', 'reverse', 'splice', '']:
+                    if key in idx:
+                        print(f"  u[{idx[key]}] = {key!r}")
+                sep_found = True
+                break
+        if sep_found:
+            break
+    if not sep_found:
+        print("No string table (with split/join/reverse) found for any separator.")
+        # Show any very long string literals as candidates
+        for m in re.finditer(r'"([^"\n]{500,})"', js):
+            c = m.group(1)
+            print(f"  Long string @{m.start()} ({len(c)} chars): {c[:80]!r}")
+            if sum(1 for _ in re.finditer(r'"[^"\n]{500,}"', js)) > 5:
+                print("  (showing first match only)")
+                break
+
+    # C: Show how .s / .sp are accessed (to find renamed sig property)
+    print("\nSig property accesses (looking for .s .sp .sig etc.):")
+    for m in re.finditer(r'[\w$]+\s*\.\s*(s|sp|sig|sc|se)\b', js):
+        ctx = js[max(0, m.start()-30):m.end()+30]
+        print(f"  .{m.group(1)} at @{m.start()}: {ctx!r}")
+        break  # show first only
+
+    # D: signatureCipher / cipher field name
+    for pat in [r'signatureCipher', r'"s"\s*:', r'\.s\b']:
+        m = re.search(pat, js)
+        if m:
+            print(f"  [{pat}] found @{m.start()}: {js[max(0,m.start()-20):m.end()+40]!r}")
+            break
 
 # ── Auto-fetch signatureCipher from YouTube ───────────────────────────────────
 
@@ -455,7 +532,7 @@ def fetch_cipher_from_youtube(video_id, sig_ts=0):
             continue
         cipher, base_url, msg = _extract_cipher_from_response(raw)
         if cipher:
-            print(f"    [{cl['name']}] got signatureCipher ✓")
+            print(f"    [{cl['name']}] got signatureCipher OK")
             return cipher, base_url
         print(f"    [{cl['name']}] {msg}")
     return None, None
@@ -498,7 +575,7 @@ def find_player_url(html):
     return None
 
 print("="*70)
-print("OpenTune sig-decode tester  (v1.2.59 — Strategy 4: flat-dispatcher)")
+print("OpenTune sig-decode tester  (v1.2.60 — Strategy 4: flat-dispatcher)")
 print("="*70)
 print(f"Using UA: {UA}\n")
 

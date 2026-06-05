@@ -545,10 +545,19 @@ class InnertubeApi @Inject constructor(
     // We find: call site → dispatcher fn → xor var → table var → helper var →
     //          string table → verify p → Pw opMap → extract ops in order.
     private fun extractSigOpsDispatcher(js: String): List<SigOp>? {
-        // Step 1: nested call site  FNAME(R1,K1, FNAME(R2,K2, SIG.s))
-        // The outer call R1^K1 = p.  The inner call wraps `.s` (raw signature).
-        val csRe = Regex("""(\w+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\s*\(\s*\d+\s*,\s*\d+\s*,\s*\w+\.s\s*\)\s*\)""")
-        val cs = csRe.find(js) ?: run { sigOpsHint = "d0-noCallSite"; return null }
+        // Step 1: nested call site  FNAME(R1,K1, FNAME(R2,K2, SIG.??))
+        // Outer R1^K1 = p.  Inner call wraps the raw signature property.
+        // YouTube may rename .s → .sig / .sc / etc., so we try three patterns.
+        val csPatterns = listOf(
+            // Exact: inner last arg is OBJ.s  (original / 5cabb421)
+            Regex("""(\w+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\s*\(\s*\d+\s*,\s*\d+\s*,\s*\w+\.s\s*\)\s*\)"""),
+            // Sig property renamed (OBJ.sig / OBJ.sc / OBJ.se …)
+            Regex("""(\w+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\s*\(\s*\d+\s*,\s*\d+\s*,\s*\w+\.\w+\s*\)\s*\)"""),
+            // Any short inner arg (no nested parens, ≤60 chars)
+            Regex("""(\w+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\s*\(\s*\d+\s*,\s*\d+\s*,[^()]{1,60}\)\s*\)"""),
+        )
+        val cs = csPatterns.firstNotNullOfOrNull { it.find(js) }
+            ?: run { sigOpsHint = "d0-noCallSite"; return null }
         val dispName = cs.groupValues[1]
         val outerR   = cs.groupValues[2].toIntOrNull() ?: return null
         val outerK   = cs.groupValues[3].toIntOrNull() ?: return null
@@ -591,10 +600,22 @@ class InnertubeApi @Inject constructor(
         val helperName = hvM.groupValues[1]
         sigOpsHint     = "d5-noTable($dispName/$helperName)"
 
-        // Step 6: string table  tableVar = "...".split("{")
-        val tRe = Regex("""(?<![.\w])${Regex.escape(tableVar)}\s*=\s*"([^"]{300,})"\s*\.split\s*\(\s*"\{"\s*\)""")
-        val tM  = tRe.find(js) ?: run { sigOpsHint = "d5-noTableStr($tableVar)"; return null }
-        val u   = tM.groupValues[1].split("{")
+        // Step 6: string table — tableVar = "...".split("<sep>")
+        // YouTube uses "{" as separator; allow "|" fallback in case it changes.
+        val tableRaw: String
+        val tableSep: String
+        run {
+            val sepCandidates = listOf("{", "|")
+            var found: Pair<String, String>? = null
+            for (sep in sepCandidates) {
+                val re = Regex("""(?<![.\w])${Regex.escape(tableVar)}\s*=\s*"([^"]{300,})"\s*\.split\s*\(\s*"${Regex.escape(sep)}"\s*\)""")
+                val m = re.find(js)
+                if (m != null) { found = m.groupValues[1] to sep; break }
+            }
+            if (found == null) { sigOpsHint = "d5-noTableStr($tableVar)"; return null }
+            tableRaw = found.first; tableSep = found.second
+        }
+        val u   = tableRaw.split(tableSep)
         sigOpsHint = "d6-noTableVerify($dispName/p=$p)"
 
         // Step 7: verify p (split index ^ 48 == p, u[p^5] == "join")
