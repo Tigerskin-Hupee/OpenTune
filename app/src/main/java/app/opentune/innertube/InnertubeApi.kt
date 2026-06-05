@@ -561,16 +561,24 @@ class InnertubeApi @Inject constructor(
     // Discovers p and xorVar from the string table, locates the dispatcher function
     // body, then runs the shared Steps 4b-9 extraction.
     private fun extractSigOpsTableFirst(js: String): List<SigOp>? {
-        for (sep in listOf("{", ";", "|")) {
+        // Track the most specific failure so far (wins over the generic "no table" fallback).
+        var bestHint = "d0-tf-noTable"
+        for (sep in listOf("{", ";", "|", "~", "^", ",")) {
             val eS = Regex.escape(sep)
             val teM = Regex("""(?<![.\w])([\w$]+)\s*=\s*"([^"]{200,})"\s*\.split\s*\(\s*"$eS"\s*\)""").find(js)
                 ?: continue
             val tableVar = teM.groupValues[1]
             val u = teM.groupValues[2].split(sep)
-            if (listOf("split", "join", "reverse", "splice").any { it !in u }) continue
+            if (listOf("split", "join", "reverse", "splice").any { it !in u }) {
+                if (bestHint == "d0-tf-noTable") bestHint = "d0-tf-tableNoOps($tableVar/$sep)"
+                continue
+            }
 
-            val (p, xorVar) = discoverPFromTable(js, tableVar, u)
-                ?: run { Log.d(tag, "extractSigOps(tf): table sep=$sep found but p undiscoverable"); continue }
+            val discovered = discoverPFromTable(js, tableVar, u)
+            if (discovered == null) {
+                bestHint = "d0-tf-noP($tableVar/$sep)"; continue
+            }
+            val (p, xorVar) = discovered
             Log.d(tag, "extractSigOps(tf): table=$tableVar sep=$sep p=$p xorVar=$xorVar")
 
             // Find dispatcher body: function containing "var xorVar = A^B"
@@ -585,7 +593,7 @@ class InnertubeApi @Inject constructor(
                 if (xorPat.findAll(body).count() >= 3) { dispBody = body; break }
             }
             val body = dispBody
-                ?: run { sigOpsHint = "d0-tf-noDispBody($tableVar/$xorVar)"; continue }
+                ?: run { bestHint = "d0-tf-noDispBody($tableVar/$xorVar)"; null } ?: continue
 
             // Steps 4b-9: same logic as main dispatcher path
             val splitIdx   = u.indexOf("split")
@@ -604,10 +612,10 @@ class InnertubeApi @Inject constructor(
                     .filter { it != tableVar && it != xorVar && it != splitVar }
                     .groupingBy { it }.eachCount()
                     .maxByOrNull { it.value }?.takeIf { it.value >= 2 }?.key
-                ?: run { sigOpsHint = "d0-tf-noHelper($tableVar/$xorVar/$splitVar)"; continue }
+                ?: run { bestHint = "d0-tf-noHelper($tableVar/$xorVar/$splitVar)"; null } ?: continue
 
             val (_, helperBody) = findHelperBody(js, helperName, 0)
-                ?: run { sigOpsHint = "d0-tf-noHelperBody($helperName)"; continue }
+                ?: run { bestHint = "d0-tf-noHelperBody($helperName)"; null } ?: continue
             val pwMap    = mutableMapOf<String, SigOp>()
             val revMark  = "$tableVar[$reverseIdx]"
             val splMark  = "$tableVar[$spliceIdx]"
@@ -623,7 +631,7 @@ class InnertubeApi @Inject constructor(
                 }
             }
             if (pwMap.size < 2) {
-                sigOpsHint = "d0-tf-pwMapSmall($helperName/${pwMap.size})"; continue
+                bestHint = "d0-tf-pwMapSmall($helperName/${pwMap.size})"; continue
             }
 
             val eH  = Regex.escape(helperName)
@@ -650,9 +658,9 @@ class InnertubeApi @Inject constructor(
                 Log.d(tag, "extractSigOps(dispatcher/table-first): ${ops.size} ops '$tableVar'/'$helperName' p=$p")
                 return ops
             }
-            sigOpsHint = "d0-tf-emptyOps($tableVar/$helperName)"
+            bestHint = "d0-tf-emptyOps($tableVar/$helperName)"
         }
-        sigOpsHint = "d0-noCallSite"
+        sigOpsHint = bestHint
         return null
     }
 
