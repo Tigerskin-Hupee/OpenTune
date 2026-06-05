@@ -451,8 +451,14 @@ class PoTokenWebView private constructor(private val context: Context) {
     private fun findHelper(js: String, name: String, beforeIdx: Int): Pair<Int, String>? {
         val before = js.substring(0, beforeIdx)
         val start = before.lastIndexOf("var $name={").takeIf { it >= 0 }
+            ?: before.lastIndexOf("const $name={").takeIf { it >= 0 }
+            ?: before.lastIndexOf("let $name={").takeIf { it >= 0 }
             ?: before.lastIndexOf(";$name={").let { if (it >= 0) it + 1 else -1 }.takeIf { it >= 0 }
             ?: before.lastIndexOf(",$name={").let { if (it >= 0) it + 1 else -1 }.takeIf { it >= 0 }
+            ?: js.indexOf("var $name={", beforeIdx).takeIf { it >= 0 }
+            ?: js.indexOf("const $name={", beforeIdx).takeIf { it >= 0 }
+            ?: js.indexOf("let $name={", beforeIdx).takeIf { it >= 0 }
+            ?: js.indexOf(";$name={", beforeIdx).let { if (it >= 0) it + 1 else -1 }.takeIf { it >= 0 }
             ?: return null
         val braceIdx = js.indexOf("{", start).takeIf { it >= 0 } ?: return null
         val body = extractBalanced(js, braceIdx) ?: return null

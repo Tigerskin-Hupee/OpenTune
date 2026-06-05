@@ -218,12 +218,22 @@ class InnertubeApi @Inject constructor(
         return ops.ifEmpty { null }
     }
 
-    // Find the helper object body given its name, searching backward from fdAbsIdx.
+    // Find the helper object body given its name.
+    // Searches backward from beforeIdx first (typical: helper before decode fn),
+    // then forward (fallback: helper after decode fn).
+    // Handles var/const/let declarations and inline assignments.
     private fun findHelperBody(js: String, helperName: String, beforeIdx: Int): Pair<Int, String>? {
         val before = js.substring(0, beforeIdx)
         val start = before.lastIndexOf("var $helperName={").takeIf { it >= 0 }
+            ?: before.lastIndexOf("const $helperName={").takeIf { it >= 0 }
+            ?: before.lastIndexOf("let $helperName={").takeIf { it >= 0 }
             ?: before.lastIndexOf(";$helperName={").let { if (it >= 0) it + 1 else -1 }.takeIf { it >= 0 }
             ?: before.lastIndexOf(",$helperName={").let { if (it >= 0) it + 1 else -1 }.takeIf { it >= 0 }
+            // Forward search fallback (helper defined after the decode function)
+            ?: js.indexOf("var $helperName={", beforeIdx).takeIf { it >= 0 }
+            ?: js.indexOf("const $helperName={", beforeIdx).takeIf { it >= 0 }
+            ?: js.indexOf("let $helperName={", beforeIdx).takeIf { it >= 0 }
+            ?: js.indexOf(";$helperName={", beforeIdx).let { if (it >= 0) it + 1 else -1 }.takeIf { it >= 0 }
             ?: return null
         val braceIdx = js.indexOf("{", start).takeIf { it >= 0 } ?: return null
         val body = extractBalancedJs(js, braceIdx) ?: return null
@@ -309,6 +319,8 @@ class InnertubeApi @Inject constructor(
             return ops
         }
 
+        val s1hint = sigOpsHint.substringBefore("(")
+
         // ── Strategy 2: splice-anchor (fallback for older player JS) ────────────
         sigOpsHint = "f0-noSplice($diag)"
         var sFrom = 0
@@ -346,6 +358,8 @@ class InnertubeApi @Inject constructor(
             Log.d(tag, "extractSigOps: ${ops.size} ops OK via splice-anchor/'$helperName'")
             return ops
         }
+
+        val s2hint = sigOpsHint.substringBefore("(")
 
         // ── Strategy 3: call-site anchor ────────────────────────────────────────
         // Find the sig fn name from WHERE it is called (near decodeURIComponent/.get("s")),
@@ -406,8 +420,9 @@ class InnertubeApi @Inject constructor(
             return ops
         }
 
-        sigOpsHint = "allFail($diag)"
-        Log.w(tag, "extractSigOps: all strategies failed, $diag")
+        val s3hint = sigOpsHint.substringBefore("(")
+        sigOpsHint = "allFail($diag [$s1hint|$s2hint|$s3hint])"
+        Log.w(tag, "extractSigOps: all strategies failed, $diag [$s1hint|$s2hint|$s3hint]")
         return null
     }
 
