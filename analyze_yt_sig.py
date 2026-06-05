@@ -176,22 +176,23 @@ def extract_dispatcher_ops(js):
         return None, f"d2-noXorVar({disp_name})"
     xor_var = xm.group(1)
 
-    # Step 4: string table var (from "tableVar[xorVar^48]")
-    tm = re.search(r'([\w$]+)\[' + re.escape(xor_var) + r'\^48\]', disp_body)
+    # Step 4: string table var — any "TABLE[xorVar^N]" access (N is player-specific).
+    # Was hardcoded to ^48 for player 5cabb421 (p=60,split@12,60^12=48); use \d+ now.
+    tm = re.search(r'([\w$]+)\[' + re.escape(xor_var) + r'\^\d+\]', disp_body)
     if not tm:
         return None, f"d3-noTableVar({disp_name}/{xor_var})"
     table_var = tm.group(1)
 
     # Step 4b: find the split-result array variable name (typically "b").
-    # "var b = x[tableVar[xorVar^48]](tableVar[2])" → split_var = "b".
+    # "var b = sig[u[p^N]](u[2])" — N is player-specific, use \d+.
     split_res_m = re.search(
-        r'var\s+([\w$]+)\s*=\s*\w+\[' + re.escape(table_var) + r'\[' + re.escape(xor_var) + r'\^48\]\]\(' + re.escape(table_var) + r'\[2\]\)',
+        r'var\s+([\w$]+)\s*=\s*\w+\[' + re.escape(table_var) + r'\[' + re.escape(xor_var) + r'\^\d+\]\]\(' + re.escape(table_var) + r'\[2\]\)',
         disp_body
     )
     split_var = split_res_m.group(1) if split_res_m else 'b'
 
     # Step 5: helper object name — require SPLIT_VAR as first arg to avoid matching the split
-    # call itself: x[u[p^48]](u[2]) whose first arg is u[2], not the array variable.
+    # call itself: sig[u[p^N]](u[2]) whose first arg is u[2], not the array variable.
     hm = re.search(
         r'([\w$]+)\[' + re.escape(table_var) + r'\[' + re.escape(xor_var) + r'\^\d+\]\]\s*\(' + re.escape(split_var),
         disp_body
@@ -214,19 +215,16 @@ def extract_dispatcher_ops(js):
         return None, f"d5-noTableStr({table_var})"
     u = te.group(1).split(table_sep)
 
-    # Step 7: verify p
-    if 'split' not in u:
-        return None, "d6-noSplitInTable"
-    split_idx = u.index('split')
-    if (split_idx ^ 48) != p:
-        return None, f"d6-pMismatch(table={split_idx^48} call={p})"
-    if u[p ^ 5] != 'join':
-        return None, f"d6-noJoinVerify(u[{p^5}]={u[p^5]!r})"
-    if 'reverse' not in u or 'splice' not in u:
-        return None, "d6-missingOpsInTable"
+    # Step 7: verify string table has all required op names.
+    # XOR constants (^48 split, ^5 join) are player-specific — removed those checks.
+    for op in ('split', 'join', 'reverse', 'splice'):
+        if op not in u:
+            return None, f"d6-missing({op})InTable"
+    split_idx   = u.index('split')
+    join_idx    = u.index('join')
     reverse_idx = u.index('reverse')
     splice_idx  = u.index('splice')
-    print(f"  [Strategy 4] table OK: p={p} split@{split_idx} join@{u.index('join')} "
+    print(f"  [Strategy 4] table OK: p={p} split@{split_idx} join@{join_idx} "
           f"reverse@{reverse_idx} splice@{splice_idx}")
 
     # Step 8: Pw helper object body + opMap (uses string table indices)
