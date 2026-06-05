@@ -526,6 +526,136 @@ class InnertubeApi @Inject constructor(
         return null
     }
 
+    // Derive p (XOR key) and xorVar from consistent XOR-constant triples in the
+    // string table.  Used when the nested call-site pattern is absent (2026+ players
+    // where the outer FNAME(R,K,FNAME(...)) wrapper was removed).
+    // Returns Pair(p, xorVarName) or null.
+    private fun discoverPFromTable(js: String, tableVar: String, u: List<String>): Pair<Int, String>? {
+        val splitIdx   = u.indexOf("split").takeIf   { it >= 0 } ?: return null
+        val reverseIdx = u.indexOf("reverse").takeIf { it >= 0 } ?: return null
+        val spliceIdx  = u.indexOf("splice").takeIf  { it >= 0 } ?: return null
+        val diffSR = splitIdx xor reverseIdx
+        val diffSS = splitIdx xor spliceIdx
+        val eT = Regex.escape(tableVar)
+        // Collect XOR constants by xorVar candidate:  VAR[TABLE[XV^K]]
+        val byXorVar = mutableMapOf<String, MutableSet<Int>>()
+        Regex("""([\w$]+)\[$eT\[([\w$]+)\^(\d+)\]\]""").findAll(js).forEach { m ->
+            val xv = m.groupValues[2]
+            val k  = m.groupValues[3].toIntOrNull() ?: return@forEach
+            if (xv != tableVar) byXorVar.getOrPut(xv) { mutableSetOf() }.add(k)
+        }
+        for ((xv, constants) in byXorVar) {
+            for (k1 in constants) {
+                val k2 = k1 xor diffSR; val k3 = k1 xor diffSS
+                if (k2 in constants && k3 in constants) {
+                    val pCand = k1 xor splitIdx
+                    if ((pCand xor k2) == reverseIdx && (pCand xor k3) == spliceIdx)
+                        return pCand to xv
+                }
+            }
+        }
+        return null
+    }
+
+    // Table-first Strategy 4 fallback: called when no nested call site is found.
+    // Discovers p and xorVar from the string table, locates the dispatcher function
+    // body, then runs the shared Steps 4b-9 extraction.
+    private fun extractSigOpsTableFirst(js: String): List<SigOp>? {
+        for (sep in listOf("{", ";", "|")) {
+            val eS = Regex.escape(sep)
+            val teM = Regex("""(?<![.\w])([\w$]+)\s*=\s*"([^"]{200,})"\s*\.split\s*\(\s*"$eS"\s*\)""").find(js)
+                ?: continue
+            val tableVar = teM.groupValues[1]
+            val u = teM.groupValues[2].split(sep)
+            if (listOf("split", "join", "reverse", "splice").any { it !in u }) continue
+
+            val (p, xorVar) = discoverPFromTable(js, tableVar, u)
+                ?: run { Log.d(tag, "extractSigOps(tf): table sep=$sep found but p undiscoverable"); continue }
+            Log.d(tag, "extractSigOps(tf): table=$tableVar sep=$sep p=$p xorVar=$xorVar")
+
+            // Find dispatcher body: function containing "var xorVar = A^B"
+            // with at least 3 TABLE[xorVar^N] accesses (confirms it is the dispatcher).
+            val xorDeclRe = Regex("""var\s+${Regex.escape(xorVar)}\s*=\s*\w+\s*\^\s*\w+""")
+            val xorPat    = Regex("""${Regex.escape(tableVar)}\[${Regex.escape(xorVar)}\^\d+\]""")
+            var dispBody: String? = null
+            for (xm in xorDeclRe.findAll(js)) {
+                val fnStart  = js.lastIndexOf("function", xm.range.first).takeIf { it >= 0 } ?: continue
+                val braceIdx = js.indexOf("{", fnStart).takeIf { it >= 0 } ?: continue
+                val body     = extractBalancedJs(js, braceIdx) ?: continue
+                if (xorPat.findAll(body).count() >= 3) { dispBody = body; break }
+            }
+            val body = dispBody
+                ?: run { sigOpsHint = "d0-tf-noDispBody($tableVar/$xorVar)"; continue }
+
+            // Steps 4b-9: same logic as main dispatcher path
+            val splitIdx   = u.indexOf("split")
+            val joinIdx    = u.indexOf("join")
+            val reverseIdx = u.indexOf("reverse")
+            val spliceIdx  = u.indexOf("splice")
+            val eT = Regex.escape(tableVar); val eX = Regex.escape(xorVar)
+            val splitVar = Regex("""var\s+([\w$]+)\s*=\s*\w+\[$eT\[$eX\^\d+\]\]\($eT\[\d+\]\)""").find(body)?.groupValues?.get(1)
+                ?: Regex("""var\s+([\w$]+)\s*=\s*\w+\[$eT\[$eX\^\d+\]\]\(""\)""").find(body)?.groupValues?.get(1)
+                ?: Regex("""return\s+([\w$]+)\[$eT\[$eX\^\d+\]\]""").find(body)?.groupValues?.get(1)
+                ?: "b"
+            val eS2 = Regex.escape(splitVar)
+            val helperName = Regex("""([\w$]+)\s*\[$eT\[$eX\^\d+\]\]\s*\($eS2""").find(body)?.groupValues?.get(1)
+                ?: Regex("""([\w$]+)\[$eT\[$eX\^\d+\]\]\(""").findAll(body)
+                    .map { it.groupValues[1] }
+                    .filter { it != tableVar && it != xorVar && it != splitVar }
+                    .groupingBy { it }.eachCount()
+                    .maxByOrNull { it.value }?.takeIf { it.value >= 2 }?.key
+                ?: run { sigOpsHint = "d0-tf-noHelper($tableVar/$xorVar/$splitVar)"; continue }
+
+            val (_, helperBody) = findHelperBody(js, helperName, 0)
+                ?: run { sigOpsHint = "d0-tf-noHelperBody($helperName)"; continue }
+            val pwMap    = mutableMapOf<String, SigOp>()
+            val revMark  = "$tableVar[$reverseIdx]"
+            val splMark  = "$tableVar[$spliceIdx]"
+            val mRe      = Regex("""([\w$]+)\s*:\s*function\s*\(([^)]*)\)\s*\{([^}]*)\}""")
+            for (m in mRe.findAll(helperBody)) {
+                val mn     = m.groupValues[1]
+                val nParam = m.groupValues[2].split(",").count { it.isNotBlank() }
+                val mbody  = m.groupValues[3]
+                when {
+                    nParam == 1 && mbody.contains(revMark) -> pwMap[mn] = SigOp.Reverse
+                    nParam == 2 && mbody.contains(splMark) -> pwMap[mn] = SigOp.Splice(0)
+                    nParam == 2 && mbody.contains("%") && mn !in pwMap -> pwMap[mn] = SigOp.Swap(0)
+                }
+            }
+            if (pwMap.size < 2) {
+                sigOpsHint = "d0-tf-pwMapSmall($helperName/${pwMap.size})"; continue
+            }
+
+            val eH  = Regex.escape(helperName)
+            val opRe = Regex("""$eH\[$eT\[$eX\^(\d+)\]\]\($eS2(?:,$eX\^(\d+)|,(\d+))?\)""")
+            val ops  = mutableListOf<SigOp>()
+            for (m in opRe.findAll(body)) {
+                val methodXor = m.groupValues[1].toIntOrNull() ?: continue
+                val methodIdx = p xor methodXor
+                val methodNm  = u.getOrNull(methodIdx) ?: continue
+                val baseOp    = pwMap[methodNm] ?: continue
+                val arg = when {
+                    m.groupValues[2].isNotEmpty() -> p xor m.groupValues[2].toInt()
+                    m.groupValues[3].isNotEmpty() -> m.groupValues[3].toInt()
+                    else -> 0
+                }
+                ops.add(when (baseOp) {
+                    SigOp.Reverse   -> SigOp.Reverse
+                    is SigOp.Splice -> SigOp.Splice(arg)
+                    is SigOp.Swap   -> SigOp.Swap(arg)
+                })
+            }
+            if (ops.isNotEmpty()) {
+                sigOpsHint = "ok-d-tf-${ops.size}ops"
+                Log.d(tag, "extractSigOps(dispatcher/table-first): ${ops.size} ops '$tableVar'/'$helperName' p=$p")
+                return ops
+            }
+            sigOpsHint = "d0-tf-emptyOps($tableVar/$helperName)"
+        }
+        sigOpsHint = "d0-noCallSite"
+        return null
+    }
+
     // YouTube 2026+ flat-dispatcher sig extraction.
     //
     // The player eliminated the traditional sig-fn-calls-helper pattern. Instead, a single
@@ -557,7 +687,10 @@ class InnertubeApi @Inject constructor(
             Regex("""(\w+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\s*\(\s*\d+\s*,\s*\d+\s*,[^()]{1,60}\)\s*\)"""),
         )
         val cs = csPatterns.firstNotNullOfOrNull { it.find(js) }
-            ?: run { sigOpsHint = "d0-noCallSite"; return null }
+        if (cs == null) {
+            sigOpsHint = "d0-noCallSite"
+            return extractSigOpsTableFirst(js)
+        }
         val dispName = cs.groupValues[1]
         val outerR   = cs.groupValues[2].toIntOrNull() ?: return null
         val outerK   = cs.groupValues[3].toIntOrNull() ?: return null
@@ -611,8 +744,8 @@ class InnertubeApi @Inject constructor(
         sigOpsHint = "d5-noTable($dispName/$helperName)"
 
         // Step 6: string table — tableVar = "...".split("<sep>")
-        // YouTube uses "{" as separator; "|" tried as fallback in case it changes.
-        val (tableRaw, tableSep) = listOf("{", "|").firstNotNullOfOrNull { sep ->
+        // YouTube has used "{" (5cabb421), "|" and ";" (82ae1e3c) as separators.
+        val (tableRaw, tableSep) = listOf("{", ";", "|").firstNotNullOfOrNull { sep ->
             val re = Regex("""(?<![.\w])${Regex.escape(tableVar)}\s*=\s*"([^"]{300,})"\s*\.split\s*\(\s*"${Regex.escape(sep)}"\s*\)""")
             re.find(js)?.let { it.groupValues[1] to sep }
         } ?: run { sigOpsHint = "d5-noTableStr($tableVar)"; return null }

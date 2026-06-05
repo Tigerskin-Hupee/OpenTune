@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """
-OpenTune sig-decode tester  (v1.2.60 logic — Strategy 4: flat-dispatcher).
-Mirrors InnertubeApi.kt extractSigOps — shows exactly where it succeeds or fails,
-then auto-fetches a real signatureCipher and verifies the decode end-to-end.
+OpenTune sig-decode tester  (v1.2.63 — Strategy 4: flat-dispatcher)
+Mirrors InnertubeApi.kt extractSigOps — shows exactly where it succeeds or
+fails, then auto-fetches a real signatureCipher and verifies the decode.
 
 Run:  py analyze_yt_sig.py   (Windows)
       python3 analyze_yt_sig.py  (Mac/Linux)
 """
 import re, sys, json, urllib.request, urllib.parse, urllib.error
+from collections import Counter
 
-# Same UA as ensurePlayerJsData in InnertubeApi.kt
+# Same UA as InnertubeApi.kt ensurePlayerJsData
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0"
 
+# ─────────────────────────────────────────────────────────────────────────────
 def fetch(url, data=None, headers=None, timeout=25):
     h = {"User-Agent": UA, "Accept-Language": "en-US,en;q=0.9",
          "Accept": "*/*", "Accept-Encoding": "identity"}
@@ -25,14 +27,14 @@ def fetch(url, data=None, headers=None, timeout=25):
         print(f"  fetch error: {e}"); return ""
 
 # ─────────────────────────────────────────────────────────────────────────────
-# extract_balanced — mirrors the FIXED extractBalancedJs (v1.2.58+)
-# 7-state machine: understands JS strings, regex literals, comments.
+# extract_balanced — mirrors extractBalancedJs from InnertubeApi.kt
+# 7-state machine that understands JS strings, regex literals, and comments.
 # ─────────────────────────────────────────────────────────────────────────────
 def extract_balanced(js, start):
     if start >= len(js): return None
     if js[start] not in ('{', '(', '['): return None
     depth = 0
-    # 0=code 1=str" 2=str' 3=str` 4=regex 5=regex-cc 6=line-cmt 7=block-cmt
+    # states: 0=code 1=str" 2=str' 3=str` 4=regex 5=regex-cc 6=line-cmt 7=block-cmt
     state = 0
     regex_ctx = True
     i = start
@@ -75,14 +77,15 @@ def extract_balanced(js, start):
                 if depth == 0: return js[start:i+1]
                 regex_ctx = False
             elif c in (';', ','): regex_ctx = True
-            elif c in ('=','+','-','*','!','<','>','~','^','&','|','?',':','%'):
+            elif c in ('=', '+', '-', '*', '!', '<', '>', '~', '^', '&', '|', '?', ':', '%'):
                 regex_ctx = True
             elif c.isalpha() or c in ('_', '$', '0123456789'): regex_ctx = False
         i += 1
     return None
 
-# ── Helpers shared by Strategies 1, 2, 3 ─────────────────────────────────────
-
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers shared by Strategies 1, 2, 3
+# ─────────────────────────────────────────────────────────────────────────────
 def build_op_map(helper_body):
     h1 = r'(?:function\s*\(\w+\)\s*\{|\(\w+\)\s*=>\s*\{?|\w+\s*=>\s*\{?)'
     h2 = r'(?:function\s*\(\w+,\w+\)\s*\{|\(\w+,\w+\)\s*=>\s*\{?)'
@@ -125,80 +128,64 @@ def apply_ops(sig, ops):
             if a: idx = n % len(a); a[0], a[idx] = a[idx], a[0]
     return ''.join(a)
 
-# ── Strategy 4: flat-dispatcher (YouTube 2026+) ───────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Strategy 4: flat-dispatcher (YouTube 2026+)
 # Mirrors InnertubeApi.kt extractSigOpsDispatcher exactly.
 # Dynamically extracts all XOR constants — does NOT hardcode player-specific values.
-def extract_dispatcher_ops(js):
+# ─────────────────────────────────────────────────────────────────────────────
+
+def discover_p_from_table(js, table_var, u):
     """
-    Returns (ops_list, status_string) or (None, error_string).
-    ops_list is like [('splice',2),('reverse',0),('swap',17),...]
+    Table-first p discovery: find XOR key p from consistent XOR-constant triples.
+    Used when the nested call-site pattern is absent (player 82ae1e3c+).
+    Returns (p, xor_var, split_K, reverse_K, splice_K) or None.
     """
-    # Step 1: nested call site  FNAME(R1,K1, FNAME(R2,K2, SIG.??))
-    # Try from most specific to most broad so we confirm the sig-decoding outer call.
-    _cs_patterns = [
-        # exact: inner last arg is OBJ.s  (original / 5cabb421)
-        r'(\w+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\s*\(\s*\d+\s*,\s*\d+\s*,\s*\w+\.s\s*\)\s*\)',
-        # sig property renamed (OBJ.sig, OBJ.sc, OBJ.se, ...)
-        r'(\w+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\s*\(\s*\d+\s*,\s*\d+\s*,\s*\w+\.\w+\s*\)\s*\)',
-        # inner call ends with any short expression (≤60 chars, no parens nesting)
-        r'(\w+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\s*\(\s*\d+\s*,\s*\d+\s*,[^\(\)]{1,60}\)\s*\)',
-    ]
-    cs = None
-    cs_variant = ""
-    for _pat in _cs_patterns:
-        cs = re.search(_pat, js)
-        if cs:
-            cs_variant = _pat[:30]
-            break
-    if not cs:
-        return None, "d0-noCallSite"
-    disp_name = cs.group(1)
-    outer_r, outer_k = int(cs.group(2)), int(cs.group(3))
-    p = outer_r ^ outer_k
-    print(f"  [Strategy 4] call site: {disp_name}({outer_r},{outer_k},...) → p={p}")
+    if not all(x in u for x in ('split', 'reverse', 'splice')):
+        return None
+    split_idx   = u.index('split')
+    reverse_idx = u.index('reverse')
+    splice_idx  = u.index('splice')
+    diff_sr = split_idx ^ reverse_idx
+    diff_ss = split_idx ^ splice_idx
+    eT = re.escape(table_var)
+    by_xv = {}
+    for m in re.finditer(r'([\w$]+)\[' + eT + r'\[([\w$]+)\^(\d+)\]\]', js):
+        xv = m.group(2)
+        k  = int(m.group(3))
+        if xv != table_var:
+            by_xv.setdefault(xv, set()).add(k)
+    for xv, constants in by_xv.items():
+        for k1 in constants:
+            k2 = k1 ^ diff_sr
+            k3 = k1 ^ diff_ss
+            if k2 in constants and k3 in constants:
+                p_cand = k1 ^ split_idx
+                if (p_cand ^ k2) == reverse_idx and (p_cand ^ k3) == splice_idx:
+                    return (p_cand, xv, k1, k2, k3)
+    return None
 
-    # Step 2: dispatcher function body
-    fn_idx = js.rfind(f'{disp_name}=function(', 0, cs.start())
-    if fn_idx < 0:
-        fn_idx = js.find(f'{disp_name}=function(')
-    if fn_idx < 0:
-        fn_idx = js.rfind(f'var {disp_name}=function(', 0, cs.start())
-    if fn_idx < 0:
-        return None, f"d1-noFnDef({disp_name})"
-    brace = js.find('{', fn_idx)
-    disp_body = extract_balanced(js, brace)
-    if not disp_body:
-        return None, f"d1-noBody({disp_name})"
 
-    # Step 3: XOR variable ("p" from "var p = K^R")
-    xm = re.search(r'var\s+([\w$]+)\s*=\s*[\w$]+\s*\^\s*[\w$]+', disp_body)
-    if not xm:
-        return None, f"d2-noXorVar({disp_name})"
-    xor_var = xm.group(1)
-
-    # Step 4: string table var — any "TABLE[xorVar^N]" access (N is player-specific).
-    # Was hardcoded to ^48 for player 5cabb421 (p=60,split@12,60^12=48); use \d+ now.
-    tm = re.search(r'([\w$]+)\[' + re.escape(xor_var) + r'\^\d+\]', disp_body)
-    if not tm:
-        return None, f"d3-noTableVar({disp_name}/{xor_var})"
-    table_var = tm.group(1)
-
-    # Step 4b: find the split-result array variable name.
-    # Separator can be u[M] (table-indexed) or literal ""; try both.
-    # Final fallback: return/join call subject (array joined at end of dispatcher).
+def _run_dispatcher_steps(js, disp_body, table_var, xor_var, p, u):
+    """
+    Shared Steps 4b-9 for Strategy 4.  All inputs (p, xor_var, table_var,
+    disp_body, u) are provided by either the call-site path or the table-first path.
+    Returns (ops_list, status) or (None, error_string).
+    """
     eT = re.escape(table_var); eX = re.escape(xor_var)
+
+    # Step 4b: split-result array variable name.
     _sr = (re.search(r'var\s+([\w$]+)\s*=\s*\w+\[' + eT + r'\[' + eX + r'\^\d+\]\]\(' + eT + r'\[\d+\]\)', disp_body)
         or re.search(r'var\s+([\w$]+)\s*=\s*\w+\[' + eT + r'\[' + eX + r'\^\d+\]\]\(""\)', disp_body)
         or re.search(r'return\s+([\w$]+)\[' + eT + r'\[' + eX + r'\^\d+\]\]', disp_body))
     split_var = _sr.group(1) if _sr else 'b'
+    print(f"  [Strategy 4] splitVar={split_var!r}")
 
     # Step 5: helper object name.
-    # Primary: "HELPER[TABLE[XOR^N]](SPLIT_VAR" — splitVar as first arg.
-    # Fallback: variable subscripted TABLE[XOR^N] called 2+ times (helper called per op).
+    # Primary: HELPER[TABLE[XOR^N]](SPLIT_VAR  — splitVar as first arg.
+    # Fallback: variable with TABLE[XOR^N] subscript called 2+ times.
     eS = re.escape(split_var)
     hm = re.search(r'([\w$]+)\[' + eT + r'\[' + eX + r'\^\d+\]\]\s*\(' + eS, disp_body)
     if not hm:
-        from collections import Counter
         _counts = Counter(
             m.group(1) for m in re.finditer(r'([\w$]+)\[' + eT + r'\[' + eX + r'\^\d+\]\]\(', disp_body)
             if m.group(1) not in (table_var, xor_var, split_var)
@@ -207,26 +194,12 @@ def extract_dispatcher_ops(js):
         if _best and _best[0][1] >= 2:
             helper_name = _best[0][0]
         else:
-            return None, f"d4-noHelperVar({disp_name}/{table_var}/{split_var})"
+            return None, f"d4-noHelperVar({table_var}/{split_var})"
     else:
         helper_name = hm.group(1)
-    print(f"  [Strategy 4] dispatcher={disp_name} xorVar={xor_var} tableVar={table_var} splitVar={split_var} helper={helper_name}")
-
-    # Step 6: string table — tableVar = "...".split("<sep>")
-    # YouTube uses "{" as separator; try "|" as fallback.
-    te = None; table_sep = '{'
-    for _sep in ['{', '|']:
-        te = re.search(
-            r'(?<![.\w])' + re.escape(table_var) + r'\s*=\s*"([^"]{300,})"\s*\.split\s*\(\s*"' + re.escape(_sep) + r'"\s*\)', js)
-        if te:
-            table_sep = _sep
-            break
-    if not te:
-        return None, f"d5-noTableStr({table_var})"
-    u = te.group(1).split(table_sep)
+    print(f"  [Strategy 4] dispatcher={xor_var!r} tableVar={table_var!r} helper={helper_name!r}")
 
     # Step 7: verify string table has all required op names.
-    # XOR constants (^48 split, ^5 join) are player-specific — removed those checks.
     for op in ('split', 'join', 'reverse', 'splice'):
         if op not in u:
             return None, f"d6-missing({op})InTable"
@@ -237,7 +210,7 @@ def extract_dispatcher_ops(js):
     print(f"  [Strategy 4] table OK: p={p} split@{split_idx} join@{join_idx} "
           f"reverse@{reverse_idx} splice@{splice_idx}")
 
-    # Step 8: Pw helper object body + opMap (uses string table indices)
+    # Step 8: helper object body + pwMap (method → op kind)
     pw_body = None
     for prefix in [f'var {helper_name}={{', f';{helper_name}={{',
                    f',{helper_name}={{', f' {helper_name}={{']:
@@ -252,35 +225,33 @@ def extract_dispatcher_ops(js):
     rev_mark = f'{table_var}[{reverse_idx}]'
     spl_mark = f'{table_var}[{splice_idx}]'
     for m in re.finditer(r'([\w$]+)\s*:\s*function\s*\(([^)]*)\)\s*\{([^}]*)\}', pw_body):
-        mn = m.group(1)
-        n_params = len([x for x in m.group(2).split(',') if x.strip()])
-        body = m.group(3)
-        if n_params == 1 and rev_mark in body:
+        mn      = m.group(1)
+        n_param = len([x for x in m.group(2).split(',') if x.strip()])
+        body    = m.group(3)
+        if n_param == 1 and rev_mark in body:
             pw_map[mn] = ('reverse', 0)
-        elif n_params == 2 and spl_mark in body:
+        elif n_param == 2 and spl_mark in body:
             pw_map[mn] = ('splice', 0)
-        elif n_params == 2 and '%' in body and mn not in pw_map:
+        elif n_param == 2 and '%' in body and mn not in pw_map:
             pw_map[mn] = ('swap', 0)
     if len(pw_map) < 2:
         return None, f"d7-pwMapSmall({helper_name} {pw_map})"
     print(f"  [Strategy 4] pw_map: {pw_map}")
 
-    # Step 9: extract ordered ops from dispatcher body
-    esc_h = re.escape(helper_name)
-    esc_t = re.escape(table_var)
-    esc_x = re.escape(xor_var)
-    esc_s = re.escape(split_var)
+    # Step 9: extract ordered op-call sequence from dispatcher body.
     call_re = re.compile(
-        r'%s\[%s\[%s\^(\d+)\]\]\(%s(?:,%s\^(\d+)|,(\d+))?\)' % (esc_h, esc_t, esc_x, esc_s, esc_x)
+        r'%s\[%s\[%s\^(\d+)\]\]\(%s(?:,%s\^(\d+)|,(\d+))?\)' % (
+            re.escape(helper_name), re.escape(table_var),
+            re.escape(xor_var), re.escape(split_var), re.escape(xor_var))
     )
     ops = []
     for m in call_re.finditer(disp_body):
         method_xor = int(m.group(1))
         method_idx = p ^ method_xor
-        method_name = u[method_idx] if method_idx < len(u) else None
-        if not method_name or method_name not in pw_map:
+        method_nm  = u[method_idx] if method_idx < len(u) else None
+        if not method_nm or method_nm not in pw_map:
             continue
-        kind, _ = pw_map[method_name]
+        kind, _ = pw_map[method_nm]
         if m.group(2):
             arg = p ^ int(m.group(2))
         elif m.group(3):
@@ -289,12 +260,122 @@ def extract_dispatcher_ops(js):
             arg = 0
         ops.append((kind, arg))
     if not ops:
-        return None, f"d8-emptyOps({disp_name}/{helper_name})"
+        return None, f"d8-emptyOps({helper_name})"
+    return ops, f"OK p={p} {helper_name} {len(ops)} ops"
 
-    return ops, f"OK p={p} {disp_name}/{helper_name} {len(ops)} ops"
 
-# ── Strategies 1 + 3 (original patterns) ─────────────────────────────────────
+def extract_dispatcher_ops(js):
+    """
+    Strategy 4: flat-dispatcher extraction.
+    Returns (ops_list, status) or (None, error_string).
+    """
+    # Call-site patterns: FNAME(R1,K1, FNAME(R2,K2, SIG.??))
+    # p = R1 ^ K1.  Inner call wraps the raw sig property.
+    _cs_patterns = [
+        # Exact: inner last arg is OBJ.s  (original / 5cabb421)
+        r'(\w+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\s*\(\s*\d+\s*,\s*\d+\s*,\s*\w+\.s\s*\)\s*\)',
+        # Sig property renamed (OBJ.sig, OBJ.sc, OBJ.se, ...)
+        r'(\w+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\s*\(\s*\d+\s*,\s*\d+\s*,\s*\w+\.\w+\s*\)\s*\)',
+        # Any short inner arg (no nested parens, ≤60 chars)
+        r'(\w+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\s*\(\s*\d+\s*,\s*\d+\s*,[^\(\)]{1,60}\)\s*\)',
+    ]
 
+    # ── Call-site path ────────────────────────────────────────────────────────
+    cs = None
+    for _pat in _cs_patterns:
+        cs = re.search(_pat, js)
+        if cs: break
+
+    if cs:
+        disp_name = cs.group(1)
+        outer_r, outer_k = int(cs.group(2)), int(cs.group(3))
+        p = outer_r ^ outer_k
+        print(f"  [Strategy 4] call site: {disp_name}({outer_r},{outer_k},...) -> p={p}")
+
+        # Step 2: dispatcher function body
+        fn_idx = js.rfind(f'{disp_name}=function(', 0, cs.start())
+        if fn_idx < 0: fn_idx = js.find(f'{disp_name}=function(')
+        if fn_idx < 0: fn_idx = js.rfind(f'var {disp_name}=function(', 0, cs.start())
+        if fn_idx < 0: return None, f"d1-noFnDef({disp_name})"
+        brace = js.find('{', fn_idx)
+        disp_body = extract_balanced(js, brace)
+        if not disp_body: return None, f"d1-noBody({disp_name})"
+        print(f"  [Strategy 4] disp_body[:400]: {disp_body[:400]!r}")
+
+        # Step 3: XOR variable name ("p" from "var p = K^R")
+        xm = re.search(r'var\s+([\w$]+)\s*=\s*[\w$]+\s*\^\s*[\w$]+', disp_body)
+        if not xm: return None, f"d2-noXorVar({disp_name})"
+        xor_var = xm.group(1)
+
+        # Step 4: string-table variable — any TABLE[xorVar^N] access.
+        tm = re.search(r'([\w$]+)\[' + re.escape(xor_var) + r'\^\d+\]', disp_body)
+        if not tm: return None, f"d3-noTableVar({disp_name}/{xor_var})"
+        table_var = tm.group(1)
+
+        # Step 6: string table (separator: "{", ";", or "|")
+        u = None
+        for _sep in ['{', ';', '|']:
+            te = re.search(
+                r'(?<![.\w])' + re.escape(table_var) + r'\s*=\s*"([^"]{300,})"\s*\.split\s*\(\s*"'
+                + re.escape(_sep) + r'"\s*\)', js)
+            if te:
+                u = te.group(1).split(_sep)
+                break
+        if u is None: return None, f"d5-noTableStr({table_var})"
+
+    else:
+        # ── Table-first path: no call site found ─────────────────────────────
+        print("  [Strategy 4] d0-noCallSite — trying table-first discovery...")
+        found = False
+        p = xor_var = table_var = disp_body = u = None
+        for _sep in ['{', ';', '|']:
+            te = re.search(
+                r'(?<![.\w])(\w+)\s*=\s*"([^"]{200,})"\s*\.split\s*\(\s*"'
+                + re.escape(_sep) + r'"\s*\)', js)
+            if not te: continue
+            _tv = te.group(1)
+            _u  = te.group(2).split(_sep)
+            if not all(x in _u for x in ('split', 'reverse', 'splice', 'join')): continue
+            _res = discover_p_from_table(js, _tv, _u)
+            if not _res:
+                print(f"  [Strategy 4] table sep={_sep!r} found but could not discover p from XOR triples")
+                continue
+            p, xor_var, _k_spl, _k_rev, _k_spli = _res
+            table_var = _tv; u = _u
+            print(f"  [Strategy 4 table-first] table_var={table_var!r} sep={_sep!r} p={p} xorVar={xor_var!r}")
+
+            # Find dispatcher body: function with "var xorVar = A^B"
+            # AND at least 3 TABLE[xorVar^N] accesses in the body.
+            disp_body = None
+            for _m in re.finditer(r'var\s+' + re.escape(xor_var) + r'\s*=\s*\w+\s*\^\s*\w+', js):
+                _fn_start = js.rfind('function', 0, _m.start())
+                if _fn_start < 0: continue
+                _brace = js.find('{', _fn_start)
+                if _brace < 0: continue
+                _body = extract_balanced(js, _brace)
+                if not _body: continue
+                _cnt = len(re.findall(
+                    re.escape(table_var) + r'\[' + re.escape(xor_var) + r'\^\d+\]', _body))
+                if _cnt >= 3:
+                    disp_body = _body; break
+
+            if not disp_body:
+                print(f"  [Strategy 4 table-first] dispatcher body not found for xorVar={xor_var!r}")
+                continue
+            print(f"  [Strategy 4 table-first] dispatcher body found ({len(disp_body)} chars)")
+            print(f"  [Strategy 4 table-first] disp_body[:400]: {disp_body[:400]!r}")
+            found = True; break
+
+        if not found:
+            return None, "d0-noCallSite"
+
+    # ── Shared Steps 4b-9 ────────────────────────────────────────────────────
+    return _run_dispatcher_steps(js, disp_body, table_var, xor_var, p, u)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Strategies 1 + 3 (original patterns, unchanged)
+# ─────────────────────────────────────────────────────────────────────────────
 FN_PATTERNS = [
     (r'([\w$]+)\s*=\s*function\(\s*([\w$]+)\s*\)\s*\{',    "NAME=function(a){"),
     (r'function\s+([\w$]+)\s*\(\s*([\w$]+)\s*\)\s*\{',     "function NAME(a){"),
@@ -308,7 +389,8 @@ SPLIT_TOKENS = ['.split("")', ".split('')", "Array.from(", "[..."]
 JOIN_TOKENS  = ['.join("")',  ".join('')"]
 
 def extract_sig_ops(js):
-    sp = ("dq" if '.split("")' in js else "") + ("sq" if ".split('')" in js else "") + ("af" if "Array.from(" in js else "")
+    sp = (("dq" if '.split("")' in js else "") + ("sq" if ".split('')" in js else "")
+          + ("af" if "Array.from(" in js else ""))
     jn = "dq" if '.join("")' in js else ""
     print(f"  JS: {len(js):,} bytes  sp={sp} jn={jn} rev={'.reverse()' in js} spl={'.splice(0,' in js}")
 
@@ -318,7 +400,7 @@ def extract_sig_ops(js):
     print(f"  .join(\"\") count: {len(joins)}")
     for join_idx in joins:
         lb_off = max(0, join_idx - 10000)
-        seg = js[lb_off: join_idx]
+        seg = js[lb_off:join_idx]
         if not any(t in seg for t in SPLIT_TOKENS): continue
         fd = None; fd_style = ""
         for pat, desc in FN_PATTERNS:
@@ -334,8 +416,9 @@ def extract_sig_ops(js):
             print(f"    join@{join_idx}: fn={fn_name!r} ({fd_style}) extractBalanced FAILED")
             continue
         if not any(t in fn_body for t in SPLIT_TOKENS) or not any(t in fn_body for t in JOIN_TOKENS):
-            print(f"    join@{join_idx}: fn={fn_name!r} ({fd_style}) body incomplete split={any(t in fn_body for t in SPLIT_TOKENS)} join={any(t in fn_body for t in JOIN_TOKENS)}")
-            print(f"      body: {repr(fn_body[:200])}")
+            print(f"    join@{join_idx}: fn={fn_name!r} ({fd_style}) body incomplete "
+                  f"split={any(t in fn_body for t in SPLIT_TOKENS)} join={any(t in fn_body for t in JOIN_TOKENS)}")
+            print(f"      body: {fn_body[:200]!r}")
             continue
         helper_m = re.search(r'([\w$]+)\.([\w$]+)\(' + fn_param, fn_body)
         if not helper_m: helper_m = re.search(r'([\w$]+)\["[\w$]+"\]\(' + fn_param, fn_body)
@@ -349,7 +432,8 @@ def extract_sig_ops(js):
         if not op_map:
             print(f"    join@{join_idx}: helper={helper_name!r} opMap empty"); continue
         ops = []
-        for m in re.finditer(r'%s\.([\w$]+)\(%s(?:,(\d+))?\)' % (re.escape(helper_name), re.escape(fn_param)), fn_body):
+        for m in re.finditer(r'%s\.([\w$]+)\(%s(?:,(\d+))?\)' %
+                              (re.escape(helper_name), re.escape(fn_param)), fn_body):
             method = m.group(1); n = int(m.group(2)) if m.group(2) else 0
             if method not in op_map: ops = None; break
             kind, _ = op_map[method]; ops.append((kind, n))
@@ -359,7 +443,7 @@ def extract_sig_ops(js):
             return ops, fn_name
     print(f"  Strategy 1 failed.")
 
-    # Strategy 3: call-site
+    # Strategy 3: call-site anchor
     print("\n  [Strategy 3: call-site anchor]")
     cs_pats = [
         (r'\b[\w$]+&&\([\w$]+=([a-zA-Z0-9_$]+)\((?:\d+,)?decodeURIComponent', "&&(X=FN(decodeURI...)"),
@@ -374,23 +458,22 @@ def extract_sig_ops(js):
             break
     else:
         print(f"  No call-site pattern matched.")
-
     return None, None
 
-# ── Dispatcher display (for when Strategies 1+3 fail) ─────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Dispatcher diagnostic (called only when Strategy 4 fails)
+# ─────────────────────────────────────────────────────────────────────────────
 def show_dispatcher_analysis(js):
-    """Show dispatcher structure details (informational)."""
     print("\n" + "="*70)
     print("DISPATCHER PATTERN ANALYSIS")
     print("="*70)
 
-    # A: All call-site variants (from broadest to narrowest)
+    # A: Check all call-site variants from most specific to broadest
     _pats = [
         (r'(\w+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\s*\(\s*\d+\s*,\s*\d+\s*,\s*\w+\.s\s*\)\s*\)', 'OBJ.s'),
         (r'(\w+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\s*\(\s*\d+\s*,\s*\d+\s*,\s*\w+\.\w+\s*\)\s*\)', 'OBJ.any'),
         (r'(\w+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\s*\(\s*\d+\s*,\s*\d+\s*,[^\(\)]{1,60}\)\s*\)', 'anyArg'),
-        # even broader: nested same-func call (no inner arg constraint)
         (r'(\w+)\s*\(\s*\d+\s*,\s*\d+\s*,\s*\1\s*\(', 'nested-same-fn'),
     ]
     found_cs = False
@@ -403,66 +486,70 @@ def show_dispatcher_analysis(js):
             break
     if not found_cs:
         print("No call site found (tried all variants).")
-        # Show any double-nested calls of the form FNAME(N,N,
         for m in re.finditer(r'(\b\w{1,6})\s*\(\s*\d+\s*,\s*\d+\s*,', js):
             fn = m.group(1)
-            # check it appears twice nested in nearby 200-char window
             window = js[m.start():m.start()+200]
             if re.search(r'\b' + re.escape(fn) + r'\s*\(\s*\d', window[m.end()-m.start():]):
                 print(f"  Candidate nested fn: {fn!r}  context: {window[:100]!r}")
                 break
 
-    # B: String tables — try multiple separators
+    # B: String table search — no hardcoded p assumption; use discover_p_from_table
     sep_found = False
-    for sep in ['{', '|', '~', '^']:
-        for m in re.finditer(r'"([^"\n]{300,})"', js):
-            content = m.group(1)
-            if sep not in content:
-                continue
-            parts = content.split(sep)
-            if len(parts) < 20:
-                continue
+    found_table_var = None
+    found_u = None
+    for sep in ['{', ';', '|', '~', '^']:
+        for m in re.finditer(
+                r'(?<![.\w])(\w+)\s*=\s*"([^"\n]{300,})"\s*\.split\s*\(\s*"'
+                + re.escape(sep) + r'"\s*\)', js):
+            parts = m.group(2).split(sep)
+            if len(parts) < 20: continue
             idx = {e: i for i, e in enumerate(parts)}
-            if 'split' not in idx or 'join' not in idx or 'reverse' not in idx:
-                continue
-            p_candidate = idx['split'] ^ 48
-            if (idx['join'] ^ 5) == p_candidate:
-                print(f"\nString table (sep={sep!r}) at @{m.start()}: {len(parts)} entries, p={p_candidate}")
-                for key in ['split', 'join', 'reverse', 'splice', '']:
-                    if key in idx:
-                        print(f"  u[{idx[key]}] = {key!r}")
-                sep_found = True
-                break
-        if sep_found:
+            if not all(x in idx for x in ('split', 'join', 'reverse', 'splice')): continue
+            found_table_var = m.group(1)
+            found_u = parts
+            print(f"\nString table (sep={sep!r}) at @{m.start()}: var={found_table_var!r} {len(parts)} entries")
+            for key in ('split', 'join', 'reverse', 'splice'):
+                print(f"  u[{idx[key]}] = {key!r}")
+            sep_found = True
             break
+        if sep_found: break
     if not sep_found:
-        print("No string table (with split/join/reverse) found for any separator.")
-        # Show any very long string literals as candidates
+        print("No string table (with split/join/reverse/splice) found for any separator.")
         for m in re.finditer(r'"([^"\n]{500,})"', js):
             c = m.group(1)
             print(f"  Long string @{m.start()} ({len(c)} chars): {c[:80]!r}")
-            if sum(1 for _ in re.finditer(r'"[^"\n]{500,}"', js)) > 5:
-                print("  (showing first match only)")
-                break
+            break
 
-    # C: Show how .s / .sp are accessed (to find renamed sig property)
+    if sep_found:
+        result = discover_p_from_table(js, found_table_var, found_u)
+        if result:
+            p_disc, xv_disc, k1, k2, k3 = result
+            print(f"\n  [Table-first] p={p_disc} xorVar={xv_disc!r} split_K={k1} reverse_K={k2} splice_K={k3}")
+            for m in re.finditer(r'var\s+' + re.escape(xv_disc) + r'\s*=\s*\w+\s*\^\s*\w+', js):
+                ctx = js[max(0, m.start()-50):m.end()+100]
+                print(f"  xorVar decl: {ctx!r}")
+                break
+        else:
+            print("\n  [Table-first] Could not discover p from XOR triples")
+
+    # C: Show .s / .sp sig property accesses
     print("\nSig property accesses (looking for .s .sp .sig etc.):")
     for m in re.finditer(r'[\w$]+\s*\.\s*(s|sp|sig|sc|se)\b', js):
         ctx = js[max(0, m.start()-30):m.end()+30]
         print(f"  .{m.group(1)} at @{m.start()}: {ctx!r}")
-        break  # show first only
+        break
 
-    # D: signatureCipher / cipher field name
+    # D: signatureCipher presence
     for pat in [r'signatureCipher', r'"s"\s*:', r'\.s\b']:
-        m = re.search(pat, js)
-        if m:
-            print(f"  [{pat}] found @{m.start()}: {js[max(0,m.start()-20):m.end()+40]!r}")
+        mm = re.search(pat, js)
+        if mm:
+            print(f"  [{pat}] found @{mm.start()}: {js[max(0,mm.start()-20):mm.end()+40]!r}")
             break
 
-# ── Auto-fetch signatureCipher from YouTube ───────────────────────────────────
 
-# Well-known music video IDs (mix of international/K-pop/VEVO, available in most regions).
-# WEB_REMIX client (YouTube Music) reliably returns signatureCipher for these.
+# ─────────────────────────────────────────────────────────────────────────────
+# Auto-fetch signatureCipher from YouTube
+# ─────────────────────────────────────────────────────────────────────────────
 YTMUSIC_VIDEOS = [
     "jNQXAC9IVRw",  # PSY - Gangnam Style (VEVO, universal)
     "gdZLi9oWNZg",  # BTS - Dynamite
@@ -475,7 +562,6 @@ YTMUSIC_VIDEOS = [
 ]
 
 def _extract_cipher_from_response(raw):
-    """Parse a player API response and return (cipher, base_url) or (None, None)."""
     try:
         root = json.loads(raw)
         status = root.get("playabilityStatus", {}).get("status", "?")
@@ -483,8 +569,7 @@ def _extract_cipher_from_response(raw):
             reason = root.get("playabilityStatus", {}).get("reason", "")
             return None, None, f"status={status} {reason}"
         for fmt in root.get("streamingData", {}).get("adaptiveFormats", []):
-            if "audio/" not in fmt.get("mimeType", ""):
-                continue
+            if "audio/" not in fmt.get("mimeType", ""): continue
             cipher = fmt.get("signatureCipher") or fmt.get("cipher")
             if cipher:
                 params = {}
@@ -493,28 +578,20 @@ def _extract_cipher_from_response(raw):
                         k, v = part.split("=", 1)
                         params[k] = urllib.parse.unquote(v)
                 return cipher, params.get("url", ""), "ok"
-        # No cipher — direct URL (video doesn't need sig decode)
         return None, None, "no-cipher(directURL)"
     except Exception as e:
         return None, None, f"parse-error:{e}"
 
 def fetch_cipher_from_youtube(video_id, sig_ts=0):
-    """
-    Try WEB_EMBEDDED_PLAYER then WEB_REMIX to get signatureCipher.
-    Returns (cipher_string, base_url) or (None, None).
-    """
     sig_ts_frag = (f',"playbackContext":{{"contentPlaybackContext":{{"signatureTimestamp":{sig_ts}}}}}'
                    if sig_ts > 0 else "")
-
     clients = [
-        # WEB_EMBEDDED_PLAYER — same as OpenTune's primary client
         {
             "name": "WEB_EMBEDDED_PLAYER", "id": "56", "version": "1.20250101.09.00",
             "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
             "url": "https://www.youtube.com/youtubei/v1/player",
             "extra_context": f'"thirdParty":{{"embedUrl":"https://www.youtube.com/watch?v={video_id}"}}',
         },
-        # WEB_REMIX — YouTube Music client, very likely to return signatureCipher
         {
             "name": "WEB_REMIX", "id": "67", "version": "1.20260213.01.00",
             "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0",
@@ -538,8 +615,7 @@ def fetch_cipher_from_youtube(video_id, sig_ts=0):
             "Cookie": "SOCS=CAI=",
         }
         raw = fetch(cl["url"], data=body, headers=headers)
-        if not raw:
-            continue
+        if not raw: continue
         cipher, base_url, msg = _extract_cipher_from_response(raw)
         if cipher:
             print(f"    [{cl['name']}] got signatureCipher OK")
@@ -548,23 +624,20 @@ def fetch_cipher_from_youtube(video_id, sig_ts=0):
     return None, None
 
 def decode_cipher_url(cipher, ops):
-    """Apply ops to the raw sig in cipher and return the decoded URL."""
     params = {}
     for part in cipher.split("&"):
         if "=" in part:
             k, v = part.split("=", 1)
             params[k] = urllib.parse.unquote(v)
-    base_url = params.get("url", "")
-    raw_sig  = params.get("s", "")
+    base_url  = params.get("url", "")
+    raw_sig   = params.get("s", "")
     sig_param = params.get("sp", "sig")
-    if not base_url or not raw_sig:
-        return None
+    if not base_url or not raw_sig: return None
     decoded_sig = apply_ops(raw_sig, ops)
     sep = "&" if "?" in base_url else "?"
     return f"{base_url}{sep}{sig_param}={urllib.parse.quote(decoded_sig, safe='')}"
 
 def test_url_accessible(url):
-    """HEAD request to check if URL returns 200 or 206 (not 403)."""
     req = urllib.request.Request(url, method="HEAD", headers={
         "User-Agent": "com.google.android.apps.youtube.music/7.27.52",
         "Range": "bytes=0-1",
@@ -577,15 +650,17 @@ def test_url_accessible(url):
     except Exception as e:
         return None, str(e)
 
-# ── Main ──────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Main
+# ─────────────────────────────────────────────────────────────────────────────
 def find_player_url(html):
     m = re.search(r'/s/player/[0-9a-fA-F]+/[^\s"\']*base\.js', html)
     if m: return "https://www.youtube.com" + m.group(0)
     return None
 
 print("="*70)
-print("OpenTune sig-decode tester  (v1.2.60 — Strategy 4: flat-dispatcher)")
+print("OpenTune sig-decode tester  (v1.2.63 — Strategy 4: flat-dispatcher)")
 print("="*70)
 print(f"Using UA: {UA}\n")
 
@@ -597,7 +672,7 @@ SOURCE_URLS = [
 
 player_url = None
 for page in SOURCE_URLS:
-    print(f"Trying {page} …")
+    print(f"Trying {page} &")
     html = fetch(page)
     player_url = find_player_url(html) if html else None
     if player_url: print(f"Found: {player_url}"); break
@@ -612,7 +687,7 @@ if not player_url:
 ias_url = player_url.replace("player_es6.vflset", "player_ias.vflset")
 js = None
 for try_url, label in [(ias_url, "player_ias (preferred)"), (player_url, "fallback")]:
-    print(f"\nFetching {label} …  {try_url}")
+    print(f"\nFetching {label} &  {try_url}")
     candidate = fetch(try_url)
     if len(candidate) > 100_000:
         js = candidate
@@ -625,16 +700,14 @@ if not js:
     print("ERROR: could not fetch player JS"); sys.exit(1)
 print()
 
-# Extract signatureTimestamp from player JS (needed for WEB client API calls)
 sig_ts_m = re.search(r'signatureTimestamp[=:]\s*(\d+)', js)
 sig_ts = int(sig_ts_m.group(1)) if sig_ts_m else 0
 if sig_ts: print(f"signatureTimestamp: {sig_ts}")
 
-print("Running extraction …")
+print("Running extraction &")
 ops, fn_name = extract_sig_ops(js)
 
 if not ops:
-    # Strategy 4: flat-dispatcher
     print("\n  [Strategy 4: flat-dispatcher (YouTube 2026+)]")
     ops, hint = extract_dispatcher_ops(js)
     if ops:
@@ -645,7 +718,6 @@ if not ops:
         show_dispatcher_analysis(js)
 
 # ── End-to-end cipher test ────────────────────────────────────────────────────
-
 print("\n" + "="*70)
 print("END-TO-END TEST: auto-fetch signatureCipher and verify decode")
 print("="*70)
@@ -655,7 +727,7 @@ if not ops:
 else:
     cipher = None
     for vid in YTMUSIC_VIDEOS:
-        print(f"Fetching cipher for video {vid} …")
+        print(f"Fetching cipher for video {vid} &")
         cipher, base_url = fetch_cipher_from_youtube(vid, sig_ts)
         if cipher:
             print(f"  Got signatureCipher ({len(cipher)} chars)")
@@ -664,14 +736,14 @@ else:
     if cipher:
         decoded_url = decode_cipher_url(cipher, ops)
         if decoded_url:
-            print(f"\nDecoded URL (first 120 chars): {decoded_url[:120]}…")
-            print("Testing accessibility (HEAD request) …")
+            print(f"\nDecoded URL (first 120 chars): {decoded_url[:120]}...")
+            print("Testing accessibility (HEAD request) &")
             status, err = test_url_accessible(decoded_url)
             if status in (200, 206):
                 print(f"  HTTP {status} — SUCCESS! Sig decode is working correctly.")
             elif status == 403:
                 print(f"  HTTP 403 — sig decode may be WRONG (wrong ops or n-param not decoded).")
-                print("  Note: n-param decode needs the player JS decodeN function (not tested here).")
+                print("  Note: n-param decode is handled by the app's WebView, not tested here.")
             else:
                 print(f"  HTTP {status} err={err}")
         else:
@@ -695,8 +767,8 @@ if cipher_input and ops:
         raw_sig = urllib.parse.unquote(cipher_input)
     if raw_sig:
         decoded = apply_ops(raw_sig, ops)
-        print(f"Raw sig    ({len(raw_sig)} chars): {raw_sig[:80]}…")
-        print(f"Decoded    ({len(decoded)} chars): {decoded[:80]}…")
+        print(f"Raw sig    ({len(raw_sig)} chars): {raw_sig[:80]}...")
+        print(f"Decoded    ({len(decoded)} chars): {decoded[:80]}...")
         print(f"Ops used: {ops}")
     else:
         print("Could not parse input.")
