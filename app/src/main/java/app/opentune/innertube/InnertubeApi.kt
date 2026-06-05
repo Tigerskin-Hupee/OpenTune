@@ -106,7 +106,10 @@ class InnertubeApi @Inject constructor(
 
     private fun ensurePlayerJsData() {
         val now = System.currentTimeMillis()
-        if (jsDataFetchedAt > 0 && now - jsDataFetchedAt < 3_600_000L) return
+        // Full 1-hour cache when sigOps were extracted successfully.
+        // 5-minute retry when sigOps are null — the player version may have rotated.
+        val maxAge = if (cachedSigOps != null) 3_600_000L else 300_000L
+        if (jsDataFetchedAt > 0 && now - jsDataFetchedAt < maxAge) return
         val ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0"
         val scriptPathRegex = Regex("""/s/player/[0-9a-fA-F]+/[^\s"']*base\.js""")
         val sourceUrls = listOf(
