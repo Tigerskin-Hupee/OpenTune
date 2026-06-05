@@ -166,89 +166,154 @@ class InnertubeApi @Inject constructor(
     // Diagnostic: captures which step of extractSigOps failed; included in error messages.
     @Volatile private var sigOpsHint = "?"
 
-    // Extract sig-decode operation sequence from player JS (natively in JVM — no WebView).
-    // Strategy: anchor on .splice(0, which is ALWAYS in the sig helper object, regardless of
-    // how the sig-decode function itself is named or structured.
-    private fun extractSigOps(js: String): List<SigOp>? {
-        sigOpsHint = "s0-noSplice"
-        var searchFrom = 0
-        while (true) {
-            // Find next .splice(0, occurrence — always present in sig helper object
-            val spliceIdx = js.indexOf(".splice(0,", searchFrom).takeIf { it >= 0 }
-                ?: run { Log.w(tag, "extractSigOps: .splice(0, not found"); return null }
-            searchFrom = spliceIdx + 1
+    // Build the helper-method → SigOp mapping from the helper object body.
+    // Supports splice(0,n), slice(n) (YouTube 2026 variant), and swap patterns.
+    private fun buildOpMap(helperBody: String): Map<String, SigOp>? {
+        val m = mutableMapOf<String, SigOp>()
+        Regex("""([\w$]+)\s*:\s*function\s*\(\w+\)\s*\{[^}]*\.reverse\(\)""")
+            .findAll(helperBody).forEach { m[it.groupValues[1]] = SigOp.Reverse }
+        Regex("""([\w$]+)\s*:\s*function\s*\(\w+,\w+\)\s*\{[^}]*\.splice\(0,""")
+            .findAll(helperBody).forEach { m[it.groupValues[1]] = SigOp.Splice(0) }
+        // YouTube 2026: splice(0,b) replaced by a=a.slice(b) — same semantics
+        Regex("""([\w$]+)\s*:\s*function\s*\((\w+),\w+\)\s*\{[^}]*\2\s*=\s*\2\.slice\(""")
+            .findAll(helperBody).filter { m[it.groupValues[1]] == null }
+            .forEach { m[it.groupValues[1]] = SigOp.Splice(0) }
+        Regex("""([\w$]+)\s*:\s*function\s*\(\w+,\w+\)\s*\{[^}]*\.length[^}]*\}""")
+            .findAll(helperBody).filter { m[it.groupValues[1]] == null }
+            .forEach { m[it.groupValues[1]] = SigOp.Swap(0) }
+        return m.ifEmpty { null }
+    }
 
-            // Go backward up to 2000 chars to find the enclosing helper object definition
+    // Parse the ordered op-call sequence from the sig fn body.
+    private fun parseOpCalls(fnBody: String, fnParam: String, helperName: String, opMap: Map<String, SigOp>): List<SigOp>? {
+        val callM = Regex("""${Regex.escape(helperName)}\.([\w$]+)\($fnParam(?:,(\d+))?\)""")
+            .findAll(fnBody).toList().ifEmpty {
+                Regex("""${Regex.escape(helperName)}\["([\w$]+)"\]\($fnParam(?:,(\d+))?\)""")
+                    .findAll(fnBody).toList()
+            }
+        if (callM.isEmpty()) return null
+        val ops = mutableListOf<SigOp>()
+        for (c in callM) {
+            val method = c.groupValues[1]; val n = c.groupValues[2].toIntOrNull() ?: 0
+            when (opMap[method]) {
+                SigOp.Reverse -> ops.add(SigOp.Reverse)
+                is SigOp.Splice -> ops.add(SigOp.Splice(n))
+                is SigOp.Swap -> ops.add(SigOp.Swap(n))
+                null -> return null
+            }
+        }
+        return ops.ifEmpty { null }
+    }
+
+    // Find the helper object body given its name, searching backward from fdAbsIdx.
+    private fun findHelperBody(js: String, helperName: String, beforeIdx: Int): Pair<Int, String>? {
+        val before = js.substring(0, beforeIdx)
+        val start = before.lastIndexOf("var $helperName={").takeIf { it >= 0 }
+            ?: before.lastIndexOf(";$helperName={").let { if (it >= 0) it + 1 else -1 }.takeIf { it >= 0 }
+            ?: before.lastIndexOf(",$helperName={").let { if (it >= 0) it + 1 else -1 }.takeIf { it >= 0 }
+            ?: return null
+        val braceIdx = js.indexOf("{", start).takeIf { it >= 0 } ?: return null
+        val body = extractBalancedJs(js, braceIdx) ?: return null
+        return braceIdx to body
+    }
+
+    // Extract sig-decode operation sequence from player JS (natively in JVM — no WebView).
+    //
+    // Primary strategy (join-anchor): the sig fn always converts string→array via split(""),
+    // applies ops via a helper object, then joins back with join(""). Anchoring on join("") +
+    // validating split("") in lookback identifies the sig fn regardless of obfuscation.
+    //
+    // Fallback strategy (splice-anchor): for older player variants that use splice(0,n).
+    private fun extractSigOps(js: String): List<SigOp>? {
+        val len = js.length
+        Log.d(tag, "extractSigOps: js=${len}b hasSplit=${js.contains(".split(\"\")")} hasSplice=${js.contains(".splice(0,")} hasReverse=${js.contains(".reverse()")} hasJoin=${js.contains(".join(\"\")") || js.contains(".join('')")}")
+
+        // ── Strategy 1: join-anchor ──────────────────────────────────────────────
+        sigOpsHint = "s0-noJoin(${len}b)"
+        val joinTokens = listOf(".join(\"\")", ".join('')")
+        var jFrom = 0
+        while (true) {
+            val joinIdx = joinTokens.map { js.indexOf(it, jFrom) }.filter { it >= 0 }.minOrNull() ?: break
+            jFrom = joinIdx + 1
+
+            // Sig fn must also have split("") within 3000 chars before the join
+            val seg = js.substring(maxOf(0, joinIdx - 3000), joinIdx)
+            if (!seg.contains(".split(\"\")") && !seg.contains(".split('')")) continue
+
+            // Find the enclosing function definition
+            val lbOff = maxOf(0, joinIdx - 3000)
+            val fd = Regex("""([\w$]+)\s*=\s*function\(\s*([\w$]+)\s*\)\s*\{""").findAll(seg).lastOrNull()
+                ?: Regex("""function\s+([\w$]+)\s*\(\s*([\w$]+)\s*\)\s*\{""").findAll(seg).lastOrNull()
+                ?: continue
+            val fnName = fd.groupValues[1]; val fnParam = fd.groupValues[2]
+            val fdAbsIdx = lbOff + fd.range.first
+            val fnBraceIdx = js.indexOf("{", fdAbsIdx).takeIf { it >= 0 } ?: continue
+            val fnBody = extractBalancedJs(js, fnBraceIdx) ?: continue
+            if (!fnBody.contains("split") || !fnBody.contains("join")) continue
+
+            sigOpsHint = "s1-noHelper(${len}b/$fnName)"
+            val helperName =
+                Regex("""([\w$]+)\.([\w$]+)\($fnParam""").find(fnBody)?.groupValues?.get(1)
+                    ?: Regex("""([\w$]+)\["[\w$]+"\]\($fnParam""").find(fnBody)?.groupValues?.get(1)
+                    ?: continue
+
+            sigOpsHint = "s2-noHelperDef(${len}b/$helperName)"
+            val (_, helperBody) = findHelperBody(js, helperName, fdAbsIdx) ?: continue
+
+            val opMap = buildOpMap(helperBody)
+                ?: run { sigOpsHint = "s2-opMapEmpty(${len}b/$helperName)"; continue }
+
+            sigOpsHint = "s3-noOpCalls(${len}b/$helperName/$fnName)"
+            Log.d(tag, "extractSigOps(join): fn='$fnName' helper='$helperName' opMap=$opMap")
+            val ops = parseOpCalls(fnBody, fnParam, helperName, opMap)
+                ?: run { sigOpsHint = "s3-opCallsFail(${len}b/$helperName/$fnName)"; continue }
+
+            sigOpsHint = "ok-${ops.size}ops"
+            Log.d(tag, "extractSigOps: ${ops.size} ops OK via join-anchor/'$helperName'")
+            return ops
+        }
+
+        // ── Strategy 2: splice-anchor (fallback for older player JS) ────────────
+        sigOpsHint = "f0-noSplice(${len}b)"
+        var sFrom = 0
+        while (true) {
+            val spliceIdx = js.indexOf(".splice(0,", sFrom).takeIf { it >= 0 } ?: break
+            sFrom = spliceIdx + 1
+
             val lbOff = maxOf(0, spliceIdx - 2000)
             val lb = js.substring(lbOff, spliceIdx)
-            // Match: var NAME={  or  ;NAME={  or  ,NAME={  or  }NAME={  or  (NAME={
-            val hm = Regex("""(?:var\s+|[;,}\s(])([\w$]+)\s*=\s*\{""")
-                .findAll(lb).lastOrNull() ?: continue
+            val hm = Regex("""(?:var\s+|[;,}\s(])([\w$]+)\s*=\s*\{""").findAll(lb).lastOrNull() ?: continue
             val helperName = hm.groupValues[1]
             val helperBraceIdx = lbOff + hm.range.first + hm.value.lastIndexOf('{')
             val helperBody = extractBalancedJs(js, helperBraceIdx) ?: continue
-
-            // Validate: sig helper always has BOTH splice AND reverse
             if (!helperBody.contains(".splice(0,") || !helperBody.contains(".reverse()")) continue
 
-            Log.d(tag, "extractSigOps: helper='$helperName' bodyLen=${helperBody.length}")
-            sigOpsHint = "s1-opMapFail($helperName)"
+            val opMap = buildOpMap(helperBody)
+                ?: run { sigOpsHint = "f1-opMapEmpty($helperName)"; continue }
 
-            // Parse helper method → operation mapping
-            val opMap = mutableMapOf<String, SigOp>()
-            Regex("""([\w$]+)\s*:\s*function\s*\(\w+\)\s*\{[^}]*\.reverse\(\)""")
-                .findAll(helperBody).forEach { opMap[it.groupValues[1]] = SigOp.Reverse }
-            Regex("""([\w$]+)\s*:\s*function\s*\(\w+,\w+\)\s*\{[^}]*\.splice\(0,""")
-                .findAll(helperBody).forEach { opMap[it.groupValues[1]] = SigOp.Splice(0) }
-            Regex("""([\w$]+)\s*:\s*function\s*\(\w+,\w+\)\s*\{[^}]*\.length[^}]*\}""")
-                .findAll(helperBody).forEach { opMap[it.groupValues[1]] = SigOp.Swap(0) }
-            if (opMap.isEmpty()) { sigOpsHint = "s1-opMapEmpty($helperName)"; continue }
-            Log.d(tag, "extractSigOps: opMap=$opMap")
-
-            sigOpsHint = "s2-fnFail($helperName)"
-
-            // Find sig decode fn: look for first CALL to helper AFTER its definition, then
-            // go backward to find the enclosing function definition
             val afterHelper = helperBraceIdx + helperBody.length
             val callIdx = js.indexOf("$helperName.", afterHelper).takeIf { it >= 0 } ?: continue
-
             val pre = js.substring(maxOf(0, callIdx - 500), callIdx)
             val fd = Regex("""([\w$]+)\s*=\s*function\(\s*([\w$]+)\s*\)\s*\{""").findAll(pre).lastOrNull()
                 ?: Regex("""function\s+([\w$]+)\s*\(\s*([\w$]+)\s*\)\s*\{""").findAll(pre).lastOrNull()
                 ?: continue
-
             val fnName = fd.groupValues[1]; val fnParam = fd.groupValues[2]
             val fdAbsIdx = maxOf(0, callIdx - 500) + fd.range.first
             val fnBraceIdx = js.indexOf("{", fdAbsIdx).takeIf { it >= 0 } ?: continue
             val fnBody = extractBalancedJs(js, fnBraceIdx) ?: continue
-            Log.d(tag, "extractSigOps: fn='$fnName' param='$fnParam' bodyLen=${fnBody.length}")
 
-            sigOpsHint = "s3-noOpCalls($helperName/$fnName)"
+            sigOpsHint = "f2-noOpCalls($helperName/$fnName)"
+            val ops = parseOpCalls(fnBody, fnParam, helperName, opMap)
+                ?: run { sigOpsHint = "f2-opCallsFail($helperName/$fnName)"; continue }
 
-            // Parse operation calls (dot or bracket notation)
-            val ops = mutableListOf<SigOp>()
-            val dotM = Regex("""${Regex.escape(helperName)}\.([\w$]+)\($fnParam(?:,(\d+))?\)""")
-                .findAll(fnBody).toList()
-            val callM = dotM.ifEmpty {
-                Regex("""${Regex.escape(helperName)}\["([\w$]+)"\]\($fnParam(?:,(\d+))?\)""")
-                    .findAll(fnBody).toList()
-            }
-            var bad = false
-            for (m in callM) {
-                val method = m.groupValues[1]; val n = m.groupValues[2].toIntOrNull() ?: 0
-                when (opMap[method]) {
-                    SigOp.Reverse -> ops.add(SigOp.Reverse)
-                    is SigOp.Splice -> ops.add(SigOp.Splice(n))
-                    is SigOp.Swap -> ops.add(SigOp.Swap(n))
-                    null -> { sigOpsHint = "s3-unknownOp($method)"; bad = true; break }
-                }
-            }
-            if (bad || ops.isEmpty()) continue
-
-            sigOpsHint = "ok-${ops.size}ops"
-            Log.d(tag, "extractSigOps: ${ops.size} ops OK via '$helperName'")
+            sigOpsHint = "ok-f-${ops.size}ops"
+            Log.d(tag, "extractSigOps: ${ops.size} ops OK via splice-anchor/'$helperName'")
             return ops
         }
+
+        sigOpsHint = "allFail(${len}b)"
+        Log.w(tag, "extractSigOps: all strategies failed, js=${len}b")
+        return null
     }
 
     // Apply extracted sig-decode operations to a raw signature string.
