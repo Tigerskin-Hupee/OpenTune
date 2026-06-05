@@ -8,8 +8,8 @@ Run:  py analyze_yt_sig.py   (Windows)
 """
 import re, sys, urllib.request, urllib.error
 
-UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-      "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
+# Same UA as ensurePlayerJsData in InnertubeApi.kt
+UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0"
 
 def fetch(url):
     req = urllib.request.Request(url, headers={
@@ -254,24 +254,26 @@ def extract_sig_ops(js):
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 def find_player_url(html):
-    for pat in [
-        r'"PLAYER_JS_URL"\s*:\s*"(/s/player/[^"]+base\.js)"',
-        r'(/s/player/[a-f0-9]+/player_ias\.vflset/[^/"\']+/base\.js)',
-        r'(/s/player/[a-f0-9]+/player_es6\.vflset/[^/"\']+/base\.js)',
-        r'src="(/s/player/[^"]+base\.js)"',
-    ]:
-        m = re.search(pat, html)
-        if m: return "https://www.youtube.com" + m.group(1)
+    # Same regex as ensurePlayerJsData: /s/player/HEX/*/base.js
+    m = re.search(r'/s/player/[0-9a-fA-F]+/[^\s"\']*base\.js', html)
+    if m: return "https://www.youtube.com" + m.group(0)
     return None
 
 print("="*70)
 print("OpenTune sig-decode tester  (v1.2.58 logic)")
 print("="*70)
+print(f"Using UA: {UA}\n")
+
+# Same source list as ensurePlayerJsData in InnertubeApi.kt
+SOURCE_URLS = [
+    "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+    "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    "https://www.youtube.com",
+]
 
 player_url = None
-for page in ["https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-             "https://music.youtube.com/watch?v=dQw4w9WgXcQ"]:
-    print(f"\nTrying {page} …")
+for page in SOURCE_URLS:
+    print(f"Trying {page} …")
     html = fetch(page)
     player_url = find_player_url(html) if html else None
     if player_url: print(f"Found: {player_url}"); break
