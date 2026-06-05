@@ -146,6 +146,90 @@ FN_PATTERNS = [
 SPLIT_TOKENS = ['.split("")', ".split('')", "Array.from(", "[..."]
 JOIN_TOKENS  = ['.join("")',  ".join('')"]
 
+def deep_analysis(js):
+    """Extra diagnostics for when Strategy 1/3 both fail."""
+    print("\n" + "="*70)
+    print("DEEP ANALYSIS (new obfuscation detection)")
+    print("="*70)
+
+    # 1. Show 800 chars of context around EVERY decodeURIComponent
+    print("\n[A] Full context around decodeURIComponent occurrences:")
+    for m in re.finditer(r'decodeURIComponent', js):
+        pos = m.start()
+        ctx = js[max(0, pos-300): pos+500]
+        print(f"\n  @{pos}:")
+        # Show in segments
+        for chunk in [ctx[i:i+120] for i in range(0, len(ctx), 120)]:
+            print(f"    {repr(chunk)}")
+
+    # 2. Look for split called via bracket notation (obfuscated split)
+    print("\n[B] Obfuscated .split('') patterns (bracket notation):")
+    patterns = [
+        r'\["split"\]\s*\(\s*""\s*\)',
+        r'\["split"\]\s*\(\s*\'\'\s*\)',
+        r'\.split\s*\(\s*""\s*\)',
+        r'\[.{1,20}\]\s*\(\s*""\s*\)',   # x[anything]("")
+        r'\[.{1,20}\]\s*\(\s*""\s*,',    # x[anything]("", ...)
+    ]
+    for pat in patterns:
+        hits = [(m.start(), js[max(0,m.start()-60):m.end()+60]) for m in re.finditer(pat, js)]
+        if hits:
+            print(f"  Pattern {repr(pat)}: {len(hits)} hit(s)")
+            for pos, ctx in hits[:3]:
+                print(f"    @{pos}: {repr(ctx)}")
+
+    # 3. Look for .splice and .reverse near each other
+    print("\n[C] .splice(0, and .reverse() proximity:")
+    splice_pos = [m.start() for m in re.finditer(r'\.splice\(0,', js)]
+    reverse_pos = [m.start() for m in re.finditer(r'\.reverse\(\)', js)]
+    print(f"  .splice(0, : {len(splice_pos)} occurrences: {splice_pos}")
+    print(f"  .reverse()  : {len(reverse_pos)} occurrences: {reverse_pos}")
+    for sp in splice_pos:
+        for rv in reverse_pos:
+            dist = abs(sp - rv)
+            if dist < 5000:
+                lo, hi = min(sp, rv), max(sp, rv)
+                ctx = js[max(0, lo-200): hi+200]
+                print(f"  splice@{sp} and reverse@{rv} are {dist} chars apart:")
+                for chunk in [ctx[i:i+120] for i in range(0, min(len(ctx), 600), 120)]:
+                    print(f"    {repr(chunk)}")
+
+    # 4. Look for the 'u' lookup table near the suspicious decodeURIComponent
+    print("\n[D] Lookup table 'u' near decodeURIComponent@37497:")
+    # Find the function containing the first decodeURIComponent
+    dc_hits = list(re.finditer(r'decodeURIComponent', js))
+    if dc_hits:
+        pos = dc_hits[0].start()
+        # Show a wider window
+        wide = js[max(0, pos-2000): pos+2000]
+        # Look for array/object assignments that could be the lookup table
+        table_hits = list(re.finditer(r'\bvar\s+u\s*=\s*\[', wide))
+        table_hits += list(re.finditer(r'\bu\s*=\s*\[', wide))
+        print(f"  Found {len(table_hits)} 'u=[' patterns near first decodeURIComponent")
+        for th in table_hits[:3]:
+            snippet = wide[th.start(): th.start()+200]
+            print(f"    {repr(snippet)}")
+
+    # 5. Search for the sig param name "s" retrieval pattern
+    print("\n[E] Sig 's' parameter retrieval patterns:")
+    sig_patterns = [
+        r'\.get\s*\(\s*["\']s["\']\s*\)',
+        r'\["s"\]',
+        r'sp\s*=\s*["\']sig["\']',
+        r'"sig"',
+        r'"sp"',
+        r'signatureCipher',
+        r'cipher',
+    ]
+    for pat in sig_patterns:
+        hits = list(re.finditer(pat, js, re.IGNORECASE))
+        if hits:
+            print(f"  {repr(pat)}: {len(hits)} hit(s)")
+            for h in hits[:2]:
+                ctx = js[max(0,h.start()-80):h.end()+80]
+                print(f"    @{h.start()}: {repr(ctx)}")
+
+
 def extract_sig_ops(js):
     sp = ("dq" if '.split("")' in js else "") + ("sq" if ".split('')" in js else "") + ("af" if "Array.from(" in js else "")
     jn = "dq" if '.join("")' in js else ""
@@ -309,6 +393,9 @@ print()
 
 print("Running extraction …")
 ops, fn_name = extract_sig_ops(js)
+
+if not ops:
+    deep_analysis(js)
 
 # Optional: test with a real signatureCipher
 print("\n" + "="*70)
