@@ -575,9 +575,19 @@ class InnertubeApi @Inject constructor(
         val tableVar = tvM.groupValues[1]
         sigOpsHint   = "d4-noHelperVar($dispName/$tableVar)"
 
-        // Step 5: helper-object name ("Pw" from "Pw[tableVar[xorVar^...]]")
-        val hvM = Regex("""([\w$]+)\s*\[${Regex.escape(tableVar)}\[${Regex.escape(xorVar)}\^""").find(dispBody)
-            ?: run { sigOpsHint = "d4-noHelperVar($dispName/$tableVar/body)"; return null }
+        // Step 4b: find the split-result array variable name.
+        // "var b = x[u[p^48]](u[2])" → splitVar = "b".
+        // Must NOT confuse this with the helper-object lookup that follows.
+        val eT0 = Regex.escape(tableVar); val eX0 = Regex.escape(xorVar)
+        val splitResM = Regex("""var\s+([\w$]+)\s*=\s*\w+\[$eT0\[$eX0\^48\]\]\($eT0\[2\]\)""").find(dispBody)
+        val splitVar  = splitResM?.groupValues?.get(1) ?: "b"
+
+        // Step 5: helper-object name ("Pw" from "Pw[tableVar[xorVar^XOR]](splitVar,…)").
+        // We require the SPLIT RESULT (splitVar) as first arg to avoid matching the split call
+        // itself: x[u[p^48]](u[2]) — there the first arg is u[2], not the array.
+        val eS0 = Regex.escape(splitVar)
+        val hvM = Regex("""([\w$]+)\s*\[$eT0\[$eX0\^\d+\]\]\s*\($eS0""").find(dispBody)
+            ?: run { sigOpsHint = "d4-noHelperVar($dispName/$tableVar/$splitVar/body)"; return null }
         val helperName = hvM.groupValues[1]
         sigOpsHint     = "d5-noTable($dispName/$helperName)"
 
@@ -624,11 +634,12 @@ class InnertubeApi @Inject constructor(
         sigOpsHint = "d8-noOps($dispName/$helperName)"
 
         // Step 9: extract ordered ops from dispatcher body
-        // Each op call: helperName[tableVar[xorVar^METHOD_XOR]](b, xorVar^ARG_XOR | LITERAL)
+        // Each op call: helperName[tableVar[xorVar^METHOD_XOR]](splitVar, xorVar^ARG_XOR | LITERAL)
         val eH = Regex.escape(helperName)
         val eT = Regex.escape(tableVar)
         val eX = Regex.escape(xorVar)
-        val opRe = Regex("""$eH\[$eT\[$eX\^(\d+)\]\]\(b(?:,$eX\^(\d+)|,(\d+))?\)""")
+        val eS = Regex.escape(splitVar)
+        val opRe = Regex("""$eH\[$eT\[$eX\^(\d+)\]\]\($eS(?:,$eX\^(\d+)|,(\d+))?\)""")
         val ops  = mutableListOf<SigOp>()
         for (m in opRe.findAll(dispBody)) {
             val methodXor = m.groupValues[1].toIntOrNull() ?: continue

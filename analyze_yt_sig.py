@@ -168,12 +168,24 @@ def extract_dispatcher_ops(js):
         return None, f"d3-noTableVar({disp_name}/{xor_var})"
     table_var = tm.group(1)
 
-    # Step 5: helper object name (from "Pw[tableVar[xorVar^...]]")
-    hm = re.search(r'([\w$]+)\[' + re.escape(table_var) + r'\[' + re.escape(xor_var) + r'\^', disp_body)
+    # Step 4b: find the split-result array variable name (typically "b").
+    # "var b = x[tableVar[xorVar^48]](tableVar[2])" → split_var = "b".
+    split_res_m = re.search(
+        r'var\s+([\w$]+)\s*=\s*\w+\[' + re.escape(table_var) + r'\[' + re.escape(xor_var) + r'\^48\]\]\(' + re.escape(table_var) + r'\[2\]\)',
+        disp_body
+    )
+    split_var = split_res_m.group(1) if split_res_m else 'b'
+
+    # Step 5: helper object name — require SPLIT_VAR as first arg to avoid matching the split
+    # call itself: x[u[p^48]](u[2]) whose first arg is u[2], not the array variable.
+    hm = re.search(
+        r'([\w$]+)\[' + re.escape(table_var) + r'\[' + re.escape(xor_var) + r'\^\d+\]\]\s*\(' + re.escape(split_var),
+        disp_body
+    )
     if not hm:
-        return None, f"d4-noHelperVar({disp_name}/{table_var})"
+        return None, f"d4-noHelperVar({disp_name}/{table_var}/{split_var})"
     helper_name = hm.group(1)
-    print(f"  [Strategy 4] dispatcher={disp_name} xorVar={xor_var} tableVar={table_var} helper={helper_name}")
+    print(f"  [Strategy 4] dispatcher={disp_name} xorVar={xor_var} tableVar={table_var} splitVar={split_var} helper={helper_name}")
 
     # Step 6: string table (tableVar = "...long...".split("{"))
     te = re.search(
@@ -227,8 +239,9 @@ def extract_dispatcher_ops(js):
     esc_h = re.escape(helper_name)
     esc_t = re.escape(table_var)
     esc_x = re.escape(xor_var)
+    esc_s = re.escape(split_var)
     call_re = re.compile(
-        r'%s\[%s\[%s\^(\d+)\]\]\(b(?:,%s\^(\d+)|,(\d+))?\)' % (esc_h, esc_t, esc_x, esc_x)
+        r'%s\[%s\[%s\^(\d+)\]\]\(%s(?:,%s\^(\d+)|,(\d+))?\)' % (esc_h, esc_t, esc_x, esc_s, esc_x)
     )
     ops = []
     for m in call_re.finditer(disp_body):
