@@ -759,6 +759,18 @@ def extract_n_decode_fn(js, table_var=None, u_entries=None, p=None):
             for _i, _m in enumerate(_occ[:8]):
                 _ctx = js[max(0, _m.start()-100):_m.end()+160]
                 print(f"    [{_i}] @{_m.start()}: {_ctx!r}")
+
+            # 2d: search for u[x^K] where p^K == n_idx (K = p ^ n_idx)
+            if p is not None:
+                _xor_for_n = p ^ n_idx
+                print(f"  n-decode [S2d] searching for {table_var}[x^{_xor_for_n}] "
+                      f"(p={p}, p^{_xor_for_n}={n_idx}='{u_entries[n_idx]}'):")
+                _xoc = list(re.finditer(
+                    rf'{re.escape(table_var)}\[[\w$]+\^{_xor_for_n}\]', js))
+                print(f"    occurrences of {table_var}[x^{_xor_for_n}]: {len(_xoc)}")
+                for _i, _m in enumerate(_xoc[:10]):
+                    _ctx = js[max(0, _m.start()-120):_m.end()+180]
+                    print(f"    [{_i}] @{_m.start()}: {_ctx!r}")
         else:
             print(f"  n-decode [S2] 'n' NOT in table — showing first 30 entries:")
             print(f"    {u_entries[:30]}")
@@ -973,6 +985,45 @@ if n_fn_code:
 else:
     print(f"  ✗ n-decode: {n_method}")
     print(f"    → YouTube may have changed the n-decode call site pattern")
+
+    # ── Extra diagnostics when n-decode fails ────────────────────────────────
+    # Find dispatcher name from the sig-decode call site and print ALL call sites.
+    _d_disp_name = None
+    for _dpat in [
+        r'(\w+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\s*\(\s*\d+\s*,\s*\d+\s*,\s*\w+\.s\s*\)\s*\)',
+        r'(\w+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\s*\(\s*\d+\s*,\s*\d+\s*,\s*\w+\.\w+\s*\)\s*\)',
+    ]:
+        _cs2 = re.search(_dpat, js)
+        if _cs2: _d_disp_name = _cs2.group(1); break
+
+    if _d_disp_name:
+        print(f"\n  [extra] dispatcher name: {_d_disp_name!r}")
+        _all_cs = list(re.finditer(re.escape(_d_disp_name) + r'\s*\(\s*\d', js))
+        print(f"  [extra] All {_d_disp_name}() call sites ({len(_all_cs)} total):")
+        for _i, _cm in enumerate(_all_cs[:15]):
+            _cctx = js[max(0, _cm.start()-20):_cm.end()+160]
+            print(f"    [{_i}] @{_cm.start()}: {_cctx!r}")
+
+        # Print the FULL dispatcher body (not just first 400 chars)
+        _fn_idx2 = js.rfind(f'{_d_disp_name}=function(')
+        if _fn_idx2 >= 0:
+            _br2 = js.find('{', _fn_idx2)
+            _full_body = extract_balanced(js, _br2)
+            if _full_body:
+                print(f"\n  [extra] Full dispatcher body ({len(_full_body)} chars):")
+                # Print in 300-char segments for readability
+                for _chunk_start in range(0, min(len(_full_body), 3000), 300):
+                    print(f"    @{_chunk_start}: {_full_body[_chunk_start:_chunk_start+300]!r}")
+
+    # Also search for standalone literal "n" accesses not caught by S1
+    print(f"\n  [extra] Searching for .get('n') / .set('n',) patterns with any quote style:")
+    for _qp in [r'\.get\("n"\)', r"\.get\('n'\)", r'\.set\("n",', r"\.set\('n',", r'\["n"\]']:
+        _qm = re.search(_qp, js)
+        if _qm:
+            _qctx = js[max(0, _qm.start()-80):_qm.end()+120]
+            print(f"    {_qp!r}: {_qctx!r}")
+        else:
+            print(f"    {_qp!r}: not found")
 
 # ── End-to-end cipher test ────────────────────────────────────────────────────
 print("\n" + "="*70)
