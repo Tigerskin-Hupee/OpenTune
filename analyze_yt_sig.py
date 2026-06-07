@@ -639,17 +639,25 @@ def decode_cipher_url(cipher, ops):
     return f"{base_url}{sep}{sig_param}={urllib.parse.quote(decoded_sig, safe='')}"
 
 def test_url_accessible(url):
-    req = urllib.request.Request(url, method="HEAD", headers={
-        "User-Agent": "com.google.android.apps.youtube.music/7.27.52",
+    hdrs = {
+        "User-Agent": "com.google.android.youtube/19.29.37 (Linux; U; Android 14)",
         "Range": "bytes=0-1",
-    })
-    try:
-        resp = urllib.request.urlopen(req, timeout=10)
-        return resp.status, None
-    except urllib.error.HTTPError as e:
-        return e.code, str(e)
-    except Exception as e:
-        return None, str(e)
+        "Referer": "https://www.youtube.com/",
+        "Origin": "https://www.youtube.com",
+    }
+    # Try GET with Range header — some CDN URLs reject HEAD
+    for method in ("GET", "HEAD"):
+        req = urllib.request.Request(url, method=method, headers=hdrs)
+        try:
+            resp = urllib.request.urlopen(req, timeout=12)
+            return resp.status, f"via {method}"
+        except urllib.error.HTTPError as e:
+            if e.code in (200, 206):
+                return e.code, f"via {method}"
+            last_err = (e.code, str(e))
+        except Exception as e:
+            last_err = (None, str(e))
+    return last_err
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -944,7 +952,7 @@ def extract_n_decode_fn(js, table_var=None, u_entries=None, p=None):
                             pf_params = pf_pm.group(1).strip() if pf_pm else 'a,b,c'
                             post_fn_code = f'function {post_fn_name}({pf_params}){pf_body}'
                             deps_parts.append(post_fn_code)
-                            print(f"    post_fn {post_fn_name}({pf_params}) body[:100]: {pf_body[:100]!r}")
+                            print(f"    post_fn {post_fn_name}({pf_params}) body[:400]: {pf_body[:400]!r}")
                         else:
                             print(f"  n-decode [S4] post-fn {post_fn_name!r} looks like class constructor — skipping")
                 if not post_fn_code:
@@ -1279,12 +1287,9 @@ else:
             # --- Test 2: URL with decoded n (using Node.js) ---
             if n_raw and n_fn_code:
                 print(f"\n[Test 2] Decode n-param using Node.js (method={n_method}) ...")
-                # S4 synthesizes a wrapper that calls the dispatcher — needs full player JS in scope
-                _need_player_js = n_method and n_method.startswith("S4")
-                n_decoded, n_err = decode_n_with_node(
-                    n_fn_code, n_raw, player_js=js if _need_player_js else None)
+                n_decoded, n_err = decode_n_with_node(n_fn_code, n_raw)
                 if n_decoded and n_decoded != n_raw:
-                    print(f"  n decoded: {n_raw[:20]}... → {n_decoded[:20]}...")
+                    print(f"  n decoded: {n_raw[:20]}... → {n_decoded[:20]}... ({len(n_raw)}→{len(n_decoded)} chars)")
                     url_with_decoded_n = replace_n_in_url(decoded_url, n_raw, n_decoded)
                     print(f"  Testing URL with decoded n ...")
                     status2, err2 = test_url_accessible(url_with_decoded_n)
