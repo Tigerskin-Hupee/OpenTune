@@ -86,6 +86,17 @@ object OpenTunePoTokenProvider : PoTokenProvider {
         return PoTokenResult(visitorData!!, playerPot, streamingPot)
     }
 
+    /** Force the PoToken WebView to be recreated on next use (e.g., after CDN 403). */
+    @Synchronized
+    fun forceRecreate() {
+        webView?.close()
+        webView = null
+        visitorData = null
+        streamingPot = null
+        lastError = "recreate_pending"
+        Log.i(TAG, "forceRecreate: WebView cleared, will recreate on next getWebClientPoToken call")
+    }
+
     override fun getWebEmbedClientPoToken(videoId: String): PoTokenResult? = getWebClientPoToken(videoId)
     // Android and iOS clients don't use WEB-type PoTokens; return null so NPE
     // falls back to WEB client where our token is valid.

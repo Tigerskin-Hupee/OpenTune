@@ -813,9 +813,12 @@ class MusicService : MediaLibraryService(),
         DiagnosticsLogger.logPlayback(mediaId, error.errorCode, "${error.message}: ${error.cause?.message ?: ""}")
 
         // Invalidate cached stream URL on CDN auth errors (403/410) so the
-        // next attempt re-resolves via StreamResolver.
+        // next attempt re-resolves via StreamResolver. Also force PoToken WebView
+        // recreation so the next resolution gets a fresh BotGuard token — a stale
+        // or invalid PoToken (e.g., wrong REQUEST_KEY) causes CDN 403.
         if (error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS) {
             if (mediaId.isNotEmpty()) runBlocking { streamResolver.invalidate(mediaId) }
+            app.opentune.utils.potoken.OpenTunePoTokenProvider.forceRecreate()
         }
 
         // wait for reconnection

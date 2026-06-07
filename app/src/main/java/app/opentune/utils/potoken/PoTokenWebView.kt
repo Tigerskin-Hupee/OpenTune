@@ -293,11 +293,17 @@ class PoTokenWebView private constructor(private val context: Context) {
                 // --- JNN request key ---
                 val jnnIdx = jsContent.indexOf("jnn/v1/Create")
                 val requestKey: String? = if (jnnIdx >= 0) {
-                    val nearWindow = jsContent.substring(maxOf(0, jnnIdx - 1000), minOf(jsContent.length, jnnIdx + 200))
+                    // Search ±1000 chars around "jnn/v1/Create" with multiple strategies.
+                    val nearWindow = jsContent.substring(maxOf(0, jnnIdx - 1000), minOf(jsContent.length, jnnIdx + 500))
                     Regex("""stringify\(\s*\[\s*["']([A-Za-z0-9_-]{15,30})["']\s*\]""").find(nearWindow)?.groupValues?.get(1)
                         ?: Regex("""\[\s*["']([A-Za-z0-9_-]{15,30})["']\s*[,\]]""").find(nearWindow)?.groupValues?.get(1)
+                        // Object-property styles: {k:"KEY"} or {key:"KEY"}
+                        ?: Regex("""["']?(?:key|k)["']?\s*:\s*["']([A-Za-z0-9_-]{15,30})["']""").find(nearWindow)?.groupValues?.get(1)
+                        // Inline with the URL itself: "jnn/v1/Create","KEY" or "jnn/v1/Create" ,"KEY"
+                        ?: Regex("""jnn/v1/Create["']\s*,\s*["']([A-Za-z0-9_-]{15,30})["']""").find(nearWindow)?.groupValues?.get(1)
                         ?: run {
-                            val wideWindow = jsContent.substring(maxOf(0, jnnIdx - 5000), jnnIdx + 100)
+                            // Wider window search: last quoted string assignment before jnn/v1/Create
+                            val wideWindow = jsContent.substring(maxOf(0, jnnIdx - 8000), jnnIdx + 200)
                             Regex("""=\s*["']([A-Za-z0-9_-]{15,30})["']""").findAll(wideWindow)
                                 .lastOrNull()?.groupValues?.get(1)
                         }
@@ -468,19 +474,39 @@ class PoTokenWebView private constructor(private val context: Context) {
     // Extract the YouTube n-parameter decode function from player JS.
     // YouTube stores it as an array: var X=[function(a){...}] called as X[0](n).
     private fun extractNDecodeFn(js: String): String? {
-        // Find the variable name of the n-decode array via the call site pattern
+        // Find the variable name of the n-decode array/function via call site patterns.
+        // YouTube has used several call site shapes across player versions:
+        //   .get("n"))&&(c=ARRNAME[0](c)      — classic array call (most common)
+        //   .get("n"))&&(c=ARRNAME(c)          — direct function call
+        //   .set("n",ARRNAME[0](c.get("n")))  — set call, newer players
+        //   .set("n",ARRNAME(c.get("n")))     — set call, direct fn
         val arrName = listOf(
             Regex("""\.get\("n"\)\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{2,})\[0\]\("""),
             Regex("""\.get\("n"\)\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{2,})\("""),
+            Regex("""\.set\("n",([a-zA-Z0-9$]{2,})\[0\]\("""),
+            Regex("""\.set\("n",([a-zA-Z0-9$]{2,})\("""),
         ).firstNotNullOfOrNull { it.find(js) }?.groupValues?.get(1) ?: return null
 
-        // Find var arrName=[ and extract bracket-balanced content
-        val searchToken = "var $arrName=["
-        val start = js.indexOf(searchToken).takeIf { it >= 0 }
-            ?: js.indexOf(",$arrName=[").takeIf { it >= 0 }?.plus(1)
-            ?: return null
-        val fnStart = start + searchToken.length - 1  // points at '['
-        return extractBalanced(js, fnStart)
+        // Find the array/function declaration. Search all common prefixes; resolve '['
+        // position correctly for each to avoid off-by-N errors on comma/semicolon joins.
+        val declarationPrefixes = listOf(
+            "var $arrName=[", "const $arrName=[", "let $arrName=[",
+        )
+        val joinPrefixes = listOf(",$arrName=[", ";$arrName=[")
+
+        var bracketIdx = -1
+        for (prefix in declarationPrefixes) {
+            val idx = js.indexOf(prefix)
+            if (idx >= 0) { bracketIdx = idx + prefix.length - 1; break }
+        }
+        if (bracketIdx < 0) {
+            for (prefix in joinPrefixes) {
+                val idx = js.indexOf(prefix)
+                if (idx >= 0) { bracketIdx = idx + prefix.length - 1; break }
+            }
+        }
+        if (bracketIdx < 0) return null
+        return extractBalanced(js, bracketIdx)
     }
 
     // Extract bracket-balanced content starting at `start` (must be '[', '{', or '(').

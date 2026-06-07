@@ -29,8 +29,8 @@ android {
         applicationId = "app.opentune"
         minSdk = 24
         targetSdk = 36
-        versionCode = 91
-        versionName = "1.2.67"
+        versionCode = 92
+        versionName = "1.2.68"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "NEWPIPE_EXTRACTOR_COMMIT", "\"c0abfa985f31435e56b4024504e3cf903cf7795f\"")
     }
