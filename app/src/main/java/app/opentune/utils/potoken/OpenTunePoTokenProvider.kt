@@ -38,6 +38,9 @@ object OpenTunePoTokenProvider : PoTokenProvider {
     @Volatile private var webView: PoTokenWebView? = null
     @Volatile private var visitorData: String? = null
     @Volatile private var streamingPot: String? = null
+    // True = PoToken state is stale (e.g. after a 403), but webView is kept alive for n-decode.
+    // The WebView is actually replaced on the next getWebClientPoToken call.
+    @Volatile private var poTokenNeedsRebuild = false
 
     override fun getWebClientPoToken(videoId: String): PoTokenResult? {
         return try {
@@ -52,13 +55,14 @@ object OpenTunePoTokenProvider : PoTokenProvider {
 
     @Synchronized
     private fun getWebClientPoTokenInternal(videoId: String, forceRecreate: Boolean): PoTokenResult {
-        val shouldRecreate = webView == null || forceRecreate || webView!!.isExpired()
+        val shouldRecreate = webView == null || forceRecreate || poTokenNeedsRebuild || visitorData == null || webView!!.isExpired()
 
         if (shouldRecreate) {
             webView?.close()
             webView = null
             visitorData = null
             streamingPot = null
+            poTokenNeedsRebuild = false
 
             runBlocking {
                 val vd = withContext(Dispatchers.IO) { fetchVisitorData() }
@@ -86,15 +90,16 @@ object OpenTunePoTokenProvider : PoTokenProvider {
         return PoTokenResult(visitorData!!, playerPot, streamingPot)
     }
 
-    /** Force the PoToken WebView to be recreated on next use (e.g., after CDN 403). */
+    /** Flag the PoToken state as stale so it is rebuilt on the next getWebClientPoToken call.
+     *  The WebView itself is NOT closed here — it remains usable for n-decode/sig-decode so
+     *  stream re-resolution can still decode the n-parameter while the PoToken is refreshed. */
     @Synchronized
     fun forceRecreate() {
-        webView?.close()
-        webView = null
         visitorData = null
         streamingPot = null
+        poTokenNeedsRebuild = true
         lastError = "recreate_pending"
-        Log.i(TAG, "forceRecreate: WebView cleared, will recreate on next getWebClientPoToken call")
+        Log.i(TAG, "forceRecreate: PoToken marked stale; WebView kept alive for n-decode")
     }
 
     override fun getWebEmbedClientPoToken(videoId: String): PoTokenResult? = getWebClientPoToken(videoId)
