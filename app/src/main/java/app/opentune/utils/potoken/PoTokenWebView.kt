@@ -541,16 +541,19 @@ class PoTokenWebView private constructor(private val context: Context) {
         val dispBody = extractBalanced(js, dispBrace)
             ?: run { Log.w(TAG, "extractNDecodeFn[S2]: dispatcher body extraction failed"); return null }
 
-        // String table (u = "...".split("{") etc.) — contains "split","join","reverse","splice"
+        // String table (u = "...".split("{") etc.) — contains "split","join","reverse","splice".
+        // Use findAll: first match is often a URL string, not the real method-name table.
         var tableVar: String? = null; var tableCode: String? = null
-        for (sep in listOf("{", ";", "|")) {
+        outer@ for (sep in listOf("{", ";", "|")) {
             val pat = Regex("""(?<![.\w])(\w+)\s*=\s*"([^"]{300,})"\s*\.split\s*\(\s*"${Regex.escape(sep)}"\s*\)""")
-            val tm = pat.find(js) ?: continue
-            val tv = tm.groupValues[1]
-            if (listOf("split", "join", "reverse", "splice").all { it in tm.groupValues[2].split(sep) }) {
-                tableVar = tv
-                tableCode = """var $tv="${tm.groupValues[2]}".split("$sep");"""
-                break
+            for (tm in pat.findAll(js)) {
+                val tv = tm.groupValues[1]
+                val entries = tm.groupValues[2].split(sep)
+                if (listOf("split", "join", "reverse", "splice").all { it in entries }) {
+                    tableVar = tv
+                    tableCode = """var $tv="${tm.groupValues[2]}".split("$sep");"""
+                    break@outer
+                }
             }
         }
 
