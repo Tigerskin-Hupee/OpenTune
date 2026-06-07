@@ -660,64 +660,124 @@ def find_player_url(html):
     return None
 
 # ─────────────────────────────────────────────────────────────────────────────
-# N-decode extraction — mirrors PoTokenWebView.extractNDecodeFn()
+# N-decode extraction — handles literal "n" AND table-indexed "n" (5cabb421+)
 # ─────────────────────────────────────────────────────────────────────────────
-def extract_n_decode_fn(js):
-    """
-    Extract the YouTube n-parameter decode function from player JS.
-    Returns (fn_code_str, arr_name) or (None, None).
-    """
-    call_patterns = [
-        (r'\.get\("n"\)\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{2,})\[0\]\(', ".get(n) [0]("),
-        (r'\.get\("n"\)\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{2,})\(',        ".get(n) ("),
-        (r'\.set\("n",([a-zA-Z0-9$]{2,})\[0\]\(',                           ".set(n) [0]("),
-        (r'\.set\("n",([a-zA-Z0-9$]{2,})\(',                                ".set(n) ("),
-    ]
-    arr_name = None
-    call_desc = None
-    for pat, desc in call_patterns:
-        m = re.search(pat, js)
-        if m:
-            arr_name = m.group(1)
-            call_desc = desc
-            break
-
-    if not arr_name:
-        return None, None
-
-    print(f"  n-decode call site [{call_desc}] → arrName={arr_name!r}")
-
-    # Find the array/function declaration — same prefix order as PoTokenWebView.kt
+def _find_n_arr_declaration(js, arr_name):
+    """Find n-decode array declaration; return (code, token) or (None, None)."""
     bracket_idx = -1
     found_token = None
     for token in [f"var {arr_name}=[", f"const {arr_name}=[", f"let {arr_name}=["]:
         idx = js.find(token)
         if idx >= 0:
-            bracket_idx = idx + len(token) - 1  # points at '['
+            bracket_idx = idx + len(token) - 1
             found_token = token
             break
     if bracket_idx < 0:
         for token in [f",{arr_name}=[", f";{arr_name}=["]:
             idx = js.find(token)
             if idx >= 0:
-                bracket_idx = idx + len(token) - 1  # points at '['
+                bracket_idx = idx + len(token) - 1
                 found_token = token
                 break
-
     if bracket_idx < 0:
-        print(f"  n-decode: arrName={arr_name!r} found at call site but "
-              f"declaration not found (tried var/const/let/,/;)")
-        return None, arr_name
-
+        return None, None
     fn_code = extract_balanced(js, bracket_idx)
-    if fn_code:
-        preview = fn_code[:80].replace('\n', ' ')
-        print(f"  n-decode: extracted {len(fn_code)} chars via {found_token!r}")
-        print(f"  n-decode preview: {preview!r}")
-    else:
-        print(f"  n-decode: extract_balanced failed (unbalanced JS at bracket_idx={bracket_idx})")
-        return None, arr_name
-    return fn_code, arr_name
+    return fn_code, found_token
+
+
+def extract_n_decode_fn(js, table_var=None, u_entries=None, p=None):
+    """
+    Extract the YouTube n-parameter decode function from player JS.
+    Returns (fn_code_str, arr_name, method) or (None, None, reason).
+
+    Strategy 1: literal "n" (.get("n"), .set("n",...))
+    Strategy 2: table-indexed "n" — player stores "n" in the string table u[K]
+                so call site uses u[K] or u[xorVar^CONST] instead of "n"
+    Strategy 3: broad fallback — find short [function(){}] arrays with decode ops
+    """
+    # ── Strategy 1: literal "n" ───────────────────────────────────────────────
+    for pat, desc in [
+        (r'\.get\("n"\)\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{2,})\[0\]\(', "get(n)[0]"),
+        (r'\.get\("n"\)\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{2,})\(',        "get(n)()"),
+        (r'\.set\("n",([a-zA-Z0-9$]{2,})\[0\]\(',                           "set(n)[0]"),
+        (r'\.set\("n",([a-zA-Z0-9$]{2,})\(',                                "set(n)()"),
+        (r"\.get\('n'\)\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{2,})\[0\]\(",   "get('n')[0]"),
+        (r"\.get\('n'\)\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{2,})\(",         "get('n')()"),
+    ]:
+        m = re.search(pat, js)
+        if m:
+            arr_name = m.group(1)
+            fn_code, token = _find_n_arr_declaration(js, arr_name)
+            if fn_code:
+                print(f"  n-decode [S1-{desc}] arrName={arr_name!r} via {token!r} ({len(fn_code)} chars)")
+                print(f"  preview: {fn_code[:80].replace(chr(10),' ')!r}")
+                return fn_code, arr_name, f"S1-{desc}"
+            print(f"  n-decode [S1-{desc}] arrName={arr_name!r} but declaration missing")
+
+    # ── Strategy 2: table-indexed "n" ────────────────────────────────────────
+    if table_var and u_entries:
+        n_idx = next((i for i, e in enumerate(u_entries) if e == "n"), -1)
+        print(f"  n-decode [S2] table={table_var!r} len={len(u_entries)} "
+              f"'n' idx={n_idx} p={p}")
+        if n_idx >= 0:
+            # 2a: direct index  u[n_idx]
+            for pat, desc in [
+                (rf'\.get\({re.escape(table_var)}\[{n_idx}\]\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{{2,}})\[0\]\(', f"get(u[{n_idx}])[0]"),
+                (rf'\.get\({re.escape(table_var)}\[{n_idx}\]\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{{2,}})\(',        f"get(u[{n_idx}])()"),
+                (rf'\.set\({re.escape(table_var)}\[{n_idx}\],([a-zA-Z0-9$]{{2,}})\[0\]\(',                        f"set(u[{n_idx}])[0]"),
+                (rf'\.set\({re.escape(table_var)}\[{n_idx}\],([a-zA-Z0-9$]{{2,}})\(',                             f"set(u[{n_idx}])()"),
+            ]:
+                m = re.search(pat, js)
+                if m:
+                    arr_name = m.group(1)
+                    fn_code, token = _find_n_arr_declaration(js, arr_name)
+                    if fn_code:
+                        print(f"  n-decode [S2a-{desc}] arrName={arr_name!r} ({len(fn_code)} chars)")
+                        return fn_code, arr_name, f"S2a-{desc}"
+
+            # 2b: XOR-obfuscated  u[xorVar ^ CONST]  where p^CONST == n_idx
+            if p is not None:
+                xor_const = p ^ n_idx
+                print(f"  n-decode [S2b] trying p^{xor_const}={n_idx} patterns")
+                for pat, desc in [
+                    (rf'\.get\({re.escape(table_var)}\[[a-zA-Z0-9$]+\^{xor_const}\]\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{{2,}})\[0\]\(', f"get(u[x^{xor_const}])[0]"),
+                    (rf'\.get\({re.escape(table_var)}\[[a-zA-Z0-9$]+\^{xor_const}\]\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{{2,}})\(',        f"get(u[x^{xor_const}])()"),
+                    (rf'\.set\({re.escape(table_var)}\[[a-zA-Z0-9$]+\^{xor_const}\],([a-zA-Z0-9$]{{2,}})\[0\]\(',                        f"set(u[x^{xor_const}])[0]"),
+                ]:
+                    m = re.search(pat, js)
+                    if m:
+                        arr_name = m.group(1)
+                        fn_code, token = _find_n_arr_declaration(js, arr_name)
+                        if fn_code:
+                            print(f"  n-decode [S2b-{desc}] arrName={arr_name!r} ({len(fn_code)} chars)")
+                            return fn_code, arr_name, f"S2b-{desc}"
+        else:
+            print(f"  n-decode [S2] 'n' NOT in table — showing first 30 entries:")
+            print(f"    {u_entries[:30]}")
+
+    # ── Strategy 3: broad search ──────────────────────────────────────────────
+    print(f"  n-decode [S3] broad search for [function(){{}}] arrays...")
+    candidates = []
+    for m in re.finditer(r'(?:var|const|let|,|;)\s*([\w$]{1,5})\s*=\s*\[function\s*\(', js):
+        arr_name = m.group(1)
+        bracket_idx = js.find('[', m.start())
+        if bracket_idx < 0: continue
+        fn_code = extract_balanced(js, bracket_idx)
+        if not fn_code or len(fn_code) > 8000 or len(fn_code) < 50: continue
+        score = sum(1 for kw in ['charCodeAt', 'fromCharCode', 'String.fromCharCode',
+                                  'split', 'join', 'length', 'Math', '%', '^', '&']
+                    if kw in fn_code)
+        candidates.append((score, arr_name, fn_code))
+    candidates.sort(reverse=True)
+    print(f"  n-decode [S3] {len(candidates)} candidates (top 5):")
+    for score, name, code in candidates[:5]:
+        print(f"    {name!r} score={score} len={len(code)}: {code[:70].replace(chr(10),' ')!r}")
+    if candidates and candidates[0][0] >= 3:
+        best_score, best_name, best_code = candidates[0]
+        print(f"  n-decode [S3] picking {best_name!r} (score={best_score})")
+        return best_code, best_name, f"S3-score{best_score}"
+
+    return None, None, "all-strategies-failed"
 
 
 def decode_n_with_node(fn_code, n_raw):
@@ -856,16 +916,31 @@ if not ops:
 print("\n" + "="*70)
 print("N-DECODE EXTRACTION TEST (root cause of CDN 403 in v1.2.67 and earlier)")
 print("="*70)
-n_fn_code, n_arr_name = extract_n_decode_fn(js)
+
+# Re-extract the string table variables so Strategy 2 can search for u[n_idx]
+_disp_table_var = _disp_u = _disp_p = None
+for _sep in ['{', ';', '|']:
+    _te = re.search(
+        r'(?<![.\w])(\w+)\s*=\s*"([^"]{300,})"\s*\.split\s*\(\s*"' + re.escape(_sep) + r'"\s*\)', js)
+    if not _te: continue
+    _tv, _u_ent = _te.group(1), _te.group(2).split(_sep)
+    if all(x in _u_ent for x in ('split', 'join', 'reverse', 'splice')):
+        _disp_table_var, _disp_u = _tv, _u_ent
+        _pr = discover_p_from_table(js, _tv, _u_ent)
+        if _pr: _disp_p = _pr[0]
+        print(f"  [n-decode setup] table={_disp_table_var!r} sep={_sep!r} "
+              f"len={len(_disp_u)} p={_disp_p}")
+        break
+if not _disp_table_var:
+    print("  [n-decode setup] no string table found — Strategy 2 disabled")
+
+n_fn_code, n_arr_name, n_method = extract_n_decode_fn(
+    js, table_var=_disp_table_var, u_entries=_disp_u, p=_disp_p)
 if n_fn_code:
-    print(f"  ✓ n-decode function FOUND ({len(n_fn_code)} chars)")
+    print(f"  ✓ n-decode function FOUND via {n_method} ({len(n_fn_code)} chars)")
 else:
-    if n_arr_name:
-        print(f"  ✗ n-decode: call site found (arrName={n_arr_name!r}) but declaration NOT found")
-        print(f"    → This is the CDN 403 root cause: app can't decode n-param → raw n in URL → 403")
-    else:
-        print(f"  ✗ n-decode: call site NOT found in player JS")
-        print(f"    → YouTube may have changed the n-decode call site pattern")
+    print(f"  ✗ n-decode: {n_method}")
+    print(f"    → YouTube may have changed the n-decode call site pattern")
 
 # ── End-to-end cipher test ────────────────────────────────────────────────────
 print("\n" + "="*70)
