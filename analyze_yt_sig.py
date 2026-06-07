@@ -816,6 +816,7 @@ def extract_n_decode_fn(js, table_var=None, u_entries=None, p=None):
 
     # ── Strategy 4: dispatcher-based n-decode (2026+ players e.g. 5cabb421) ──────
     # n-decode is DISP(A,B,DISP(C,D,x)) — same dispatcher as sig-decode, diff constants.
+    # Build a self-contained IIFE with u table + Pw helper + dispatcher function.
     print(f"  n-decode [S4] trying dispatcher-based approach...")
     sig_disp_m = re.search(
         r'(\w+)\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\(\s*\d+\s*,\s*\d+\s*,\s*\w+\.s\s*\)\s*\)', js)
@@ -834,8 +835,78 @@ def extract_n_decode_fn(js, table_var=None, u_entries=None, p=None):
             ctx = js[max(0, m.start()-80):m.end()+80]
             print(f"  n-decode [S4] FOUND: {disp_name}({ok},{or_},{disp_name}({ik},{ir},x))")
             print(f"    context: {ctx!r}")
-            synthesized = f"[function(x){{return {disp_name}({ok},{or_},{disp_name}({ik},{ir},x))}}]"
-            return synthesized, disp_name, f"S4-dispatcher({ok},{or_},{ik},{ir})"
+
+            # ── Build self-contained IIFE with all dependencies ──
+            deps_parts = []
+
+            # 1. Extract u string table declaration
+            u_table_code = None
+            if table_var:
+                for _sep in ['{', ';', '|']:
+                    te = re.search(
+                        r'(?<![.\w])' + re.escape(table_var) +
+                        r'\s*=\s*"([^"]{100,})"\s*\.split\s*\(\s*"' + re.escape(_sep) + r'"\s*\)',
+                        js)
+                    if te:
+                        u_table_code = f'var {table_var}={te.group(0).split("=",1)[1].strip()};'
+                        break
+            if u_table_code:
+                deps_parts.append(u_table_code)
+
+            # 2. Extract dispatcher function body
+            fn_idx = js.rfind(f'{disp_name}=function(', 0, m.start())
+            if fn_idx < 0:
+                fn_idx = js.find(f'{disp_name}=function(')
+            disp_params = "K,R,x"
+            if fn_idx >= 0:
+                pm = re.search(
+                    re.escape(disp_name) + r'=function\(([^)]*)\)', js, fn_idx)
+                if pm:
+                    disp_params = pm.group(1).strip()
+                brace_idx = js.find('{', fn_idx)
+                disp_body = extract_balanced(js, brace_idx) if brace_idx >= 0 else None
+            else:
+                disp_body = None
+
+            # 3. Extract Pw helper object referenced inside dispatcher body
+            helper_code = None
+            if disp_body:
+                hm = re.search(r'\b([\w$]+)\s*=\s*\{', disp_body)
+                if hm:
+                    helper_name = hm.group(1)
+                    # Find its declaration in JS (before the dispatcher)
+                    search_end = fn_idx if fn_idx >= 0 else len(js)
+                    hdef = js.rfind(f'{helper_name}=', 0, search_end)
+                    if hdef < 0:
+                        hdef = js.find(f'{helper_name}=')
+                    if hdef >= 0:
+                        hbrace = js.find('{', hdef)
+                        if hbrace >= 0:
+                            hbody = extract_balanced(js, hbrace)
+                            if hbody:
+                                helper_code = f'var {helper_name}={hbody};'
+                if helper_code:
+                    deps_parts.append(helper_code)
+
+            # 4. Add dispatcher function itself
+            if disp_body:
+                deps_parts.append(f'function {disp_name}({disp_params}){disp_body}')
+
+            if deps_parts:
+                deps_js = '\n'.join(deps_parts)
+                iife = (f'(function(){{{deps_js}\n'
+                        f'return [function(x){{return {disp_name}({ok},{or_},'
+                        f'{disp_name}({ik},{ir},x))}}]}})()')
+                print(f"  n-decode [S4] IIFE built ({len(iife)} chars, "
+                      f"deps={len(deps_parts)}: u={bool(u_table_code)} "
+                      f"helper={bool(helper_code)} fn={bool(disp_body)})")
+                return iife, disp_name, f"S4-dispatcher({ok},{or_},{ik},{ir})"
+            else:
+                # Fallback: bare wrapper, needs player_js in scope
+                synthesized = f"[function(x){{return {disp_name}({ok},{or_},{disp_name}({ik},{ir},x))}}]"
+                print(f"  n-decode [S4] WARNING: could not extract deps, returning bare wrapper")
+                return synthesized, disp_name, f"S4-dispatcher({ok},{or_},{ik},{ir})"
+
         print(f"  n-decode [S4] no nested call found for {disp_name!r} (other than sig-decode)")
     else:
         print(f"  n-decode [S4] sig call site not found — cannot identify dispatcher")
