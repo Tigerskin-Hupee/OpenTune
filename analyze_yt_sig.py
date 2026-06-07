@@ -839,17 +839,25 @@ def extract_n_decode_fn(js, table_var=None, u_entries=None, p=None):
             # ── Build self-contained IIFE with all dependencies ──
             deps_parts = []
 
-            # 1. Extract u string table declaration
+            # 1. Build u string table from known-correct u_entries (avoids re-searching
+            #    the JS where re.search finds the wrong occurrence).
             u_table_code = None
-            if table_var:
+            if table_var and u_entries:
+                import json as _json
+                u_array_js = '[' + ','.join(_json.dumps(e) for e in u_entries) + ']'
+                u_table_code = f'var {table_var}={u_array_js};'
+            elif table_var:
+                # Fallback: search JS but validate entries contain expected method names
                 for _sep in ['{', ';', '|']:
                     te = re.search(
                         r'(?<![.\w])' + re.escape(table_var) +
                         r'\s*=\s*"([^"]{100,})"\s*\.split\s*\(\s*"' + re.escape(_sep) + r'"\s*\)',
                         js)
                     if te:
-                        u_table_code = f'var {table_var}={te.group(0).split("=",1)[1].strip()};'
-                        break
+                        _entries = te.group(1).split(_sep)
+                        if all(x in _entries for x in ('split', 'reverse', 'splice')):
+                            u_table_code = f'var {table_var}={te.group(0).split("=",1)[1].strip()};'
+                            break
             if u_table_code:
                 deps_parts.append(u_table_code)
 
