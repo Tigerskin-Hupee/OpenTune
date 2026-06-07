@@ -659,8 +659,126 @@ def find_player_url(html):
     if m: return "https://www.youtube.com" + m.group(0)
     return None
 
+# ─────────────────────────────────────────────────────────────────────────────
+# N-decode extraction — mirrors PoTokenWebView.extractNDecodeFn()
+# ─────────────────────────────────────────────────────────────────────────────
+def extract_n_decode_fn(js):
+    """
+    Extract the YouTube n-parameter decode function from player JS.
+    Returns (fn_code_str, arr_name) or (None, None).
+    """
+    call_patterns = [
+        (r'\.get\("n"\)\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{2,})\[0\]\(', ".get(n) [0]("),
+        (r'\.get\("n"\)\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{2,})\(',        ".get(n) ("),
+        (r'\.set\("n",([a-zA-Z0-9$]{2,})\[0\]\(',                           ".set(n) [0]("),
+        (r'\.set\("n",([a-zA-Z0-9$]{2,})\(',                                ".set(n) ("),
+    ]
+    arr_name = None
+    call_desc = None
+    for pat, desc in call_patterns:
+        m = re.search(pat, js)
+        if m:
+            arr_name = m.group(1)
+            call_desc = desc
+            break
+
+    if not arr_name:
+        return None, None
+
+    print(f"  n-decode call site [{call_desc}] → arrName={arr_name!r}")
+
+    # Find the array/function declaration — same prefix order as PoTokenWebView.kt
+    bracket_idx = -1
+    found_token = None
+    for token in [f"var {arr_name}=[", f"const {arr_name}=[", f"let {arr_name}=["]:
+        idx = js.find(token)
+        if idx >= 0:
+            bracket_idx = idx + len(token) - 1  # points at '['
+            found_token = token
+            break
+    if bracket_idx < 0:
+        for token in [f",{arr_name}=[", f";{arr_name}=["]:
+            idx = js.find(token)
+            if idx >= 0:
+                bracket_idx = idx + len(token) - 1  # points at '['
+                found_token = token
+                break
+
+    if bracket_idx < 0:
+        print(f"  n-decode: arrName={arr_name!r} found at call site but "
+              f"declaration not found (tried var/const/let/,/;)")
+        return None, arr_name
+
+    fn_code = extract_balanced(js, bracket_idx)
+    if fn_code:
+        preview = fn_code[:80].replace('\n', ' ')
+        print(f"  n-decode: extracted {len(fn_code)} chars via {found_token!r}")
+        print(f"  n-decode preview: {preview!r}")
+    else:
+        print(f"  n-decode: extract_balanced failed (unbalanced JS at bracket_idx={bracket_idx})")
+        return None, arr_name
+    return fn_code, arr_name
+
+
+def decode_n_with_node(fn_code, n_raw):
+    """
+    Execute the extracted n-decode function using Node.js.
+    Returns (decoded_n, error_str) — one of them will be None.
+    """
+    import subprocess, tempfile, os
+    try:
+        subprocess.run(["node", "--version"], capture_output=True, check=True, timeout=5)
+    except Exception:
+        return None, "Node.js not available (install from nodejs.org)"
+
+    js_code = (
+        f"var _nDecFn = {fn_code};\n"
+        f"var n = {json.dumps(n_raw)};\n"
+        "try {\n"
+        "  var r = (_nDecFn instanceof Array) ? _nDecFn[0](n) : _nDecFn(n);\n"
+        "  process.stdout.write(String(r || ''));\n"
+        "} catch(e) {\n"
+        "  process.stderr.write('ERR: ' + e.toString());\n"
+        "  process.exit(1);\n"
+        "}\n"
+    )
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.js', delete=False, encoding='utf-8') as f:
+        f.write(js_code)
+        tmp = f.name
+    try:
+        result = subprocess.run(["node", tmp], capture_output=True, text=True, timeout=15)
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip(), None
+        err = result.stderr.strip() or f"exit {result.returncode} no output"
+        return None, err
+    except subprocess.TimeoutExpired:
+        return None, "Node.js timed out"
+    finally:
+        try:
+            os.unlink(tmp)
+        except Exception:
+            pass
+
+
+def extract_n_from_url(url):
+    """Extract the raw n-parameter value from a CDN URL."""
+    m = re.search(r'[?&]n=([^&]+)', url)
+    return urllib.parse.unquote(m.group(1)) if m else None
+
+
+def replace_n_in_url(url, old_n, new_n):
+    """Replace n-param value in a URL."""
+    encoded_old = urllib.parse.quote(old_n, safe='')
+    encoded_new = urllib.parse.quote(new_n, safe='')
+    # Try both encoded and raw forms
+    for old in [f"&n={encoded_old}", f"?n={encoded_old}", f"&n={old_n}", f"?n={old_n}"]:
+        new = old.replace(old_n if old_n in old else encoded_old, new_n if old_n in old else encoded_new)
+        if old in url:
+            return url.replace(old, new, 1)
+    return url
+
 print("="*70)
-print("OpenTune sig-decode tester  (v1.2.63 — Strategy 4: flat-dispatcher)")
+print("OpenTune sig-decode tester  (v1.2.68 — Strategy 4 + n-decode test)")
 print("="*70)
 print(f"Using UA: {UA}\n")
 
@@ -734,17 +852,32 @@ if not ops:
         print(f"\n  Strategy 4 failed: {hint}")
         show_dispatcher_analysis(js)
 
+# ── N-decode extraction test ─────────────────────────────────────────────────
+print("\n" + "="*70)
+print("N-DECODE EXTRACTION TEST (root cause of CDN 403 in v1.2.67 and earlier)")
+print("="*70)
+n_fn_code, n_arr_name = extract_n_decode_fn(js)
+if n_fn_code:
+    print(f"  ✓ n-decode function FOUND ({len(n_fn_code)} chars)")
+else:
+    if n_arr_name:
+        print(f"  ✗ n-decode: call site found (arrName={n_arr_name!r}) but declaration NOT found")
+        print(f"    → This is the CDN 403 root cause: app can't decode n-param → raw n in URL → 403")
+    else:
+        print(f"  ✗ n-decode: call site NOT found in player JS")
+        print(f"    → YouTube may have changed the n-decode call site pattern")
+
 # ── End-to-end cipher test ────────────────────────────────────────────────────
 print("\n" + "="*70)
-print("END-TO-END TEST: auto-fetch signatureCipher and verify decode")
+print("END-TO-END TEST: auto-fetch signatureCipher, sig decode, then n-decode")
 print("="*70)
 
 if not ops:
-    print("Extraction failed — skipping cipher test.")
+    print("Sig extraction failed — skipping cipher test.")
 else:
     cipher = None
     for vid in YTMUSIC_VIDEOS:
-        print(f"Fetching cipher for video {vid} &")
+        print(f"Fetching cipher for video {vid} ...")
         cipher, base_url = fetch_cipher_from_youtube(vid, sig_ts)
         if cipher:
             print(f"  Got signatureCipher ({len(cipher)} chars)")
@@ -752,19 +885,51 @@ else:
 
     if cipher:
         decoded_url = decode_cipher_url(cipher, ops)
-        if decoded_url:
-            print(f"\nDecoded URL (first 120 chars): {decoded_url[:120]}...")
-            print("Testing accessibility (HEAD request) &")
-            status, err = test_url_accessible(decoded_url)
-            if status in (200, 206):
-                print(f"  HTTP {status} — SUCCESS! Sig decode is working correctly.")
-            elif status == 403:
-                print(f"  HTTP 403 — sig decode may be WRONG (wrong ops or n-param not decoded).")
-                print("  Note: n-param decode is handled by the app's WebView, not tested here.")
-            else:
-                print(f"  HTTP {status} err={err}")
-        else:
+        if not decoded_url:
             print("  Could not decode cipher URL (parse error)")
+        else:
+            print(f"\nSig-decoded URL (first 120): {decoded_url[:120]}...")
+
+            # --- Test 1: URL with raw n (as the app sends when n-decode fails) ---
+            n_raw = extract_n_from_url(decoded_url)
+            print(f"\n[Test 1] URL with RAW n-param (n={n_raw[:20] if n_raw else 'N/A'}...)")
+            print("Testing HEAD request ...")
+            status1, err1 = test_url_accessible(decoded_url)
+            if status1 in (200, 206):
+                print(f"  HTTP {status1} — raw n already works (no n-decode needed for this video)")
+            elif status1 == 403:
+                print(f"  HTTP 403 — raw n rejected by CDN (n-decode IS required)")
+            else:
+                print(f"  HTTP {status1} err={err1}")
+
+            # --- Test 2: URL with decoded n (using Node.js) ---
+            if n_raw and n_fn_code:
+                print(f"\n[Test 2] Decode n-param using Node.js ...")
+                n_decoded, n_err = decode_n_with_node(n_fn_code, n_raw)
+                if n_decoded and n_decoded != n_raw:
+                    print(f"  n decoded: {n_raw[:20]}... → {n_decoded[:20]}...")
+                    url_with_decoded_n = replace_n_in_url(decoded_url, n_raw, n_decoded)
+                    print(f"  Testing URL with decoded n ...")
+                    status2, err2 = test_url_accessible(url_with_decoded_n)
+                    if status2 in (200, 206):
+                        print(f"  HTTP {status2} — SUCCESS! Sig + n-decode both work correctly.")
+                        if status1 == 403:
+                            print(f"  CONFIRMED: n-decode fixes the 403. App needs n-decode to work.")
+                    elif status2 == 403:
+                        print(f"  HTTP 403 even with decoded n — sig may still be wrong, or video restricted.")
+                    else:
+                        print(f"  HTTP {status2} err={err2}")
+                elif n_decoded == n_raw:
+                    print(f"  n-decode returned same value — function may be a no-op for this n")
+                    print(f"  n value: {n_raw[:40]}")
+                else:
+                    print(f"  n-decode FAILED: {n_err}")
+                    print(f"  → This is what happens in the app when n-decode can't run")
+            elif not n_fn_code:
+                print(f"\n[Test 2] Skipped — n-decode function not extracted from player JS")
+                print(f"  → App will use raw n → CDN 403 (this is the current bug being fixed in v1.2.68)")
+            elif not n_raw:
+                print(f"\n[Test 2] Skipped — no n-param in decoded URL")
     else:
         print("Could not fetch a real signatureCipher from any test video.")
         print("Manual test: paste a signatureCipher from OpenTune logcat below.")
