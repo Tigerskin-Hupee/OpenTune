@@ -832,9 +832,22 @@ def extract_n_decode_fn(js, table_var=None, u_entries=None, p=None):
             ok, or_ = int(m.group(1)), int(m.group(2))
             ik, ir  = int(m.group(3)), int(m.group(4))
             if (ok, or_) == sig_ok: continue
-            ctx = js[max(0, m.start()-80):m.end()+80]
+            ctx = js[max(0, m.start()-80):m.end()+200]
             print(f"  n-decode [S4] FOUND: {disp_name}({ok},{or_},{disp_name}({ik},{ir},x))")
             print(f"    context: {ctx!r}")
+
+            # ── Check for post-processing step after the Qp call ──
+            # Pattern: x=Qp(...),R.set(K, POSTFN(a,b,x))  →  final n = POSTFN(a,b,Qp_result)
+            post_fn_name = None
+            post_fn_args = None
+            post_ctx = js[m.end():m.end()+200]
+            post_m = re.search(
+                r',\s*[\w$]+\s*\[\s*[\w$\[\]^0-9]+\s*\]\s*\(\s*[\w$]+\s*,\s*([\w$]+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*[\w$]+\s*\)',
+                post_ctx)
+            if post_m:
+                post_fn_name = post_m.group(1)
+                post_fn_args = (post_m.group(2), post_m.group(3))
+                print(f"  n-decode [S4] post-process: {post_fn_name}({post_fn_args[0]},{post_fn_args[1]},x)")
 
             # ── Build self-contained IIFE with all dependencies ──
             deps_parts = []
@@ -903,21 +916,44 @@ def extract_n_decode_fn(js, table_var=None, u_entries=None, p=None):
             if disp_body:
                 deps_parts.append(f'function {disp_name}({disp_params}){disp_body}')
 
+            # 5. Extract post-processing function (e.g. K4) if present
+            post_fn_code = None
+            if post_fn_name:
+                for hpat in [f'function {post_fn_name}(', f'{post_fn_name}=function(', f'var {post_fn_name}=function(']:
+                    pfdef = js.rfind(hpat)
+                    if pfdef >= 0:
+                        pf_brace = js.find('{', pfdef)
+                        if pf_brace >= 0:
+                            pf_body = extract_balanced(js, pf_brace)
+                            if pf_body and len(pf_body) > 5:
+                                pf_pm = re.compile(
+                                    re.escape(post_fn_name) + r'[\s=]*function\s*\(([^)]*)\)').search(js, pfdef)
+                                pf_params = pf_pm.group(1).strip() if pf_pm else 'a,b,c'
+                                post_fn_code = f'function {post_fn_name}({pf_params}){pf_body}'
+                                deps_parts.append(post_fn_code)
+                                print(f"    post_fn {post_fn_name}({pf_params}) body[:100]: {pf_body[:100]!r}")
+                                break
+                if not post_fn_code:
+                    print(f"  n-decode [S4] WARNING: post-fn {post_fn_name!r} definition not found")
+
             if deps_parts:
                 deps_js = '\n'.join(deps_parts)
-                iife = (f'(function(){{{deps_js}\n'
-                        f'return [function(x){{return {disp_name}({ok},{or_},'
-                        f'{disp_name}({ik},{ir},x))}}]}})()')
+                # Build the final call expression, chaining post-fn if present
+                inner_call = f'{disp_name}({ok},{or_},{disp_name}({ik},{ir},x))'
+                if post_fn_name and post_fn_code and post_fn_args:
+                    final_call = f'{post_fn_name}({post_fn_args[0]},{post_fn_args[1]},{inner_call})'
+                else:
+                    final_call = inner_call
+                iife = f'(function(){{{deps_js}\nreturn [function(x){{return {final_call}}}]}})()'
                 print(f"  n-decode [S4] IIFE built ({len(iife)} chars, "
                       f"deps={len(deps_parts)}: u={bool(u_table_code)} "
-                      f"helper={bool(helper_code)} fn={bool(disp_body)})")
+                      f"helper={bool(helper_code)} fn={bool(disp_body)} post={bool(post_fn_code)})")
                 if u_table_code:
-                    print(f"    u_table: {u_table_code[:120]!r}")
+                    print(f"    u_table: {u_table_code[:80]!r}")
                 if helper_code:
-                    print(f"    helper:  {helper_code[:200]!r}")
+                    print(f"    helper:  {helper_code[:120]!r}")
                 if disp_body:
-                    print(f"    Qp params: {disp_params!r}")
-                    print(f"    Qp body[:200]: {disp_body[:200]!r}")
+                    print(f"    Qp params={disp_params!r}  final_call={final_call!r}")
                 return iife, disp_name, f"S4-dispatcher({ok},{or_},{ik},{ir})"
             else:
                 # Fallback: bare wrapper, needs player_js in scope
