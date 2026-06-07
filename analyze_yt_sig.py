@@ -850,10 +850,9 @@ def decode_n_with_node(fn_code, n_raw, player_js=None):
                that calls dispatcher functions (e.g. S4 results).
     Returns (decoded_n, error_str) — one of them will be None.
     """
-    import subprocess, tempfile, os
-    try:
-        subprocess.run(["node", "--version"], capture_output=True, check=True, timeout=5)
-    except Exception:
+    import subprocess, tempfile, os, shutil
+    node_exe = shutil.which("node") or shutil.which("node.exe")
+    if node_exe is None:
         return None, "Node.js not available (install from nodejs.org)"
 
     preamble = ""
@@ -877,7 +876,7 @@ def decode_n_with_node(fn_code, n_raw, player_js=None):
         f.write(js_code)
         tmp = f.name
     try:
-        result = subprocess.run(["node", tmp], capture_output=True, text=True, timeout=15)
+        result = subprocess.run([node_exe, tmp], capture_output=True, text=True, timeout=30)
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip(), None
         err = result.stderr.strip() or f"exit {result.returncode} no output"
