@@ -296,20 +296,20 @@ def extract_dispatcher_ops(js):
         fn_idx = js.rfind(f'{disp_name}=function(', 0, cs.start())
         if fn_idx < 0: fn_idx = js.find(f'{disp_name}=function(')
         if fn_idx < 0: fn_idx = js.rfind(f'var {disp_name}=function(', 0, cs.start())
-        if fn_idx < 0: return None, f"d1-noFnDef({disp_name})"
+        if fn_idx < 0: return None, f"d1-noFnDef({disp_name})", None, None, None
         brace = js.find('{', fn_idx)
         disp_body = extract_balanced(js, brace)
-        if not disp_body: return None, f"d1-noBody({disp_name})"
+        if not disp_body: return None, f"d1-noBody({disp_name})", None, None, None
         print(f"  [Strategy 4] disp_body[:400]: {disp_body[:400]!r}")
 
         # Step 3: XOR variable name ("p" from "var p = K^R")
         xm = re.search(r'var\s+([\w$]+)\s*=\s*[\w$]+\s*\^\s*[\w$]+', disp_body)
-        if not xm: return None, f"d2-noXorVar({disp_name})"
+        if not xm: return None, f"d2-noXorVar({disp_name})", None, None, None
         xor_var = xm.group(1)
 
         # Step 4: string-table variable — any TABLE[xorVar^N] access.
         tm = re.search(r'([\w$]+)\[' + re.escape(xor_var) + r'\^\d+\]', disp_body)
-        if not tm: return None, f"d3-noTableVar({disp_name}/{xor_var})"
+        if not tm: return None, f"d3-noTableVar({disp_name}/{xor_var})", None, None, None
         table_var = tm.group(1)
 
         # Step 6: string table (separator: "{", ";", or "|")
@@ -321,7 +321,7 @@ def extract_dispatcher_ops(js):
             if te:
                 u = te.group(1).split(_sep)
                 break
-        if u is None: return None, f"d5-noTableStr({table_var})"
+        if u is None: return None, f"d5-noTableStr({table_var})", None, None, None
 
     else:
         # ── Table-first path: no call site found ─────────────────────────────
@@ -367,10 +367,11 @@ def extract_dispatcher_ops(js):
             found = True; break
 
         if not found:
-            return None, "d0-noCallSite"
+            return None, "d0-noCallSite", None, None, None
 
     # ── Shared Steps 4b-9 ────────────────────────────────────────────────────
-    return _run_dispatcher_steps(js, disp_body, table_var, xor_var, p, u)
+    ops, hint = _run_dispatcher_steps(js, disp_body, table_var, xor_var, p, u)
+    return ops, hint, table_var, u, p
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -638,17 +639,25 @@ def decode_cipher_url(cipher, ops):
     return f"{base_url}{sep}{sig_param}={urllib.parse.quote(decoded_sig, safe='')}"
 
 def test_url_accessible(url):
-    req = urllib.request.Request(url, method="HEAD", headers={
-        "User-Agent": "com.google.android.apps.youtube.music/7.27.52",
+    hdrs = {
+        "User-Agent": "com.google.android.youtube/19.29.37 (Linux; U; Android 14)",
         "Range": "bytes=0-1",
-    })
-    try:
-        resp = urllib.request.urlopen(req, timeout=10)
-        return resp.status, None
-    except urllib.error.HTTPError as e:
-        return e.code, str(e)
-    except Exception as e:
-        return None, str(e)
+        "Referer": "https://www.youtube.com/",
+        "Origin": "https://www.youtube.com",
+    }
+    # Try GET with Range header — some CDN URLs reject HEAD
+    for method in ("GET", "HEAD"):
+        req = urllib.request.Request(url, method=method, headers=hdrs)
+        try:
+            resp = urllib.request.urlopen(req, timeout=12)
+            return resp.status, f"via {method}"
+        except urllib.error.HTTPError as e:
+            if e.code in (200, 206):
+                return e.code, f"via {method}"
+            last_err = (e.code, str(e))
+        except Exception as e:
+            last_err = (None, str(e))
+    return last_err
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -659,8 +668,438 @@ def find_player_url(html):
     if m: return "https://www.youtube.com" + m.group(0)
     return None
 
+# ─────────────────────────────────────────────────────────────────────────────
+# N-decode extraction — handles literal "n" AND table-indexed "n" (5cabb421+)
+# ─────────────────────────────────────────────────────────────────────────────
+def _find_n_arr_declaration(js, arr_name):
+    """Find n-decode array declaration; return (code, token) or (None, None)."""
+    bracket_idx = -1
+    found_token = None
+    for token in [f"var {arr_name}=[", f"const {arr_name}=[", f"let {arr_name}=["]:
+        idx = js.find(token)
+        if idx >= 0:
+            bracket_idx = idx + len(token) - 1
+            found_token = token
+            break
+    if bracket_idx < 0:
+        for token in [f",{arr_name}=[", f";{arr_name}=["]:
+            idx = js.find(token)
+            if idx >= 0:
+                bracket_idx = idx + len(token) - 1
+                found_token = token
+                break
+    if bracket_idx < 0:
+        return None, None
+    fn_code = extract_balanced(js, bracket_idx)
+    return fn_code, found_token
+
+
+def extract_n_decode_fn(js, table_var=None, u_entries=None, p=None):
+    """
+    Extract the YouTube n-parameter decode function from player JS.
+    Returns (fn_code_str, arr_name, method) or (None, None, reason).
+
+    Strategy 1: literal "n" (.get("n"), .set("n",...))
+    Strategy 2: table-indexed "n" — player stores "n" in the string table u[K]
+                so call site uses u[K] or u[xorVar^CONST] instead of "n"
+    Strategy 3: broad fallback — find short [function(){}] arrays with decode ops
+    """
+    # ── Strategy 1: literal "n" ───────────────────────────────────────────────
+    for pat, desc in [
+        (r'\.get\("n"\)\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{2,})\[0\]\(', "get(n)[0]"),
+        (r'\.get\("n"\)\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{2,})\(',        "get(n)()"),
+        (r'\.set\("n",([a-zA-Z0-9$]{2,})\[0\]\(',                           "set(n)[0]"),
+        (r'\.set\("n",([a-zA-Z0-9$]{2,})\(',                                "set(n)()"),
+        (r"\.get\('n'\)\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{2,})\[0\]\(",   "get('n')[0]"),
+        (r"\.get\('n'\)\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{2,})\(",         "get('n')()"),
+    ]:
+        m = re.search(pat, js)
+        if m:
+            arr_name = m.group(1)
+            fn_code, token = _find_n_arr_declaration(js, arr_name)
+            if fn_code:
+                print(f"  n-decode [S1-{desc}] arrName={arr_name!r} via {token!r} ({len(fn_code)} chars)")
+                print(f"  preview: {fn_code[:80].replace(chr(10),' ')!r}")
+                return fn_code, arr_name, f"S1-{desc}"
+            print(f"  n-decode [S1-{desc}] arrName={arr_name!r} but declaration missing")
+
+    # ── Strategy 2: table-indexed "n" ────────────────────────────────────────
+    if table_var and u_entries:
+        n_idx = next((i for i, e in enumerate(u_entries) if e == "n"), -1)
+        print(f"  n-decode [S2] table={table_var!r} len={len(u_entries)} "
+              f"'n' idx={n_idx} p={p}")
+        if n_idx >= 0:
+            # 2a: direct index  u[n_idx]
+            for pat, desc in [
+                (rf'\.get\({re.escape(table_var)}\[{n_idx}\]\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{{2,}})\[0\]\(', f"get(u[{n_idx}])[0]"),
+                (rf'\.get\({re.escape(table_var)}\[{n_idx}\]\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{{2,}})\(',        f"get(u[{n_idx}])()"),
+                (rf'\.set\({re.escape(table_var)}\[{n_idx}\],([a-zA-Z0-9$]{{2,}})\[0\]\(',                        f"set(u[{n_idx}])[0]"),
+                (rf'\.set\({re.escape(table_var)}\[{n_idx}\],([a-zA-Z0-9$]{{2,}})\(',                             f"set(u[{n_idx}])()"),
+            ]:
+                m = re.search(pat, js)
+                if m:
+                    arr_name = m.group(1)
+                    fn_code, token = _find_n_arr_declaration(js, arr_name)
+                    if fn_code:
+                        print(f"  n-decode [S2a-{desc}] arrName={arr_name!r} ({len(fn_code)} chars)")
+                        return fn_code, arr_name, f"S2a-{desc}"
+
+            # 2b: XOR-obfuscated  u[xorVar ^ CONST]  where p^CONST == n_idx
+            if p is not None:
+                xor_const = p ^ n_idx
+                print(f"  n-decode [S2b] trying p^{xor_const}={n_idx} patterns")
+                for pat, desc in [
+                    (rf'\.get\({re.escape(table_var)}\[[a-zA-Z0-9$]+\^{xor_const}\]\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{{2,}})\[0\]\(', f"get(u[x^{xor_const}])[0]"),
+                    (rf'\.get\({re.escape(table_var)}\[[a-zA-Z0-9$]+\^{xor_const}\]\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{{2,}})\(',        f"get(u[x^{xor_const}])()"),
+                    (rf'\.set\({re.escape(table_var)}\[[a-zA-Z0-9$]+\^{xor_const}\],([a-zA-Z0-9$]{{2,}})\[0\]\(',                        f"set(u[x^{xor_const}])[0]"),
+                ]:
+                    m = re.search(pat, js)
+                    if m:
+                        arr_name = m.group(1)
+                        fn_code, token = _find_n_arr_declaration(js, arr_name)
+                        if fn_code:
+                            print(f"  n-decode [S2b-{desc}] arrName={arr_name!r} ({len(fn_code)} chars)")
+                            return fn_code, arr_name, f"S2b-{desc}"
+            # 2c: diagnostic — dump all u[n_idx] occurrences so we can see the actual pattern
+            print(f"  n-decode [S2c-diag] S1/S2a/S2b all failed — dumping u[{n_idx}] context:")
+            _occ = list(re.finditer(rf'(?<!\w){re.escape(table_var)}\[{n_idx}\]', js))
+            print(f"    total occurrences of {table_var}[{n_idx}]: {len(_occ)}")
+            for _i, _m in enumerate(_occ[:8]):
+                _ctx = js[max(0, _m.start()-100):_m.end()+160]
+                print(f"    [{_i}] @{_m.start()}: {_ctx!r}")
+
+            # 2d: search for u[x^K] where p^K == n_idx (K = p ^ n_idx)
+            if p is not None:
+                _xor_for_n = p ^ n_idx
+                print(f"  n-decode [S2d] searching for {table_var}[x^{_xor_for_n}] "
+                      f"(p={p}, p^{_xor_for_n}={n_idx}='{u_entries[n_idx]}'):")
+                _xoc = list(re.finditer(
+                    rf'{re.escape(table_var)}\[[\w$]+\^{_xor_for_n}\]', js))
+                print(f"    occurrences of {table_var}[x^{_xor_for_n}]: {len(_xoc)}")
+                for _i, _m in enumerate(_xoc[:10]):
+                    _ctx = js[max(0, _m.start()-120):_m.end()+180]
+                    print(f"    [{_i}] @{_m.start()}: {_ctx!r}")
+        else:
+            print(f"  n-decode [S2] 'n' NOT in table — showing first 30 entries:")
+            print(f"    {u_entries[:30]}")
+
+    # ── Strategy 3: broad search ──────────────────────────────────────────────
+    print(f"  n-decode [S3] broad search for [function(){{}}] arrays...")
+    _seen = set()
+    candidates = []
+    # 3a: arrays with var/const/let/,/; prefix
+    for m in re.finditer(r'(?:var|const|let|,|;)\s*([\w$]{1,5})\s*=\s*\[function\s*\(', js):
+        arr_name = m.group(1)
+        if arr_name in _seen: continue
+        _seen.add(arr_name)
+        bracket_idx = js.find('[', m.start())
+        if bracket_idx < 0: continue
+        fn_code = extract_balanced(js, bracket_idx)
+        if not fn_code or len(fn_code) > 10000 or len(fn_code) < 50: continue
+        score = sum(1 for kw in ['charCodeAt', 'fromCharCode', 'String.fromCharCode',
+                                  'split', 'join', 'length', 'Math', '%', '^', '&']
+                    if kw in fn_code)
+        candidates.append((score, arr_name, fn_code))
+    # 3b: any assignment (no prefix requirement — catches reassignments and minified code)
+    for m in re.finditer(r'([\w$]{1,5})\s*=\s*\[function\s*\(', js):
+        arr_name = m.group(1)
+        if arr_name in _seen: continue
+        _seen.add(arr_name)
+        bracket_idx = js.find('[', m.start())
+        if bracket_idx < 0: continue
+        fn_code = extract_balanced(js, bracket_idx)
+        if not fn_code or len(fn_code) > 10000 or len(fn_code) < 200: continue
+        score = sum(1 for kw in ['charCodeAt', 'fromCharCode', 'String.fromCharCode',
+                                  'split', 'join', 'length', 'Math', '%', '^', '&']
+                    if kw in fn_code)
+        candidates.append((score, arr_name, fn_code))
+    candidates.sort(reverse=True)
+    print(f"  n-decode [S3] {len(candidates)} candidates (top 5):")
+    for score, name, code in candidates[:5]:
+        print(f"    {name!r} score={score} len={len(code)}: {code[:70].replace(chr(10),' ')!r}")
+    if candidates and candidates[0][0] >= 3:
+        best_score, best_name, best_code = candidates[0]
+        print(f"  n-decode [S3] picking {best_name!r} (score={best_score})")
+        return best_code, best_name, f"S3-score{best_score}"
+
+    # ── Strategy 4: dispatcher-based n-decode (2026+ players e.g. 5cabb421) ──────
+    # n-decode is DISP(A,B,DISP(C,D,x)) — same dispatcher as sig-decode, diff constants.
+    # Build a self-contained IIFE with u table + Pw helper + dispatcher function.
+    print(f"  n-decode [S4] trying dispatcher-based approach...")
+    sig_disp_m = re.search(
+        r'(\w+)\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\(\s*\d+\s*,\s*\d+\s*,\s*\w+\.s\s*\)\s*\)', js)
+    if sig_disp_m:
+        disp_name = sig_disp_m.group(1)
+        sig_ok = int(sig_disp_m.group(2)), int(sig_disp_m.group(3))
+        print(f"  n-decode [S4] dispatcher={disp_name!r} sig outer K={sig_ok[0]} R={sig_ok[1]}")
+        n_pat = re.compile(
+            r'\b' + re.escape(disp_name) +
+            r'\(\s*(\d+)\s*,\s*(\d+)\s*,\s*' + re.escape(disp_name) +
+            r'\(\s*(\d+)\s*,\s*(\d+)\s*,\s*([\w$]+)\s*\)\s*\)')
+        for m in n_pat.finditer(js):
+            ok, or_ = int(m.group(1)), int(m.group(2))
+            ik, ir  = int(m.group(3)), int(m.group(4))
+            if (ok, or_) == sig_ok: continue
+            ctx = js[max(0, m.start()-80):m.end()+200]
+            print(f"  n-decode [S4] FOUND: {disp_name}({ok},{or_},{disp_name}({ik},{ir},x))")
+            print(f"    context: {ctx!r}")
+
+            # ── Check for post-processing step after the Qp call ──
+            # Pattern: x=Qp(...),R.set(K, POSTFN(a,b,x))  →  final n = POSTFN(a,b,Qp_result)
+            post_fn_name = None
+            post_fn_args = None
+            post_ctx = js[m.end():m.end()+200]
+            post_m = re.search(
+                r',\s*[\w$]+\s*\[\s*[\w$\[\]^0-9]+\s*\]\s*\(\s*[\w$]+\s*,\s*([\w$]+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*[\w$]+\s*\)',
+                post_ctx)
+            if post_m:
+                post_fn_name = post_m.group(1)
+                post_fn_args = (post_m.group(2), post_m.group(3))
+                print(f"  n-decode [S4] post-process: {post_fn_name}({post_fn_args[0]},{post_fn_args[1]},x)")
+
+            # ── Build self-contained IIFE with all dependencies ──
+            deps_parts = []
+
+            # 1. Build u string table from known-correct u_entries (avoids re-searching
+            #    the JS where re.search finds the wrong occurrence).
+            u_table_code = None
+            if table_var and u_entries:
+                import json as _json
+                u_array_js = '[' + ','.join(_json.dumps(e) for e in u_entries) + ']'
+                u_table_code = f'var {table_var}={u_array_js};'
+            elif table_var:
+                # Fallback: search JS but validate entries contain expected method names
+                for _sep in ['{', ';', '|']:
+                    te = re.search(
+                        r'(?<![.\w])' + re.escape(table_var) +
+                        r'\s*=\s*"([^"]{100,})"\s*\.split\s*\(\s*"' + re.escape(_sep) + r'"\s*\)',
+                        js)
+                    if te:
+                        _entries = te.group(1).split(_sep)
+                        if all(x in _entries for x in ('split', 'reverse', 'splice')):
+                            u_table_code = f'var {table_var}={te.group(0).split("=",1)[1].strip()};'
+                            break
+            if u_table_code:
+                deps_parts.append(u_table_code)
+
+            # 2. Extract dispatcher function body
+            fn_idx = js.rfind(f'{disp_name}=function(', 0, m.start())
+            if fn_idx < 0:
+                fn_idx = js.find(f'{disp_name}=function(')
+            disp_params = "K,R,x"
+            if fn_idx >= 0:
+                pm = re.compile(
+                    re.escape(disp_name) + r'=function\(([^)]*)\)').search(js, fn_idx)
+                if pm:
+                    disp_params = pm.group(1).strip()
+                brace_idx = js.find('{', fn_idx)
+                disp_body = extract_balanced(js, brace_idx) if brace_idx >= 0 else None
+            else:
+                disp_body = None
+
+            # 3. Extract Pw helper object referenced inside dispatcher body.
+            # Pw appears as HELPER[table_var[...]](...) — find it by that pattern.
+            helper_code = None
+            if disp_body:
+                tv = table_var or 'u'
+                hm = re.search(r'\b([\w$]{2,})\[' + re.escape(tv) + r'\[', disp_body)
+                if hm:
+                    helper_name = hm.group(1)
+                    search_end = fn_idx if fn_idx >= 0 else len(js)
+                    for hpat in [f'var {helper_name}=', f'{helper_name}=']:
+                        hdef = js.rfind(hpat, 0, search_end)
+                        if hdef < 0:
+                            hdef = js.find(hpat)
+                        if hdef >= 0:
+                            hbrace = js.find('{', hdef)
+                            if hbrace >= 0:
+                                hbody = extract_balanced(js, hbrace)
+                                if hbody and len(hbody) > 10:
+                                    helper_code = f'var {helper_name}={hbody};'
+                                    break
+                if helper_code:
+                    deps_parts.append(helper_code)
+
+            # 4. Add dispatcher function itself
+            if disp_body:
+                deps_parts.append(f'function {disp_name}({disp_params}){disp_body}')
+
+            # 5. Extract post-processing function (e.g. K4) if present.
+            # Search BACKWARD from the n-decode call site to find the closest definition
+            # (avoids picking up class constructors defined later in the file).
+            post_fn_code = None
+            if post_fn_name:
+                _call_pos = m.start()
+                _best_pfdef = -1
+                for hpat in [f'function {post_fn_name}(', f'{post_fn_name}=function(', f'var {post_fn_name}=function(']:
+                    _pos = js.rfind(hpat, 0, _call_pos)
+                    if _pos > _best_pfdef:
+                        _best_pfdef = _pos
+                if _best_pfdef < 0:
+                    # fallback: search entire JS but skip class constructors
+                    for hpat in [f'function {post_fn_name}(', f'{post_fn_name}=function(']:
+                        _pos = js.find(hpat)
+                        if _pos >= 0 and _pos > _best_pfdef:
+                            _best_pfdef = _pos
+                if _best_pfdef >= 0:
+                    pf_brace = js.find('{', _best_pfdef)
+                    if pf_brace >= 0:
+                        pf_body = extract_balanced(js, pf_brace)
+                        # Skip class constructors (they call g.X.call(this) or similar)
+                        if pf_body and len(pf_body) > 5 and 'call(this)' not in pf_body[:60]:
+                            pf_pm = re.compile(
+                                re.escape(post_fn_name) + r'[\s=]*function\s*\(([^)]*)\)').search(js, _best_pfdef)
+                            pf_params = pf_pm.group(1).strip() if pf_pm else 'a,b,c'
+                            post_fn_code = f'function {post_fn_name}({pf_params}){pf_body}'
+                            deps_parts.append(post_fn_code)
+                            print(f"    post_fn {post_fn_name}({pf_params}) body[:400]: {pf_body[:400]!r}")
+                        else:
+                            print(f"  n-decode [S4] post-fn {post_fn_name!r} looks like class constructor — skipping")
+                if not post_fn_code:
+                    print(f"  n-decode [S4] WARNING: post-fn {post_fn_name!r} definition not found")
+
+            if deps_parts:
+                deps_js = '\n'.join(deps_parts)
+                # Build the final call expression, chaining post-fn if present
+                inner_call = f'{disp_name}({ok},{or_},{disp_name}({ik},{ir},x))'
+                if post_fn_name and post_fn_code and post_fn_args:
+                    final_call = f'{post_fn_name}({post_fn_args[0]},{post_fn_args[1]},{inner_call})'
+                else:
+                    final_call = inner_call
+                iife = f'(function(){{{deps_js}\nreturn [function(x){{return {final_call}}}]}})()'
+                print(f"  n-decode [S4] IIFE built ({len(iife)} chars, "
+                      f"deps={len(deps_parts)}: u={bool(u_table_code)} "
+                      f"helper={bool(helper_code)} fn={bool(disp_body)} post={bool(post_fn_code)})")
+                if u_table_code:
+                    print(f"    u_table: {u_table_code[:80]!r}")
+                if helper_code:
+                    print(f"    helper:  {helper_code[:120]!r}")
+                if disp_body:
+                    print(f"    Qp params={disp_params!r}  final_call={final_call!r}")
+                return iife, disp_name, f"S4-dispatcher({ok},{or_},{ik},{ir})"
+            else:
+                # Fallback: bare wrapper, needs player_js in scope
+                synthesized = f"[function(x){{return {disp_name}({ok},{or_},{disp_name}({ik},{ir},x))}}]"
+                print(f"  n-decode [S4] WARNING: could not extract deps, returning bare wrapper")
+                return synthesized, disp_name, f"S4-dispatcher({ok},{or_},{ik},{ir})"
+
+        print(f"  n-decode [S4] no nested call found for {disp_name!r} (other than sig-decode)")
+    else:
+        print(f"  n-decode [S4] sig call site not found — cannot identify dispatcher")
+
+    return None, None, "all-strategies-failed"
+
+
+def decode_n_with_node(fn_code, n_raw, player_js=None):
+    """
+    Execute the extracted n-decode function using Node.js.
+    player_js: full player JS string — required when fn_code is a synthesized wrapper
+               that calls dispatcher functions (e.g. S4 results).
+    Returns (decoded_n, error_str) — one of them will be None.
+    """
+    import subprocess, tempfile, os, shutil, sys
+
+    # shutil.which may fail on Windows when node is in user PATH but not system PATH.
+    node_exe = shutil.which("node") or shutil.which("node.exe")
+    _use_shell = False
+    if node_exe is None and sys.platform == "win32":
+        # Try common Windows Node.js install paths first
+        _common = [
+            r"C:\Program Files\nodejs\node.exe",
+            r"C:\Program Files (x86)\nodejs\node.exe",
+            os.path.expandvars(r"%APPDATA%\npm\node.exe"),
+            os.path.expandvars(r"%ProgramFiles%\nodejs\node.exe"),
+            os.path.expandvars(r"%LOCALAPPDATA%\Programs\nodejs\node.exe"),
+        ]
+        for _p in _common:
+            if os.path.isfile(_p):
+                node_exe = _p
+                break
+    if node_exe is None and sys.platform == "win32":
+        # Try `where node` via cmd.exe to find it in PATH
+        try:
+            r = subprocess.run("where node", shell=True, capture_output=True, text=True, timeout=5)
+            if r.returncode == 0:
+                _first = r.stdout.strip().splitlines()[0].strip()
+                if os.path.isfile(_first):
+                    node_exe = _first
+                else:
+                    node_exe = "node"; _use_shell = True
+        except Exception:
+            pass
+    if node_exe is None and sys.platform == "win32":
+        # Last resort: just try node via shell
+        try:
+            r = subprocess.run("node --version", shell=True, capture_output=True, timeout=5)
+            if r.returncode == 0:
+                node_exe = "node"; _use_shell = True
+        except Exception:
+            pass
+    if node_exe is None:
+        return None, "Node.js not available (install from nodejs.org)"
+
+    preamble = ""
+    if player_js:
+        # Wrap in try/catch so parse errors in irrelevant parts don't abort
+        preamble = f"try{{eval({json.dumps(player_js)})}}catch(e){{}}\n"
+
+    js_code = (
+        preamble +
+        f"var _nDecFn = {fn_code};\n"
+        f"var n = {json.dumps(n_raw)};\n"
+        "try {\n"
+        "  var r = (_nDecFn instanceof Array) ? _nDecFn[0](n) : _nDecFn(n);\n"
+        "  process.stdout.write(String(r || ''));\n"
+        "} catch(e) {\n"
+        "  process.stderr.write('ERR: ' + e.toString());\n"
+        "  process.exit(1);\n"
+        "}\n"
+    )
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.js', delete=False, encoding='utf-8') as f:
+        f.write(js_code)
+        tmp = f.name
+    try:
+        if _use_shell:
+            # Windows shell mode: quote path in case it contains spaces
+            result = subprocess.run(
+                f'node "{tmp}"', shell=True, capture_output=True, text=True, timeout=60)
+        else:
+            result = subprocess.run(
+                [node_exe, tmp], capture_output=True, text=True, timeout=60)
+        if result.returncode == 0 and result.stdout.strip():
+            if result.stderr.strip():
+                print(f"    [node stderr]: {result.stderr.strip()[:200]}")
+            return result.stdout.strip(), None
+        err = result.stderr.strip() or f"exit {result.returncode} no output"
+        return None, err
+    except subprocess.TimeoutExpired:
+        return None, "Node.js timed out (60s)"
+    finally:
+        try:
+            os.unlink(tmp)
+        except Exception:
+            pass
+
+
+def extract_n_from_url(url):
+    """Extract the raw n-parameter value from a CDN URL."""
+    m = re.search(r'[?&]n=([^&]+)', url)
+    return urllib.parse.unquote(m.group(1)) if m else None
+
+
+def replace_n_in_url(url, old_n, new_n):
+    """Replace n-param value in a URL."""
+    encoded_old = urllib.parse.quote(old_n, safe='')
+    encoded_new = urllib.parse.quote(new_n, safe='')
+    # Try both encoded and raw forms
+    for old in [f"&n={encoded_old}", f"?n={encoded_old}", f"&n={old_n}", f"?n={old_n}"]:
+        new = old.replace(old_n if old_n in old else encoded_old, new_n if old_n in old else encoded_new)
+        if old in url:
+            return url.replace(old, new, 1)
+    return url
+
 print("="*70)
-print("OpenTune sig-decode tester  (v1.2.63 — Strategy 4: flat-dispatcher)")
+print("OpenTune sig-decode tester  (v1.2.68 — Strategy 4 + n-decode test)")
 print("="*70)
 print(f"Using UA: {UA}\n")
 
@@ -724,9 +1163,10 @@ if sig_ts: print(f"signatureTimestamp: {sig_ts}")
 print("Running extraction &")
 ops, fn_name = extract_sig_ops(js)
 
+_d_table_var = _d_u = _d_p = None
 if not ops:
     print("\n  [Strategy 4: flat-dispatcher (YouTube 2026+)]")
-    ops, hint = extract_dispatcher_ops(js)
+    ops, hint, _d_table_var, _d_u, _d_p = extract_dispatcher_ops(js)
     if ops:
         print(f"\n*** Strategy 4 SUCCESS: {hint} ***")
         print(f"    ops ({len(ops)}): {ops}")
@@ -734,17 +1174,92 @@ if not ops:
         print(f"\n  Strategy 4 failed: {hint}")
         show_dispatcher_analysis(js)
 
+# ── N-decode extraction test ─────────────────────────────────────────────────
+print("\n" + "="*70)
+print("N-DECODE EXTRACTION TEST (root cause of CDN 403 in v1.2.67 and earlier)")
+print("="*70)
+
+# Use table vars from Strategy 4 dispatcher (p is authoritative here).
+# Fall back to independent discovery only if Strategy 4 was not used.
+if _d_table_var is not None:
+    _disp_table_var, _disp_u, _disp_p = _d_table_var, _d_u, _d_p
+    print(f"  [n-decode setup] using dispatcher values: table={_disp_table_var!r} "
+          f"len={len(_disp_u)} p={_disp_p}")
+else:
+    _disp_table_var = _disp_u = _disp_p = None
+    for _sep in ['{', ';', '|']:
+        _te = re.search(
+            r'(?<![.\w])(\w+)\s*=\s*"([^"]{300,})"\s*\.split\s*\(\s*"' + re.escape(_sep) + r'"\s*\)', js)
+        if not _te: continue
+        _tv, _u_ent = _te.group(1), _te.group(2).split(_sep)
+        if all(x in _u_ent for x in ('split', 'join', 'reverse', 'splice')):
+            _disp_table_var, _disp_u = _tv, _u_ent
+            _pr = discover_p_from_table(js, _tv, _u_ent)
+            if _pr: _disp_p = _pr[0]
+            print(f"  [n-decode setup] table={_disp_table_var!r} sep={_sep!r} "
+                  f"len={len(_disp_u)} p={_disp_p}")
+            break
+    if not _disp_table_var:
+        print("  [n-decode setup] no string table found — Strategy 2 disabled")
+
+n_fn_code, n_arr_name, n_method = extract_n_decode_fn(
+    js, table_var=_disp_table_var, u_entries=_disp_u, p=_disp_p)
+if n_fn_code:
+    print(f"  ✓ n-decode function FOUND via {n_method} ({len(n_fn_code)} chars)")
+else:
+    print(f"  ✗ n-decode: {n_method}")
+    print(f"    → YouTube may have changed the n-decode call site pattern")
+
+    # ── Extra diagnostics when n-decode fails ────────────────────────────────
+    # Find dispatcher name from the sig-decode call site and print ALL call sites.
+    _d_disp_name = None
+    for _dpat in [
+        r'(\w+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\s*\(\s*\d+\s*,\s*\d+\s*,\s*\w+\.s\s*\)\s*\)',
+        r'(\w+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\s*\(\s*\d+\s*,\s*\d+\s*,\s*\w+\.\w+\s*\)\s*\)',
+    ]:
+        _cs2 = re.search(_dpat, js)
+        if _cs2: _d_disp_name = _cs2.group(1); break
+
+    if _d_disp_name:
+        print(f"\n  [extra] dispatcher name: {_d_disp_name!r}")
+        _all_cs = list(re.finditer(re.escape(_d_disp_name) + r'\s*\(\s*\d', js))
+        print(f"  [extra] All {_d_disp_name}() call sites ({len(_all_cs)} total):")
+        for _i, _cm in enumerate(_all_cs[:15]):
+            _cctx = js[max(0, _cm.start()-20):_cm.end()+160]
+            print(f"    [{_i}] @{_cm.start()}: {_cctx!r}")
+
+        # Print the FULL dispatcher body (not just first 400 chars)
+        _fn_idx2 = js.rfind(f'{_d_disp_name}=function(')
+        if _fn_idx2 >= 0:
+            _br2 = js.find('{', _fn_idx2)
+            _full_body = extract_balanced(js, _br2)
+            if _full_body:
+                print(f"\n  [extra] Full dispatcher body ({len(_full_body)} chars):")
+                # Print in 300-char segments for readability
+                for _chunk_start in range(0, min(len(_full_body), 3000), 300):
+                    print(f"    @{_chunk_start}: {_full_body[_chunk_start:_chunk_start+300]!r}")
+
+    # Also search for standalone literal "n" accesses not caught by S1
+    print(f"\n  [extra] Searching for .get('n') / .set('n',) patterns with any quote style:")
+    for _qp in [r'\.get\("n"\)', r"\.get\('n'\)", r'\.set\("n",', r"\.set\('n',", r'\["n"\]']:
+        _qm = re.search(_qp, js)
+        if _qm:
+            _qctx = js[max(0, _qm.start()-80):_qm.end()+120]
+            print(f"    {_qp!r}: {_qctx!r}")
+        else:
+            print(f"    {_qp!r}: not found")
+
 # ── End-to-end cipher test ────────────────────────────────────────────────────
 print("\n" + "="*70)
-print("END-TO-END TEST: auto-fetch signatureCipher and verify decode")
+print("END-TO-END TEST: auto-fetch signatureCipher, sig decode, then n-decode")
 print("="*70)
 
 if not ops:
-    print("Extraction failed — skipping cipher test.")
+    print("Sig extraction failed — skipping cipher test.")
 else:
     cipher = None
     for vid in YTMUSIC_VIDEOS:
-        print(f"Fetching cipher for video {vid} &")
+        print(f"Fetching cipher for video {vid} ...")
         cipher, base_url = fetch_cipher_from_youtube(vid, sig_ts)
         if cipher:
             print(f"  Got signatureCipher ({len(cipher)} chars)")
@@ -752,19 +1267,51 @@ else:
 
     if cipher:
         decoded_url = decode_cipher_url(cipher, ops)
-        if decoded_url:
-            print(f"\nDecoded URL (first 120 chars): {decoded_url[:120]}...")
-            print("Testing accessibility (HEAD request) &")
-            status, err = test_url_accessible(decoded_url)
-            if status in (200, 206):
-                print(f"  HTTP {status} — SUCCESS! Sig decode is working correctly.")
-            elif status == 403:
-                print(f"  HTTP 403 — sig decode may be WRONG (wrong ops or n-param not decoded).")
-                print("  Note: n-param decode is handled by the app's WebView, not tested here.")
-            else:
-                print(f"  HTTP {status} err={err}")
-        else:
+        if not decoded_url:
             print("  Could not decode cipher URL (parse error)")
+        else:
+            print(f"\nSig-decoded URL (first 120): {decoded_url[:120]}...")
+
+            # --- Test 1: URL with raw n (as the app sends when n-decode fails) ---
+            n_raw = extract_n_from_url(decoded_url)
+            print(f"\n[Test 1] URL with RAW n-param (n={n_raw[:20] if n_raw else 'N/A'}...)")
+            print("Testing HEAD request ...")
+            status1, err1 = test_url_accessible(decoded_url)
+            if status1 in (200, 206):
+                print(f"  HTTP {status1} — raw n already works (no n-decode needed for this video)")
+            elif status1 == 403:
+                print(f"  HTTP 403 — raw n rejected by CDN (n-decode IS required)")
+            else:
+                print(f"  HTTP {status1} err={err1}")
+
+            # --- Test 2: URL with decoded n (using Node.js) ---
+            if n_raw and n_fn_code:
+                print(f"\n[Test 2] Decode n-param using Node.js (method={n_method}) ...")
+                n_decoded, n_err = decode_n_with_node(n_fn_code, n_raw)
+                if n_decoded and n_decoded != n_raw:
+                    print(f"  n decoded: {n_raw[:20]}... → {n_decoded[:20]}... ({len(n_raw)}→{len(n_decoded)} chars)")
+                    url_with_decoded_n = replace_n_in_url(decoded_url, n_raw, n_decoded)
+                    print(f"  Testing URL with decoded n ...")
+                    status2, err2 = test_url_accessible(url_with_decoded_n)
+                    if status2 in (200, 206):
+                        print(f"  HTTP {status2} — SUCCESS! Sig + n-decode both work correctly.")
+                        if status1 == 403:
+                            print(f"  CONFIRMED: n-decode fixes the 403. App needs n-decode to work.")
+                    elif status2 == 403:
+                        print(f"  HTTP 403 even with decoded n — sig may still be wrong, or video restricted.")
+                    else:
+                        print(f"  HTTP {status2} err={err2}")
+                elif n_decoded == n_raw:
+                    print(f"  n-decode returned same value — function may be a no-op for this n")
+                    print(f"  n value: {n_raw[:40]}")
+                else:
+                    print(f"  n-decode FAILED: {n_err}")
+                    print(f"  → This is what happens in the app when n-decode can't run")
+            elif not n_fn_code:
+                print(f"\n[Test 2] Skipped — n-decode function not extracted from player JS")
+                print(f"  → App will use raw n → CDN 403 (this is the current bug being fixed in v1.2.68)")
+            elif not n_raw:
+                print(f"\n[Test 2] Skipped — no n-param in decoded URL")
     else:
         print("Could not fetch a real signatureCipher from any test video.")
         print("Manual test: paste a signatureCipher from OpenTune logcat below.")
