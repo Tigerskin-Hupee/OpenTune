@@ -850,8 +850,19 @@ def decode_n_with_node(fn_code, n_raw, player_js=None):
                that calls dispatcher functions (e.g. S4 results).
     Returns (decoded_n, error_str) — one of them will be None.
     """
-    import subprocess, tempfile, os, shutil
+    import subprocess, tempfile, os, shutil, sys
+
+    # shutil.which may fail on Windows when node is in user PATH but not system PATH.
+    # Detect node via shell as a fallback (lets cmd.exe search PATH properly).
     node_exe = shutil.which("node") or shutil.which("node.exe")
+    _use_shell = False
+    if node_exe is None and sys.platform == "win32":
+        try:
+            r = subprocess.run("node --version", shell=True, capture_output=True, timeout=5)
+            if r.returncode == 0:
+                node_exe = "node"; _use_shell = True
+        except Exception:
+            pass
     if node_exe is None:
         return None, "Node.js not available (install from nodejs.org)"
 
@@ -876,13 +887,19 @@ def decode_n_with_node(fn_code, n_raw, player_js=None):
         f.write(js_code)
         tmp = f.name
     try:
-        result = subprocess.run([node_exe, tmp], capture_output=True, text=True, timeout=30)
+        if _use_shell:
+            # Windows shell mode: quote path in case it contains spaces
+            result = subprocess.run(
+                f'node "{tmp}"', shell=True, capture_output=True, text=True, timeout=60)
+        else:
+            result = subprocess.run(
+                [node_exe, tmp], capture_output=True, text=True, timeout=60)
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip(), None
         err = result.stderr.strip() or f"exit {result.returncode} no output"
         return None, err
     except subprocess.TimeoutExpired:
-        return None, "Node.js timed out"
+        return None, "Node.js timed out (60s)"
     finally:
         try:
             os.unlink(tmp)
