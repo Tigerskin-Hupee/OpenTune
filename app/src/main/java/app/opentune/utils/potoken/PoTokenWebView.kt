@@ -557,6 +557,8 @@ class PoTokenWebView private constructor(private val context: Context) {
             }
         }
 
+        if (tableVar == null) Log.w(TAG, "extractNDecodeFn[S2]: u-table not found; IIFE may fail at runtime")
+
         // Helper object (Pw) — found via TABLE_VAR subscript in dispatcher body
         var helperCode: String? = null
         if (tableVar != null) {
@@ -565,6 +567,9 @@ class PoTokenWebView private constructor(private val context: Context) {
             if (hName != null) {
                 val (_, hBody) = findHelper(js, hName, dispFnIdx) ?: (null to null)
                 if (hBody != null) helperCode = "var $hName=$hBody;"
+                else Log.w(TAG, "extractNDecodeFn[S2]: helper '$hName' body not found")
+            } else {
+                Log.w(TAG, "extractNDecodeFn[S2]: helper name not found in dispatcher body")
             }
         }
 
@@ -652,16 +657,30 @@ class PoTokenWebView private constructor(private val context: Context) {
             // Inject n-decode and sig-decode functions into the already-initialized WebView
             withContext(Dispatchers.Main) {
                 if (jsData.nDecodeFn != null) {
-                    val escaped = jsData.nDecodeFn.replace("\\", "\\\\").replace("'", "\\'")
+                    Log.d(TAG, "injecting nDecodeFn (${jsData.nDecodeFn.length}b)")
+                    val escaped = jsData.nDecodeFn
+                        .replace("\\", "\\\\")
+                        .replace("'", "\\'")
+                        .replace("\n", "\\n")
+                        .replace("\r", "\\r")
                     wv.webView.evaluateJavascript("setupNDecode('$escaped')") { r ->
-                        Log.d(TAG, "setupNDecode: $r")
+                        Log.d(TAG, "setupNDecode result: $r")
                     }
+                } else {
+                    Log.w(TAG, "nDecodeFn is null — n-param will not be decoded")
                 }
                 if (jsData.sigDecodeFn != null) {
-                    val escaped = jsData.sigDecodeFn.replace("\\", "\\\\").replace("'", "\\'")
+                    Log.d(TAG, "injecting sigDecodeFn (${jsData.sigDecodeFn.length}b)")
+                    val escaped = jsData.sigDecodeFn
+                        .replace("\\", "\\\\")
+                        .replace("'", "\\'")
+                        .replace("\n", "\\n")
+                        .replace("\r", "\\r")
                     wv.webView.evaluateJavascript("setupSigDecode('$escaped')") { r ->
-                        Log.d(TAG, "setupSigDecode: $r")
+                        Log.d(TAG, "setupSigDecode result: $r")
                     }
+                } else {
+                    Log.w(TAG, "sigDecodeFn is null — sig-cipher will not be decoded")
                 }
             }
             return wv
