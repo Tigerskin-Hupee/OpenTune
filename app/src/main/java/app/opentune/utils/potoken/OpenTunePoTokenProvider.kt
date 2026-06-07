@@ -68,11 +68,14 @@ object OpenTunePoTokenProvider : PoTokenProvider {
                 val vd = withContext(Dispatchers.IO) { fetchVisitorData() }
                 Log.d(TAG, "visitorData fetched: ${vd.take(20)}...")
                 val wv = PoTokenWebView.create(App.instance)
+                // Set webView immediately after page load so decodeNParam works
+                // even if BotGuard initialization fails below.
+                webView = wv
+                visitorData = vd
+                wv.awaitBotGuardReady()  // wait for BotGuard (may throw; n-decode unaffected)
                 Log.d(TAG, "WebView PoToken generator ready")
                 val sp = wv.generatePoToken(vd)
                 Log.d(TAG, "streaming PoToken generated: ${sp.take(20)}...")
-                visitorData = vd
-                webView = wv
                 streamingPot = sp
             }
             lastError = null
