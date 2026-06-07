@@ -853,10 +853,35 @@ def decode_n_with_node(fn_code, n_raw, player_js=None):
     import subprocess, tempfile, os, shutil, sys
 
     # shutil.which may fail on Windows when node is in user PATH but not system PATH.
-    # Detect node via shell as a fallback (lets cmd.exe search PATH properly).
     node_exe = shutil.which("node") or shutil.which("node.exe")
     _use_shell = False
     if node_exe is None and sys.platform == "win32":
+        # Try common Windows Node.js install paths first
+        _common = [
+            r"C:\Program Files\nodejs\node.exe",
+            r"C:\Program Files (x86)\nodejs\node.exe",
+            os.path.expandvars(r"%APPDATA%\npm\node.exe"),
+            os.path.expandvars(r"%ProgramFiles%\nodejs\node.exe"),
+            os.path.expandvars(r"%LOCALAPPDATA%\Programs\nodejs\node.exe"),
+        ]
+        for _p in _common:
+            if os.path.isfile(_p):
+                node_exe = _p
+                break
+    if node_exe is None and sys.platform == "win32":
+        # Try `where node` via cmd.exe to find it in PATH
+        try:
+            r = subprocess.run("where node", shell=True, capture_output=True, text=True, timeout=5)
+            if r.returncode == 0:
+                _first = r.stdout.strip().splitlines()[0].strip()
+                if os.path.isfile(_first):
+                    node_exe = _first
+                else:
+                    node_exe = "node"; _use_shell = True
+        except Exception:
+            pass
+    if node_exe is None and sys.platform == "win32":
+        # Last resort: just try node via shell
         try:
             r = subprocess.run("node --version", shell=True, capture_output=True, timeout=5)
             if r.returncode == 0:
