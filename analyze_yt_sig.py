@@ -296,20 +296,20 @@ def extract_dispatcher_ops(js):
         fn_idx = js.rfind(f'{disp_name}=function(', 0, cs.start())
         if fn_idx < 0: fn_idx = js.find(f'{disp_name}=function(')
         if fn_idx < 0: fn_idx = js.rfind(f'var {disp_name}=function(', 0, cs.start())
-        if fn_idx < 0: return None, f"d1-noFnDef({disp_name})"
+        if fn_idx < 0: return None, f"d1-noFnDef({disp_name})", None, None, None
         brace = js.find('{', fn_idx)
         disp_body = extract_balanced(js, brace)
-        if not disp_body: return None, f"d1-noBody({disp_name})"
+        if not disp_body: return None, f"d1-noBody({disp_name})", None, None, None
         print(f"  [Strategy 4] disp_body[:400]: {disp_body[:400]!r}")
 
         # Step 3: XOR variable name ("p" from "var p = K^R")
         xm = re.search(r'var\s+([\w$]+)\s*=\s*[\w$]+\s*\^\s*[\w$]+', disp_body)
-        if not xm: return None, f"d2-noXorVar({disp_name})"
+        if not xm: return None, f"d2-noXorVar({disp_name})", None, None, None
         xor_var = xm.group(1)
 
         # Step 4: string-table variable — any TABLE[xorVar^N] access.
         tm = re.search(r'([\w$]+)\[' + re.escape(xor_var) + r'\^\d+\]', disp_body)
-        if not tm: return None, f"d3-noTableVar({disp_name}/{xor_var})"
+        if not tm: return None, f"d3-noTableVar({disp_name}/{xor_var})", None, None, None
         table_var = tm.group(1)
 
         # Step 6: string table (separator: "{", ";", or "|")
@@ -321,7 +321,7 @@ def extract_dispatcher_ops(js):
             if te:
                 u = te.group(1).split(_sep)
                 break
-        if u is None: return None, f"d5-noTableStr({table_var})"
+        if u is None: return None, f"d5-noTableStr({table_var})", None, None, None
 
     else:
         # ── Table-first path: no call site found ─────────────────────────────
@@ -367,10 +367,11 @@ def extract_dispatcher_ops(js):
             found = True; break
 
         if not found:
-            return None, "d0-noCallSite"
+            return None, "d0-noCallSite", None, None, None
 
     # ── Shared Steps 4b-9 ────────────────────────────────────────────────────
-    return _run_dispatcher_steps(js, disp_body, table_var, xor_var, p, u)
+    ops, hint = _run_dispatcher_steps(js, disp_body, table_var, xor_var, p, u)
+    return ops, hint, table_var, u, p
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -751,19 +752,43 @@ def extract_n_decode_fn(js, table_var=None, u_entries=None, p=None):
                         if fn_code:
                             print(f"  n-decode [S2b-{desc}] arrName={arr_name!r} ({len(fn_code)} chars)")
                             return fn_code, arr_name, f"S2b-{desc}"
+            # 2c: diagnostic — dump all u[n_idx] occurrences so we can see the actual pattern
+            print(f"  n-decode [S2c-diag] S1/S2a/S2b all failed — dumping u[{n_idx}] context:")
+            _occ = list(re.finditer(rf'(?<!\w){re.escape(table_var)}\[{n_idx}\]', js))
+            print(f"    total occurrences of {table_var}[{n_idx}]: {len(_occ)}")
+            for _i, _m in enumerate(_occ[:8]):
+                _ctx = js[max(0, _m.start()-100):_m.end()+160]
+                print(f"    [{_i}] @{_m.start()}: {_ctx!r}")
         else:
             print(f"  n-decode [S2] 'n' NOT in table — showing first 30 entries:")
             print(f"    {u_entries[:30]}")
 
     # ── Strategy 3: broad search ──────────────────────────────────────────────
     print(f"  n-decode [S3] broad search for [function(){{}}] arrays...")
+    _seen = set()
     candidates = []
+    # 3a: arrays with var/const/let/,/; prefix
     for m in re.finditer(r'(?:var|const|let|,|;)\s*([\w$]{1,5})\s*=\s*\[function\s*\(', js):
         arr_name = m.group(1)
+        if arr_name in _seen: continue
+        _seen.add(arr_name)
         bracket_idx = js.find('[', m.start())
         if bracket_idx < 0: continue
         fn_code = extract_balanced(js, bracket_idx)
-        if not fn_code or len(fn_code) > 8000 or len(fn_code) < 50: continue
+        if not fn_code or len(fn_code) > 10000 or len(fn_code) < 50: continue
+        score = sum(1 for kw in ['charCodeAt', 'fromCharCode', 'String.fromCharCode',
+                                  'split', 'join', 'length', 'Math', '%', '^', '&']
+                    if kw in fn_code)
+        candidates.append((score, arr_name, fn_code))
+    # 3b: any assignment (no prefix requirement — catches reassignments and minified code)
+    for m in re.finditer(r'([\w$]{1,5})\s*=\s*\[function\s*\(', js):
+        arr_name = m.group(1)
+        if arr_name in _seen: continue
+        _seen.add(arr_name)
+        bracket_idx = js.find('[', m.start())
+        if bracket_idx < 0: continue
+        fn_code = extract_balanced(js, bracket_idx)
+        if not fn_code or len(fn_code) > 10000 or len(fn_code) < 200: continue
         score = sum(1 for kw in ['charCodeAt', 'fromCharCode', 'String.fromCharCode',
                                   'split', 'join', 'length', 'Math', '%', '^', '&']
                     if kw in fn_code)
@@ -902,9 +927,10 @@ if sig_ts: print(f"signatureTimestamp: {sig_ts}")
 print("Running extraction &")
 ops, fn_name = extract_sig_ops(js)
 
+_d_table_var = _d_u = _d_p = None
 if not ops:
     print("\n  [Strategy 4: flat-dispatcher (YouTube 2026+)]")
-    ops, hint = extract_dispatcher_ops(js)
+    ops, hint, _d_table_var, _d_u, _d_p = extract_dispatcher_ops(js)
     if ops:
         print(f"\n*** Strategy 4 SUCCESS: {hint} ***")
         print(f"    ops ({len(ops)}): {ops}")
@@ -917,22 +943,28 @@ print("\n" + "="*70)
 print("N-DECODE EXTRACTION TEST (root cause of CDN 403 in v1.2.67 and earlier)")
 print("="*70)
 
-# Re-extract the string table variables so Strategy 2 can search for u[n_idx]
-_disp_table_var = _disp_u = _disp_p = None
-for _sep in ['{', ';', '|']:
-    _te = re.search(
-        r'(?<![.\w])(\w+)\s*=\s*"([^"]{300,})"\s*\.split\s*\(\s*"' + re.escape(_sep) + r'"\s*\)', js)
-    if not _te: continue
-    _tv, _u_ent = _te.group(1), _te.group(2).split(_sep)
-    if all(x in _u_ent for x in ('split', 'join', 'reverse', 'splice')):
-        _disp_table_var, _disp_u = _tv, _u_ent
-        _pr = discover_p_from_table(js, _tv, _u_ent)
-        if _pr: _disp_p = _pr[0]
-        print(f"  [n-decode setup] table={_disp_table_var!r} sep={_sep!r} "
-              f"len={len(_disp_u)} p={_disp_p}")
-        break
-if not _disp_table_var:
-    print("  [n-decode setup] no string table found — Strategy 2 disabled")
+# Use table vars from Strategy 4 dispatcher (p is authoritative here).
+# Fall back to independent discovery only if Strategy 4 was not used.
+if _d_table_var is not None:
+    _disp_table_var, _disp_u, _disp_p = _d_table_var, _d_u, _d_p
+    print(f"  [n-decode setup] using dispatcher values: table={_disp_table_var!r} "
+          f"len={len(_disp_u)} p={_disp_p}")
+else:
+    _disp_table_var = _disp_u = _disp_p = None
+    for _sep in ['{', ';', '|']:
+        _te = re.search(
+            r'(?<![.\w])(\w+)\s*=\s*"([^"]{300,})"\s*\.split\s*\(\s*"' + re.escape(_sep) + r'"\s*\)', js)
+        if not _te: continue
+        _tv, _u_ent = _te.group(1), _te.group(2).split(_sep)
+        if all(x in _u_ent for x in ('split', 'join', 'reverse', 'splice')):
+            _disp_table_var, _disp_u = _tv, _u_ent
+            _pr = discover_p_from_table(js, _tv, _u_ent)
+            if _pr: _disp_p = _pr[0]
+            print(f"  [n-decode setup] table={_disp_table_var!r} sep={_sep!r} "
+                  f"len={len(_disp_u)} p={_disp_p}")
+            break
+    if not _disp_table_var:
+        print("  [n-decode setup] no string table found — Strategy 2 disabled")
 
 n_fn_code, n_arr_name, n_method = extract_n_decode_fn(
     js, table_var=_disp_table_var, u_entries=_disp_u, p=_disp_p)
