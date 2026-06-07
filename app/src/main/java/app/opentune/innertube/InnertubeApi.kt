@@ -893,13 +893,16 @@ class InnertubeApi @Inject constructor(
         // 2. Native player API cascade (WEB_EMBEDDED → WEB_REMIX+PoToken → WEB+PoToken → IOS → ANDROID_VR → …).
         // NPE is tried AFTER native because it takes 10+ seconds on failure.
         return try {
-            val (nativeUrl, nativeClient, fallbackErrs) = fetchAudioStreamNative(videoId)
+            val (nativeUrl, nativeClientTag, fallbackErrs) = fetchAudioStreamNative(videoId)
             val elapsed = System.currentTimeMillis() - start
-            Log.d(tag, "getAudioStreamUrl($videoId) ok via $nativeClient ${elapsed}ms")
+            // nativeClientTag = "CLIENT_NAME|n=dec/raw" — split for clean display and urlHint
+            val nativeClient = nativeClientTag.substringBefore("|n=")
+            val nStatus = nativeClientTag.substringAfter("|n=", "enc")
+            Log.d(tag, "getAudioStreamUrl($videoId) ok via $nativeClient ${elapsed}ms n=$nStatus")
             // Include ALL fallback errors so diagnostic shows every client tried before the winner.
             val fallbackNote = fallbackErrs.joinToString("; ").take(600).ifBlank { null }
             app.opentune.utils.DiagnosticsLogger.logStream(
-                videoId, true, elapsed, client = nativeClient, urlHint = urlHint(nativeUrl), error = fallbackNote
+                videoId, true, elapsed, client = nativeClient, urlHint = urlHint(nativeUrl, nStatus), error = fallbackNote
             )
             nativeUrl
         } catch (nativeEx: Exception) {
@@ -1025,11 +1028,12 @@ class InnertubeApi @Inject constructor(
     }
 
     // Build a safe URL hint for logging: host + key params (no sensitive data).
-    private fun urlHint(url: String): String {
+    // nStatus: "dec" = n decoded, "raw" = n decode failed, "enc" = n present (unknown), "none" = no n param.
+    private fun urlHint(url: String, nStatus: String = "enc"): String {
         val host = try { android.net.Uri.parse(url).host?.take(30) ?: "?" } catch (_: Exception) { "?" }
         val hasN = url.contains("&n=") || url.contains("?n=")
         val hasAlr = url.contains("alr=yes")
-        val nTag = if (hasN) " n=enc" else " n=none"
+        val nTag = if (!hasN) " n=none" else " n=$nStatus"
         val alrTag = if (hasAlr) " alr=yes" else ""
         // Show expire delta and IP type to help diagnose CDN 403
         val expireTag = try {
@@ -1044,8 +1048,9 @@ class InnertubeApi @Inject constructor(
     }
 
     // Decode the n-parameter in a YouTube CDN URL using the player JS function.
-    private fun decodeNParamInUrl(url: String): String {
-        val nMatch = Regex("""[?&]n=([^&]+)""").find(url) ?: return url
+    // Returns Pair(finalUrl, nStatus) where nStatus is "dec", "raw", or "none".
+    private fun decodeNParamInUrl(url: String): Pair<String, String> {
+        val nMatch = Regex("""[?&]n=([^&]+)""").find(url) ?: return url to "none"
         val nRaw = nMatch.groupValues[1]
         val nDecoded = try {
             runBlocking { app.opentune.utils.potoken.OpenTunePoTokenProvider.decodeNParam(nRaw) }
@@ -1055,10 +1060,10 @@ class InnertubeApi @Inject constructor(
         }
         return if (nDecoded != null && nDecoded != nRaw) {
             Log.d(tag, "n-param decoded: ${nRaw.take(8)}.. → ${nDecoded.take(8)}..")
-            url.replace("&n=$nRaw", "&n=$nDecoded").replace("?n=$nRaw", "?n=$nDecoded")
+            url.replace("&n=$nRaw", "&n=$nDecoded").replace("?n=$nRaw", "?n=$nDecoded") to "dec"
         } else {
             if (nDecoded == null) Log.w(tag, "n-param decode returned null, using raw n")
-            url
+            url to "raw"
         }
     }
 
@@ -1277,9 +1282,9 @@ class InnertubeApi @Inject constructor(
                         .replace("&alr=yes", "")
                         .replace("?alr=yes&", "?")
                         .replace("?alr=yes", "")
-                    val finalUrl = decodeNParamInUrl(cleanUrl)
-                    Log.d(tag, "fetchAudioStreamNative($videoId) ok via ${client.name} bitrate=$bestBitrate alr=${bestUrl.contains("alr=yes")}")
-                    return Triple(finalUrl, client.name, errors.toList())
+                    val (finalUrl, nStatus) = decodeNParamInUrl(cleanUrl)
+                    Log.d(tag, "fetchAudioStreamNative($videoId) ok via ${client.name} bitrate=$bestBitrate alr=${bestUrl.contains("alr=yes")} n=$nStatus")
+                    return Triple(finalUrl, "${client.name}|n=$nStatus", errors.toList())
                 }
                 errors += "${client.name}: no audio URL in ${formats.length()} formats (sigTs=$cachedSigTs sigOps=${cachedSigOps?.size ?: "null"} hint=$sigOpsHint)"
 
