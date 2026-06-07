@@ -14,6 +14,7 @@ import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -33,6 +34,8 @@ class PoTokenWebView private constructor(private val context: Context) {
 
     private lateinit var webView: WebView
     private val initDeferred = CompletableDeferred<Unit>()
+    // Completed as soon as the HTML page finishes loading (before BotGuard completes).
+    private val pageLoadDeferred = CompletableDeferred<Unit>()
     private val poTokenLock = Any()
     private val poTokenDeferreds = mutableListOf<Pair<String, CompletableDeferred<String>>>()
     private lateinit var expirationInstant: Instant
@@ -74,6 +77,13 @@ class PoTokenWebView private constructor(private val context: Context) {
                     return super.onConsoleMessage(m)
                 }
             }
+            // Signal page-load completion so n-decode can be injected immediately,
+            // without waiting for BotGuard to finish.
+            webView.webViewClient = object : WebViewClient() {
+                override fun onPageFinished(view: WebView, url: String) {
+                    pageLoadDeferred.complete(Unit)
+                }
+            }
 
             val html = context.assets.open("po_token.html").bufferedReader().use { it.readText() }
             webView.loadDataWithBaseURL(
@@ -82,9 +92,14 @@ class PoTokenWebView private constructor(private val context: Context) {
                 "text/html", "utf-8", null
             )
         }
-        // Suspend here (off main thread) until integrityToken is set in JS
-        initDeferred.await()
+        // Wait for page load only — n-decode injection can proceed now.
+        // BotGuard initialization runs asynchronously in the background.
+        pageLoadDeferred.await()
+        Log.d(TAG, "WebView page loaded; BotGuard initializing in background")
     }
+
+    // Wait for full BotGuard initialization (required before generatePoToken).
+    suspend fun awaitBotGuardReady() = initDeferred.await()
 
     @JavascriptInterface
     fun downloadAndRunBotguard() {
