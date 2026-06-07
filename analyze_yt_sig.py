@@ -868,23 +868,26 @@ def extract_n_decode_fn(js, table_var=None, u_entries=None, p=None):
             else:
                 disp_body = None
 
-            # 3. Extract Pw helper object referenced inside dispatcher body
+            # 3. Extract Pw helper object referenced inside dispatcher body.
+            # Pw appears as HELPER[table_var[...]](...) — find it by that pattern.
             helper_code = None
             if disp_body:
-                hm = re.search(r'\b([\w$]+)\s*=\s*\{', disp_body)
+                tv = table_var or 'u'
+                hm = re.search(r'\b([\w$]{2,})\[' + re.escape(tv) + r'\[', disp_body)
                 if hm:
                     helper_name = hm.group(1)
-                    # Find its declaration in JS (before the dispatcher)
                     search_end = fn_idx if fn_idx >= 0 else len(js)
-                    hdef = js.rfind(f'{helper_name}=', 0, search_end)
-                    if hdef < 0:
-                        hdef = js.find(f'{helper_name}=')
-                    if hdef >= 0:
-                        hbrace = js.find('{', hdef)
-                        if hbrace >= 0:
-                            hbody = extract_balanced(js, hbrace)
-                            if hbody:
-                                helper_code = f'var {helper_name}={hbody};'
+                    for hpat in [f'var {helper_name}=', f'{helper_name}=']:
+                        hdef = js.rfind(hpat, 0, search_end)
+                        if hdef < 0:
+                            hdef = js.find(hpat)
+                        if hdef >= 0:
+                            hbrace = js.find('{', hdef)
+                            if hbrace >= 0:
+                                hbody = extract_balanced(js, hbrace)
+                                if hbody and len(hbody) > 10:
+                                    helper_code = f'var {helper_name}={hbody};'
+                                    break
                 if helper_code:
                     deps_parts.append(helper_code)
 
