@@ -472,41 +472,104 @@ class PoTokenWebView private constructor(private val context: Context) {
     }
 
     // Extract the YouTube n-parameter decode function from player JS.
-    // YouTube stores it as an array: var X=[function(a){...}] called as X[0](n).
+    // Returns a JS expression that can be eval'd to produce a callable function or [fn] array.
     private fun extractNDecodeFn(js: String): String? {
-        // Find the variable name of the n-decode array/function via call site patterns.
-        // YouTube has used several call site shapes across player versions:
-        //   .get("n"))&&(c=ARRNAME[0](c)      — classic array call (most common)
-        //   .get("n"))&&(c=ARRNAME(c)          — direct function call
-        //   .set("n",ARRNAME[0](c.get("n")))  — set call, newer players
-        //   .set("n",ARRNAME(c.get("n")))     — set call, direct fn
+        // ── Strategy 1: literal "n" call site — pre-2026 players ─────────────
         val arrName = listOf(
             Regex("""\.get\("n"\)\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{2,})\[0\]\("""),
             Regex("""\.get\("n"\)\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{2,})\("""),
             Regex("""\.set\("n",([a-zA-Z0-9$]{2,})\[0\]\("""),
             Regex("""\.set\("n",([a-zA-Z0-9$]{2,})\("""),
-        ).firstNotNullOfOrNull { it.find(js) }?.groupValues?.get(1) ?: return null
+        ).firstNotNullOfOrNull { it.find(js) }?.groupValues?.get(1)
 
-        // Find the array/function declaration. Search all common prefixes; resolve '['
-        // position correctly for each to avoid off-by-N errors on comma/semicolon joins.
-        val declarationPrefixes = listOf(
-            "var $arrName=[", "const $arrName=[", "let $arrName=[",
-        )
-        val joinPrefixes = listOf(",$arrName=[", ";$arrName=[")
-
-        var bracketIdx = -1
-        for (prefix in declarationPrefixes) {
-            val idx = js.indexOf(prefix)
-            if (idx >= 0) { bracketIdx = idx + prefix.length - 1; break }
-        }
-        if (bracketIdx < 0) {
-            for (prefix in joinPrefixes) {
+        if (arrName != null) {
+            var bracketIdx = -1
+            for (prefix in listOf("var $arrName=[", "const $arrName=[", "let $arrName=[")) {
                 val idx = js.indexOf(prefix)
                 if (idx >= 0) { bracketIdx = idx + prefix.length - 1; break }
             }
+            if (bracketIdx < 0) {
+                for (prefix in listOf(",$arrName=[", ";$arrName=[")) {
+                    val idx = js.indexOf(prefix)
+                    if (idx >= 0) { bracketIdx = idx + prefix.length - 1; break }
+                }
+            }
+            if (bracketIdx >= 0) {
+                val fn = extractBalanced(js, bracketIdx)
+                if (fn != null) {
+                    Log.d(TAG, "extractNDecodeFn[S1]: arrName=$arrName (${fn.length}b)")
+                    return fn
+                }
+            }
+            Log.w(TAG, "extractNDecodeFn[S1]: call site found (arr=$arrName) but declaration missing")
         }
-        if (bracketIdx < 0) return null
-        return extractBalanced(js, bracketIdx)
+
+        // ── Strategy 2: dispatcher-based n-decode (2026+ players, e.g. 5cabb421) ──
+        // n-decode uses the SAME dispatcher function as sig-decode but different constants:
+        //   Sig:    DISP(25,37, DISP(51,3416, sig.s))
+        //   N-dec:  DISP(24,36, DISP(49,3418, n))
+        // We synthesize a self-contained IIFE that includes u-table + helper + dispatcher.
+        val sigCallPat = Regex(
+            """(\w+)\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\(\s*\d+\s*,\s*\d+\s*,\s*\w+\.s\s*\)\s*\)""")
+        val sigCm = sigCallPat.find(js)
+            ?: run { Log.w(TAG, "extractNDecodeFn[S2]: sig call site not found"); return null }
+        val dispName = sigCm.groupValues[1]
+        val sigK = sigCm.groupValues[2].toIntOrNull() ?: return null
+        val sigR = sigCm.groupValues[3].toIntOrNull() ?: return null
+
+        val nCallPat = Regex(
+            """\b${Regex.escape(dispName)}\(\s*(\d+)\s*,\s*(\d+)\s*,\s*${Regex.escape(dispName)}\(\s*(\d+)\s*,\s*(\d+)\s*,\s*[\w$]+\s*\)\s*\)""")
+        val nCm = nCallPat.findAll(js).firstOrNull { m ->
+            val k = m.groupValues[1].toIntOrNull() ?: 0
+            val r = m.groupValues[2].toIntOrNull() ?: 0
+            !(k == sigK && r == sigR)
+        } ?: run {
+            Log.w(TAG, "extractNDecodeFn[S2]: n-decode call not found for dispatcher=$dispName"); return null
+        }
+        val outerK = nCm.groupValues[1]; val outerR = nCm.groupValues[2]
+        val innerK = nCm.groupValues[3]; val innerR = nCm.groupValues[4]
+        Log.d(TAG, "extractNDecodeFn[S2]: $dispName($outerK,$outerR,$dispName($innerK,$innerR,x))")
+
+        // Locate dispatcher function definition (search backwards from n-decode call site)
+        val dispFnIdx = js.lastIndexOf("$dispName=function(", nCm.range.first)
+            .takeIf { it >= 0 } ?: js.indexOf("$dispName=function(").takeIf { it >= 0 }
+            ?: run { Log.w(TAG, "extractNDecodeFn[S2]: dispatcher fn def not found"); return null }
+        val dispParamsM = Regex("""${Regex.escape(dispName)}=function\(([^)]*)\)""").find(js, dispFnIdx)
+        val dispParams = dispParamsM?.groupValues?.get(1)?.trim() ?: "K,R,x"
+        val dispBrace = js.indexOf("{", dispFnIdx).takeIf { it >= 0 }
+            ?: run { Log.w(TAG, "extractNDecodeFn[S2]: dispatcher brace not found"); return null }
+        val dispBody = extractBalanced(js, dispBrace)
+            ?: run { Log.w(TAG, "extractNDecodeFn[S2]: dispatcher body extraction failed"); return null }
+
+        // String table (u = "...".split("{") etc.) — contains "split","join","reverse","splice"
+        var tableVar: String? = null; var tableCode: String? = null
+        for (sep in listOf("{", ";", "|")) {
+            val pat = Regex("""(?<![.\w])(\w+)\s*=\s*"([^"]{300,})"\s*\.split\s*\(\s*"${Regex.escape(sep)}"\s*\)""")
+            val tm = pat.find(js) ?: continue
+            val tv = tm.groupValues[1]
+            if (listOf("split", "join", "reverse", "splice").all { it in tm.groupValues[2].split(sep) }) {
+                tableVar = tv
+                tableCode = """var $tv="${tm.groupValues[2]}".split("$sep");"""
+                break
+            }
+        }
+
+        // Helper object (Pw) — found via TABLE_VAR subscript in dispatcher body
+        var helperCode: String? = null
+        if (tableVar != null) {
+            val hName = Regex("""([\w$]+)\[${Regex.escape(tableVar)}\[""").find(dispBody)
+                ?.groupValues?.get(1)?.takeIf { it != dispName && it.length <= 10 }
+            if (hName != null) {
+                val (_, hBody) = findHelper(js, hName, dispFnIdx) ?: (null to null)
+                if (hBody != null) helperCode = "var $hName=$hBody;"
+            }
+        }
+
+        val depsCode = listOfNotNull(tableCode, helperCode,
+            "function $dispName($dispParams)$dispBody").joinToString("\n")
+        val iife = "(function(){$depsCode\nreturn [function(x){return $dispName($outerK,$outerR,$dispName($innerK,$innerR,x))}]})()"
+        Log.d(TAG, "extractNDecodeFn[S2]: synthesized IIFE (${iife.length}b)")
+        return iife
     }
 
     // Extract bracket-balanced content starting at `start` (must be '[', '{', or '(').

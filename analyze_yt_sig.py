@@ -814,12 +814,40 @@ def extract_n_decode_fn(js, table_var=None, u_entries=None, p=None):
         print(f"  n-decode [S3] picking {best_name!r} (score={best_score})")
         return best_code, best_name, f"S3-score{best_score}"
 
+    # ── Strategy 4: dispatcher-based n-decode (2026+ players e.g. 5cabb421) ──────
+    # n-decode is DISP(A,B,DISP(C,D,x)) — same dispatcher as sig-decode, diff constants.
+    print(f"  n-decode [S4] trying dispatcher-based approach...")
+    sig_disp_m = re.search(
+        r'(\w+)\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\(\s*\d+\s*,\s*\d+\s*,\s*\w+\.s\s*\)\s*\)', js)
+    if sig_disp_m:
+        disp_name = sig_disp_m.group(1)
+        sig_ok = int(sig_disp_m.group(2)), int(sig_disp_m.group(3))
+        print(f"  n-decode [S4] dispatcher={disp_name!r} sig outer K={sig_ok[0]} R={sig_ok[1]}")
+        n_pat = re.compile(
+            r'\b' + re.escape(disp_name) +
+            r'\(\s*(\d+)\s*,\s*(\d+)\s*,\s*' + re.escape(disp_name) +
+            r'\(\s*(\d+)\s*,\s*(\d+)\s*,\s*([\w$]+)\s*\)\s*\)')
+        for m in n_pat.finditer(js):
+            ok, or_ = int(m.group(1)), int(m.group(2))
+            ik, ir  = int(m.group(3)), int(m.group(4))
+            if (ok, or_) == sig_ok: continue
+            ctx = js[max(0, m.start()-80):m.end()+80]
+            print(f"  n-decode [S4] FOUND: {disp_name}({ok},{or_},{disp_name}({ik},{ir},x))")
+            print(f"    context: {ctx!r}")
+            synthesized = f"[function(x){{return {disp_name}({ok},{or_},{disp_name}({ik},{ir},x))}}]"
+            return synthesized, disp_name, f"S4-dispatcher({ok},{or_},{ik},{ir})"
+        print(f"  n-decode [S4] no nested call found for {disp_name!r} (other than sig-decode)")
+    else:
+        print(f"  n-decode [S4] sig call site not found — cannot identify dispatcher")
+
     return None, None, "all-strategies-failed"
 
 
-def decode_n_with_node(fn_code, n_raw):
+def decode_n_with_node(fn_code, n_raw, player_js=None):
     """
     Execute the extracted n-decode function using Node.js.
+    player_js: full player JS string — required when fn_code is a synthesized wrapper
+               that calls dispatcher functions (e.g. S4 results).
     Returns (decoded_n, error_str) — one of them will be None.
     """
     import subprocess, tempfile, os
@@ -828,7 +856,13 @@ def decode_n_with_node(fn_code, n_raw):
     except Exception:
         return None, "Node.js not available (install from nodejs.org)"
 
+    preamble = ""
+    if player_js:
+        # Wrap in try/catch so parse errors in irrelevant parts don't abort
+        preamble = f"try{{eval({json.dumps(player_js)})}}catch(e){{}}\n"
+
     js_code = (
+        preamble +
         f"var _nDecFn = {fn_code};\n"
         f"var n = {json.dumps(n_raw)};\n"
         "try {\n"
@@ -1062,8 +1096,11 @@ else:
 
             # --- Test 2: URL with decoded n (using Node.js) ---
             if n_raw and n_fn_code:
-                print(f"\n[Test 2] Decode n-param using Node.js ...")
-                n_decoded, n_err = decode_n_with_node(n_fn_code, n_raw)
+                print(f"\n[Test 2] Decode n-param using Node.js (method={n_method}) ...")
+                # S4 synthesizes a wrapper that calls the dispatcher — needs full player JS in scope
+                _need_player_js = n_method and n_method.startswith("S4")
+                n_decoded, n_err = decode_n_with_node(
+                    n_fn_code, n_raw, player_js=js if _need_player_js else None)
                 if n_decoded and n_decoded != n_raw:
                     print(f"  n decoded: {n_raw[:20]}... → {n_decoded[:20]}...")
                     url_with_decoded_n = replace_n_in_url(decoded_url, n_raw, n_decoded)
