@@ -916,23 +916,37 @@ def extract_n_decode_fn(js, table_var=None, u_entries=None, p=None):
             if disp_body:
                 deps_parts.append(f'function {disp_name}({disp_params}){disp_body}')
 
-            # 5. Extract post-processing function (e.g. K4) if present
+            # 5. Extract post-processing function (e.g. K4) if present.
+            # Search BACKWARD from the n-decode call site to find the closest definition
+            # (avoids picking up class constructors defined later in the file).
             post_fn_code = None
             if post_fn_name:
+                _call_pos = m.start()
+                _best_pfdef = -1
                 for hpat in [f'function {post_fn_name}(', f'{post_fn_name}=function(', f'var {post_fn_name}=function(']:
-                    pfdef = js.rfind(hpat)
-                    if pfdef >= 0:
-                        pf_brace = js.find('{', pfdef)
-                        if pf_brace >= 0:
-                            pf_body = extract_balanced(js, pf_brace)
-                            if pf_body and len(pf_body) > 5:
-                                pf_pm = re.compile(
-                                    re.escape(post_fn_name) + r'[\s=]*function\s*\(([^)]*)\)').search(js, pfdef)
-                                pf_params = pf_pm.group(1).strip() if pf_pm else 'a,b,c'
-                                post_fn_code = f'function {post_fn_name}({pf_params}){pf_body}'
-                                deps_parts.append(post_fn_code)
-                                print(f"    post_fn {post_fn_name}({pf_params}) body[:100]: {pf_body[:100]!r}")
-                                break
+                    _pos = js.rfind(hpat, 0, _call_pos)
+                    if _pos > _best_pfdef:
+                        _best_pfdef = _pos
+                if _best_pfdef < 0:
+                    # fallback: search entire JS but skip class constructors
+                    for hpat in [f'function {post_fn_name}(', f'{post_fn_name}=function(']:
+                        _pos = js.find(hpat)
+                        if _pos >= 0 and _pos > _best_pfdef:
+                            _best_pfdef = _pos
+                if _best_pfdef >= 0:
+                    pf_brace = js.find('{', _best_pfdef)
+                    if pf_brace >= 0:
+                        pf_body = extract_balanced(js, pf_brace)
+                        # Skip class constructors (they call g.X.call(this) or similar)
+                        if pf_body and len(pf_body) > 5 and 'call(this)' not in pf_body[:60]:
+                            pf_pm = re.compile(
+                                re.escape(post_fn_name) + r'[\s=]*function\s*\(([^)]*)\)').search(js, _best_pfdef)
+                            pf_params = pf_pm.group(1).strip() if pf_pm else 'a,b,c'
+                            post_fn_code = f'function {post_fn_name}({pf_params}){pf_body}'
+                            deps_parts.append(post_fn_code)
+                            print(f"    post_fn {post_fn_name}({pf_params}) body[:100]: {pf_body[:100]!r}")
+                        else:
+                            print(f"  n-decode [S4] post-fn {post_fn_name!r} looks like class constructor — skipping")
                 if not post_fn_code:
                     print(f"  n-decode [S4] WARNING: post-fn {post_fn_name!r} definition not found")
 
