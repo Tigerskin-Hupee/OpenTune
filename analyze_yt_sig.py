@@ -859,8 +859,8 @@ def extract_n_decode_fn(js, table_var=None, u_entries=None, p=None):
                 fn_idx = js.find(f'{disp_name}=function(')
             disp_params = "K,R,x"
             if fn_idx >= 0:
-                pm = re.search(
-                    re.escape(disp_name) + r'=function\(([^)]*)\)', js, fn_idx)
+                pm = re.compile(
+                    re.escape(disp_name) + r'=function\(([^)]*)\)').search(js, fn_idx)
                 if pm:
                     disp_params = pm.group(1).strip()
                 brace_idx = js.find('{', fn_idx)
