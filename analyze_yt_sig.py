@@ -903,6 +903,13 @@ def extract_n_decode_fn(js, table_var=None, u_entries=None, p=None):
                 print(f"  n-decode [S4] IIFE built ({len(iife)} chars, "
                       f"deps={len(deps_parts)}: u={bool(u_table_code)} "
                       f"helper={bool(helper_code)} fn={bool(disp_body)})")
+                if u_table_code:
+                    print(f"    u_table: {u_table_code[:120]!r}")
+                if helper_code:
+                    print(f"    helper:  {helper_code[:200]!r}")
+                if disp_body:
+                    print(f"    Qp params: {disp_params!r}")
+                    print(f"    Qp body[:200]: {disp_body[:200]!r}")
                 return iife, disp_name, f"S4-dispatcher({ok},{or_},{ik},{ir})"
             else:
                 # Fallback: bare wrapper, needs player_js in scope
@@ -994,6 +1001,8 @@ def decode_n_with_node(fn_code, n_raw, player_js=None):
             result = subprocess.run(
                 [node_exe, tmp], capture_output=True, text=True, timeout=60)
         if result.returncode == 0 and result.stdout.strip():
+            if result.stderr.strip():
+                print(f"    [node stderr]: {result.stderr.strip()[:200]}")
             return result.stdout.strip(), None
         err = result.stderr.strip() or f"exit {result.returncode} no output"
         return None, err
