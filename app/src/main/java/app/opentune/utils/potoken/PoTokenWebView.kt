@@ -640,15 +640,22 @@ class PoTokenWebView private constructor(private val context: Context) {
 
         if (tableVar == null) Log.w(TAG, "extractNDecodeFn[S2]: u-table not found; IIFE may fail at runtime")
 
-        // Helper object (Pw) — found via TABLE_VAR subscript in dispatcher body
+        // Helper object (e.g. Pw) — found via TABLE_VAR subscript in dispatcher body.
+        // Iterate ALL candidates and skip any name that is a dispatcher parameter (e.g. 'x').
         var helperCode: String? = null
         if (tableVar != null) {
-            val hName = Regex("""([\w$]+)\[${Regex.escape(tableVar)}\[""").find(dispBody)
-                ?.groupValues?.get(1)?.takeIf { it != dispName && it.length <= 10 }
+            val dispParamNames = dispParams.split(",").map { it.trim() }.toSet()
+            val hName = Regex("""([\w$]+)\[${Regex.escape(tableVar)}\[""").findAll(dispBody)
+                .map { it.groupValues[1] }
+                .firstOrNull { it != dispName && it.length <= 10 && it !in dispParamNames }
             if (hName != null) {
                 val (_, hBody) = findHelper(js, hName, dispFnIdx) ?: (null to null)
-                if (hBody != null) helperCode = "var $hName=$hBody;"
-                else Log.w(TAG, "extractNDecodeFn[S2]: helper '$hName' body not found")
+                if (hBody != null) {
+                    helperCode = "var $hName=$hBody;"
+                    Log.d(TAG, "extractNDecodeFn[S2]: helper '$hName' (${hBody.length}b)")
+                } else {
+                    Log.w(TAG, "extractNDecodeFn[S2]: helper '$hName' body not found")
+                }
             } else {
                 Log.w(TAG, "extractNDecodeFn[S2]: helper name not found in dispatcher body")
             }
