@@ -491,8 +491,20 @@ class PoTokenWebView private constructor(private val context: Context) {
     // Extract the YouTube n-parameter decode function from player JS.
     // Returns a JS expression that can be eval'd to produce a callable function or [fn] array.
     private fun extractNDecodeFn(js: String): String? {
-        // ── Strategy 1: literal "n" call site — pre-2026 players ─────────────
+        // ── Strategy 1: call-site patterns — covers literal "n" and indirect encodings ─
+        // NewPipe-ported patterns first: handle "nn"[+VAR] and String.fromCharCode(110)
+        // indirect key encoding used in modern players (e.g. the "iv" player variant).
         val arrName = listOf(
+            // NP8: .get("n"))&&(b=Fn[N](b) — NewPipe pattern 8, flexible form
+            Regex("""\.get\("n"\)\)&&\(\w+=([a-zA-Z0-9$]+)(?:\[\d+\])?\(\w+\)"""),
+            // NP7: String.fromCharCode(110) encoding of "n"
+            Regex("""\(\w+=String\.fromCharCode\(110\),\w+=\w+\.get\(\w+\)\)&&\(\w+=([a-zA-Z0-9$]+)(?:\[\d+\])?\(\w+\)"""),
+            // NP6: b="nn"[+a.D],c=a.get(b))&&(c=Fn[N]  — .get() variant
+            Regex("""\w+="nn"\[\+\w+\.\w+\],\w+=\w+\.get\(\w+\)\)&&\(\w+=([a-zA-Z0-9$]+)\["""),
+            // NP4: ,Vb(m),W=m.j[c]||null)&&(W=Fn[N](W),m.set(
+            Regex(""",\w+\(\w+\),\w+=\w+\.\w+\[\w+\]\|\|null\)&&\(\b\w+=([a-zA-Z0-9$]+)\[\d+\]\(\w+\),\w+\.set\("""),
+            // NP2: b="nn"[+a.D],WL(a),c=a.j[b]||null)&&(c=Fn[N]  — .j property variant
+            Regex("""\w+="nn"\[\+\w+\.\w+\],\w+\(\w+\),\w+=\w+\.\w+\[\w+\]\|\|null\)&&\(\w+=([a-zA-Z0-9$]+)\["""),
             // Standard double-quote forms
             Regex("""\.get\("n"\)\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]+)\[0\]\("""),
             Regex("""\.get\("n"\)\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]+)\("""),
@@ -553,6 +565,39 @@ class PoTokenWebView private constructor(private val context: Context) {
             }
             Log.w(TAG, "extractNDecodeFn[S1]: call site found (arr=$arrName) but declaration missing")
             OpenTunePoTokenProvider.nDecodeStatus = "iife_null:s1_arr=${arrName}_no_decl"
+        }
+
+        // ── Strategy 1.5: NewPipe Pattern 1 — self-contained fn with return Y[N] ──
+        // Matches functions like: m85=function(a){...return b[0]} where the array is local.
+        // Avoids the dispatcher pattern (dispatcher returns u[K](x) with lowercase u).
+        run {
+            val np1 = Regex("""([A-Za-z0-9_\$]{2,})=function""").findAll(js).firstOrNull { m ->
+                val braceIdx = js.indexOf("{", m.range.last).takeIf { it >= 0 } ?: return@firstOrNull false
+                val body = extractBalanced(js, braceIdx) ?: return@firstOrNull false
+                // Must end with return UPPERCASE_VARIABLE[digits] — marks self-contained n-decode
+                Regex("""return [A-Z]\[\d+\]""").containsMatchIn(body)
+            }
+            if (np1 != null) {
+                val fnName = np1.groupValues[1]
+                Log.d(TAG, "extractNDecodeFn[S1.5/NP1]: found fn '$fnName'")
+                val braceIdx = js.indexOf("{", np1.range.last)
+                val body = braceIdx.let { if (it >= 0) extractBalanced(js, it) else null }
+                if (body != null) {
+                    // Fixup: remove early-return guard like `if(typeof X==="undefined")return a`
+                    // so the function works standalone without external state.
+                    val paramM = Regex("""${Regex.escape(fnName)}=function\(\s*([^)]*)\s*\)""").find(js, np1.range.first)
+                    val firstParam = paramM?.groupValues?.get(1)?.split(",")?.firstOrNull()?.trim() ?: ""
+                    val fixedBody = if (firstParam.isNotBlank()) {
+                        body.replace(
+                            Regex(""";\s*if\s*\(\s*typeof\s+[a-zA-Z0-9$_]+\s*===?\s*["']undefined["']\s*\)\s*return\s+${Regex.escape(firstParam)}\s*;"""),
+                            ";"
+                        )
+                    } else body
+                    val iife = "(function(){var $fnName=function${fixedBody};return [$fnName]})()"
+                    Log.d(TAG, "extractNDecodeFn[S1.5/NP1]: iife=${iife.length}b fnName=$fnName")
+                    return iife
+                }
+            }
         }
 
         // ── Strategy 2: dispatcher-based n-decode (2026+ players, e.g. 5cabb421) ──
