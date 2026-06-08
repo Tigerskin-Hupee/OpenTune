@@ -573,14 +573,15 @@ class PoTokenWebView private constructor(private val context: Context) {
         // Critical fix: extract the parameter list between "function" and "{" so the IIFE has
         // valid JS syntax (previously produced "function{body}" instead of "function(a){body}").
         run {
-            val candidates = Regex("""([A-Za-z0-9_\$]{2,})=function""")
-                .findAll(js).mapNotNull { m ->
-                    val bi = js.indexOf("{", m.range.last).takeIf { it >= 0 } ?: return@mapNotNull null
-                    val body = extractBalanced(js, bi) ?: return@mapNotNull null
-                    if (body.length < 1000) return@mapNotNull null
-                    if (!Regex("""return [A-Z]\[\d+\]""").containsMatchIn(body)) return@mapNotNull null
-                    Triple(m, bi, body)
-                }.sortedByDescending { it.third.length }
+            val candidates = mutableListOf<Triple<MatchResult, Int, String>>()
+            for (m in Regex("""([A-Za-z0-9_\$]{2,})=function""").findAll(js)) {
+                val bi = js.indexOf("{", m.range.last).takeIf { it >= 0 } ?: continue
+                val body = extractBalanced(js, bi) ?: continue
+                if (body.length < 1000) continue
+                if (!Regex("""return [A-Z]\[\d+\]""").containsMatchIn(body)) continue
+                candidates.add(Triple(m, bi, body))
+            }
+            candidates.sortByDescending { it.third.length }
             Log.d(TAG, "extractNDecodeFn[S1.5/NP1]: ${candidates.size} candidates")
             val best = candidates.firstOrNull() ?: return@run
             val (bestM, bestBrace, bestBody) = best
@@ -642,11 +643,11 @@ class PoTokenWebView private constructor(private val context: Context) {
         val sigR = sigCm.sigR
         Log.d(TAG, "extractNDecodeFn[S2]: sig call found dispName=$dispName sigK=$sigK sigR=$sigR")
 
-        // Pattern: DISP(K1,R1, DISP(K2,R2 ...
-        // Deliberately stops after the 4 ints — avoids failing if outer/inner calls
-        // have extra arguments (e.g. iv(24,36,iv(49,3418,x),undefined,undefined)).
+        // Extended: DISP(K1,R1, INNER_FN(K2,R2, ...
+        // Inner function may differ from outer dispatcher (e.g. iv(21,595,Rg(30,1091,n))).
+        // Group 3 captures the inner function name so we can include its definition if needed.
         val nCallPat = Regex(
-            """\b${Regex.escape(dispName)}\(\s*(\d+)\s*,\s*(\d+)\s*,\s*${Regex.escape(dispName)}\(\s*(\d+)\s*,\s*(\d+)\b""")
+            """\b${Regex.escape(dispName)}\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\w+)\(\s*(\d+)\s*,\s*(\d+)\b""")
         val allNCandidates = nCallPat.findAll(js).toList()
         Log.d(TAG, "extractNDecodeFn[S2]: nested candidates for $dispName: ${allNCandidates.size}")
         val nCm = allNCandidates.firstOrNull { m ->
@@ -654,14 +655,15 @@ class PoTokenWebView private constructor(private val context: Context) {
             val r = m.groupValues[2].toIntOrNull() ?: 0
             !(k == sigK && r == sigR)
         } ?: run {
-            val allStr = allNCandidates.joinToString { "(${it.groupValues[1]},${it.groupValues[2]})" }
+            val allStr = allNCandidates.joinToString { "(${it.groupValues[1]},${it.groupValues[2]},${it.groupValues[3]})" }
             Log.w(TAG, "extractNDecodeFn[S2]: no n-decode call; disp=$dispName cands=$allStr")
             OpenTunePoTokenProvider.nDecodeStatus = "iife_null:s2_no_n(disp=$dispName,cands=${allNCandidates.size})"
             return null
         }
         val outerK = nCm.groupValues[1]; val outerR = nCm.groupValues[2]
-        val innerK = nCm.groupValues[3]; val innerR = nCm.groupValues[4]
-        Log.d(TAG, "extractNDecodeFn[S2]: $dispName($outerK,$outerR,$dispName($innerK,$innerR,x))")
+        val innerDispName = nCm.groupValues[3]   // may differ from dispName
+        val innerK = nCm.groupValues[4]; val innerR = nCm.groupValues[5]
+        Log.d(TAG, "extractNDecodeFn[S2]: $dispName($outerK,$outerR,$innerDispName($innerK,$innerR,x))")
 
         // Locate dispatcher function definition (search backwards from n-decode call site)
         val dispFnIdx = js.lastIndexOf("$dispName=function(", nCm.range.first)
@@ -713,9 +715,31 @@ class PoTokenWebView private constructor(private val context: Context) {
             }
         }
 
+        // If inner dispatcher differs from outer (e.g. iv/Rg), find and include its definition.
+        var innerDispCode: String? = null
+        if (innerDispName != dispName) {
+            val innerFnIdx = js.lastIndexOf("$innerDispName=function(", nCm.range.first)
+                .takeIf { it >= 0 } ?: js.indexOf("$innerDispName=function(").takeIf { it >= 0 }
+            if (innerFnIdx != null && innerFnIdx >= 0) {
+                val innerParamsM = Regex("""${Regex.escape(innerDispName)}=function\(([^)]*)\)""").find(js, innerFnIdx)
+                val innerParams = innerParamsM?.groupValues?.get(1)?.trim() ?: "K,R,x"
+                val innerBrace = js.indexOf("{", innerFnIdx).takeIf { it >= 0 }
+                val innerBody = innerBrace?.let { extractBalanced(js, it) }
+                if (innerBody != null) {
+                    innerDispCode = "function $innerDispName($innerParams)$innerBody"
+                    Log.d(TAG, "extractNDecodeFn[S2]: inner disp '$innerDispName' ($innerParams) ${innerBody.length}b")
+                } else {
+                    Log.w(TAG, "extractNDecodeFn[S2]: inner disp '$innerDispName' body not found")
+                }
+            } else {
+                Log.w(TAG, "extractNDecodeFn[S2]: inner disp '$innerDispName' fn def not found")
+            }
+        }
+
         val depsCode = listOfNotNull(tableCode, helperCode,
+            innerDispCode,
             "function $dispName($dispParams)$dispBody").joinToString("\n")
-        val iife = "(function(){$depsCode\nreturn [function(x){return $dispName($outerK,$outerR,$dispName($innerK,$innerR,x))}]})()"
+        val iife = "(function(){$depsCode\nreturn [function(x){return $dispName($outerK,$outerR,$innerDispName($innerK,$innerR,x))}]})()"
         Log.d(TAG, "extractNDecodeFn[S2]: synthesized IIFE (${iife.length}b)")
         return iife
     }
