@@ -493,12 +493,24 @@ class PoTokenWebView private constructor(private val context: Context) {
     private fun extractNDecodeFn(js: String): String? {
         // ── Strategy 1: literal "n" call site — pre-2026 players ─────────────
         val arrName = listOf(
+            // Standard double-quote forms
             Regex("""\.get\("n"\)\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]+)\[0\]\("""),
             Regex("""\.get\("n"\)\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]+)\("""),
             Regex("""\.set\("n",([a-zA-Z0-9$]+)\[0\]\("""),
             Regex("""\.set\("n",([a-zA-Z0-9$]+)\("""),
+            // Space-tolerant forms
             Regex("""\.set\s*\(\s*"n"\s*,\s*([a-zA-Z0-9$]+)\[0\]\("""),
             Regex("""\.set\s*\(\s*"n"\s*,\s*([a-zA-Z0-9$]+)\("""),
+            // Object-property array: c.Xn[0]( or obj.fn[0](
+            Regex("""\.set\("n",\w+\.([\w$]+)\[0\]\("""),
+            Regex("""\.set\("n",\w+\.([\w$]+)\("""),
+            Regex("""\.set\s*\(\s*"n"\s*,\s*\w+\.([\w$]+)\[0\]\("""),
+            Regex("""\.set\s*\(\s*"n"\s*,\s*\w+\.([\w$]+)\("""),
+            // Single-quote forms
+            Regex("""\.set\('n',([a-zA-Z0-9$]+)\[0\]\("""),
+            Regex("""\.set\('n',([a-zA-Z0-9$]+)\("""),
+            Regex("""\.set\('n',\w+\.([\w$]+)\[0\]\("""),
+            Regex("""\.set\('n',\w+\.([\w$]+)\("""),
         ).firstNotNullOfOrNull { it.find(js) }?.groupValues?.get(1)
 
         Log.d(TAG, "extractNDecodeFn[S1]: arrName=${arrName ?: "null"} jsLen=${js.length}")
@@ -548,18 +560,41 @@ class PoTokenWebView private constructor(private val context: Context) {
         //   Sig:    DISP(25,37, DISP(51,3416, sig.s))
         //   N-dec:  DISP(24,36, DISP(49,3418, n))
         // We synthesize a self-contained IIFE that includes u-table + helper + dispatcher.
-        val sigCallPat = Regex(
-            """(\w+)\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\(\s*\d+\s*,\s*\d+\s*,\s*\w+\.s\s*\)\s*\)""")
-        val sigCm = sigCallPat.find(js)
-            ?: run {
-                val noCallSite = if (arrName == null) "s1_no_callsite+s2_no_sig" else "s2_no_sig"
-                Log.w(TAG, "extractNDecodeFn[S2]: sig call site not found")
-                OpenTunePoTokenProvider.nDecodeStatus = "iife_null:$noCallSite"
-                return null
-            }
-        val dispName = sigCm.groupValues[1]
-        val sigK = sigCm.groupValues[2].toIntOrNull() ?: return null
-        val sigR = sigCm.groupValues[3].toIntOrNull() ?: return null
+        //
+        // Try multiple sig-call patterns to find the dispatcher name:
+        //   S2a: DISP(K,R, DISP(K2,R2, X.s)) — same dispatcher, nested (original)
+        //   S2b: DISP(K,R, DISP2(K2,R2, X.s)) — different dispatchers, nested
+        //   S2c: DISP(K,R, X.s) — single call (non-nested sig decode)
+        data class SigMatch(val dispName: String, val sigK: Int, val sigR: Int)
+
+        val sigCm: SigMatch? = run {
+            // S2a: same-dispatcher nested
+            Regex("""(\w+)\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\(\s*\d+\s*,\s*\d+\s*,\s*\w+\.s\s*\)\s*\)""")
+                .find(js)?.let { m ->
+                    SigMatch(m.groupValues[1], m.groupValues[2].toInt(), m.groupValues[3].toInt())
+                }
+            // S2b: different-dispatcher nested
+            ?: Regex("""(\w+)\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\w+\(\s*\d+\s*,\s*\d+\s*,\s*\w+\.s\s*\)\s*\)""")
+                .find(js)?.let { m ->
+                    SigMatch(m.groupValues[1], m.groupValues[2].toInt(), m.groupValues[3].toInt())
+                }
+            // S2c: single-call (sig passed directly)
+            ?: Regex("""(\w+)\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\w+\.s\s*\)""")
+                .find(js)?.let { m ->
+                    SigMatch(m.groupValues[1], m.groupValues[2].toInt(), m.groupValues[3].toInt())
+                }
+        }
+
+        if (sigCm == null) {
+            val noCallSite = if (arrName == null) "s1_no_callsite+s2_no_sig" else "s2_no_sig"
+            Log.w(TAG, "extractNDecodeFn[S2]: sig call site not found (all patterns)")
+            OpenTunePoTokenProvider.nDecodeStatus = "iife_null:$noCallSite"
+            return null
+        }
+        val dispName = sigCm.dispName
+        val sigK = sigCm.sigK
+        val sigR = sigCm.sigR
+        Log.d(TAG, "extractNDecodeFn[S2]: sig call found dispName=$dispName sigK=$sigK sigR=$sigR")
 
         val nCallPat = Regex(
             """\b${Regex.escape(dispName)}\(\s*(\d+)\s*,\s*(\d+)\s*,\s*${Regex.escape(dispName)}\(\s*(\d+)\s*,\s*(\d+)\s*,\s*[\w$]+\s*\)\s*\)""")
@@ -720,7 +755,10 @@ class PoTokenWebView private constructor(private val context: Context) {
                     }
                 } else {
                     Log.w(TAG, "nDecodeFn is null — n-param will not be decoded")
-                    OpenTunePoTokenProvider.nDecodeStatus = "iife_null"
+                    // nDecodeStatus already set with specific reason inside extractNDecodeFn;
+                    // only set generic fallback if it wasn't updated there.
+                    if (!OpenTunePoTokenProvider.nDecodeStatus.startsWith("iife_null:"))
+                        OpenTunePoTokenProvider.nDecodeStatus = "iife_null"
                 }
                 if (jsData.sigDecodeFn != null) {
                     Log.d(TAG, "injecting sigDecodeFn (${jsData.sigDecodeFn.length}b)")
