@@ -568,36 +568,37 @@ class PoTokenWebView private constructor(private val context: Context) {
         }
 
         // ── Strategy 1.5: NewPipe Pattern 1 — self-contained fn with return Y[N] ──
-        // Matches functions like: m85=function(a){...return b[0]} where the array is local.
-        // Avoids the dispatcher pattern (dispatcher returns u[K](x) with lowercase u).
+        // Collect all matching functions sorted largest-first so the real n-decode (often 1MB+
+        // in es6 players) is tried before small helpers.
+        // Critical fix: extract the parameter list between "function" and "{" so the IIFE has
+        // valid JS syntax (previously produced "function{body}" instead of "function(a){body}").
         run {
-            val np1 = Regex("""([A-Za-z0-9_\$]{2,})=function""").findAll(js).firstOrNull { m ->
-                val braceIdx = js.indexOf("{", m.range.last).takeIf { it >= 0 } ?: return@firstOrNull false
-                val body = extractBalanced(js, braceIdx) ?: return@firstOrNull false
-                // Must end with return UPPERCASE_VARIABLE[digits] — marks self-contained n-decode
-                Regex("""return [A-Z]\[\d+\]""").containsMatchIn(body)
-            }
-            if (np1 != null) {
-                val fnName = np1.groupValues[1]
-                Log.d(TAG, "extractNDecodeFn[S1.5/NP1]: found fn '$fnName'")
-                val braceIdx = js.indexOf("{", np1.range.last)
-                val body = braceIdx.let { if (it >= 0) extractBalanced(js, it) else null }
-                if (body != null) {
-                    // Fixup: remove early-return guard like `if(typeof X==="undefined")return a`
-                    // so the function works standalone without external state.
-                    val paramM = Regex("""${Regex.escape(fnName)}=function\(\s*([^)]*)\s*\)""").find(js, np1.range.first)
-                    val firstParam = paramM?.groupValues?.get(1)?.split(",")?.firstOrNull()?.trim() ?: ""
-                    val fixedBody = if (firstParam.isNotBlank()) {
-                        body.replace(
-                            Regex(""";\s*if\s*\(\s*typeof\s+\w+\s*===?\s*["']undefined["']\s*\)\s*return\s+${Regex.escape(firstParam)}\s*;"""),
-                            ";"
-                        )
-                    } else body
-                    val iife = "(function(){var $fnName=function${fixedBody};return [$fnName]})()"
-                    Log.d(TAG, "extractNDecodeFn[S1.5/NP1]: iife=${iife.length}b fnName=$fnName")
-                    return iife
-                }
-            }
+            val candidates = Regex("""([A-Za-z0-9_\$]{2,})=function""")
+                .findAll(js).mapNotNull { m ->
+                    val bi = js.indexOf("{", m.range.last).takeIf { it >= 0 } ?: return@mapNotNull null
+                    val body = extractBalanced(js, bi) ?: return@mapNotNull null
+                    if (body.length < 1000) return@mapNotNull null
+                    if (!Regex("""return [A-Z]\[\d+\]""").containsMatchIn(body)) return@mapNotNull null
+                    Triple(m, bi, body)
+                }.sortedByDescending { it.third.length }
+            Log.d(TAG, "extractNDecodeFn[S1.5/NP1]: ${candidates.size} candidates")
+            val best = candidates.firstOrNull() ?: return@run
+            val (bestM, bestBrace, bestBody) = best
+            val fnName = bestM.groupValues[1]
+            // Extract param list: text between end of "function" keyword and opening "{"
+            val paramsWithParens = js.substring(bestM.range.last + 1, bestBrace).trim()
+            val paramM = Regex("""${Regex.escape(fnName)}=function\(\s*([^)]*)\s*\)""")
+                .find(js, bestM.range.first)
+            val firstParam = paramM?.groupValues?.get(1)?.split(",")?.firstOrNull()?.trim() ?: ""
+            val fixedBody = if (firstParam.isNotBlank()) {
+                bestBody.replace(
+                    Regex(""";\s*if\s*\(\s*typeof\s+\w+\s*===?\s*["']undefined["']\s*\)\s*return\s+${Regex.escape(firstParam)}\s*;"""),
+                    ";"
+                )
+            } else bestBody
+            val iife = "(function(){var $fnName=function${paramsWithParens}${fixedBody};return [$fnName]})()"
+            Log.d(TAG, "extractNDecodeFn[S1.5/NP1]: fn='$fnName' params='$paramsWithParens' body=${bestBody.length}b iife=${iife.length}b")
+            return iife
         }
 
         // ── Strategy 2: dispatcher-based n-decode (2026+ players, e.g. 5cabb421) ──
