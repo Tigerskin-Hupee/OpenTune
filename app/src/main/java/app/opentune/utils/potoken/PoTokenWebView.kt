@@ -680,9 +680,13 @@ class PoTokenWebView private constructor(private val context: Context) {
                         .replace("\r", "\\r")
                     wv.webView.evaluateJavascript("setupNDecode('$escaped')") { r ->
                         Log.d(TAG, "setupNDecode result: $r")
+                        OpenTunePoTokenProvider.nDecodeStatus =
+                            if (r == "true") "ready(iife=${jsData.nDecodeFn.length}b)"
+                            else "setup_fail(iife=${jsData.nDecodeFn.length}b,r=$r)"
                     }
                 } else {
                     Log.w(TAG, "nDecodeFn is null — n-param will not be decoded")
+                    OpenTunePoTokenProvider.nDecodeStatus = "iife_null"
                 }
                 if (jsData.sigDecodeFn != null) {
                     Log.d(TAG, "injecting sigDecodeFn (${jsData.sigDecodeFn.length}b)")

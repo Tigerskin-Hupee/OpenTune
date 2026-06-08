@@ -30,6 +30,13 @@ object OpenTunePoTokenProvider : PoTokenProvider {
     var lastError: String? = "not_called"
         private set
 
+    /** Tracks n-decode pipeline status for diagnostics.
+     *  "none" = not attempted, "iife_null" = extractNDecodeFn returned null,
+     *  "setup_fail" = setupNDecode returned false, "ready" = _nDecFn is set,
+     *  "decoded" = at least one n-param was successfully decoded. */
+    @Volatile
+    var nDecodeStatus: String = "none"
+
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
@@ -113,12 +120,14 @@ object OpenTunePoTokenProvider : PoTokenProvider {
 
     /** Decode YouTube CDN n-parameter using the player JS function loaded in the WebView. */
     suspend fun decodeNParam(nEncoded: String): String? {
-        return try {
+        val result = try {
             webView?.decodeNParam(nEncoded)
         } catch (e: Exception) {
             Log.w(TAG, "decodeNParam('${nEncoded.take(12)}..') failed: ${e.message}")
             null
         }
+        if (result != null && result != nEncoded) nDecodeStatus = "decoded"
+        return result
     }
 
     /** Decode YouTube signatureCipher 's' param using the player JS function in the WebView. */

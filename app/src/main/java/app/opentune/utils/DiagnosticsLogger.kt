@@ -62,6 +62,7 @@ object DiagnosticsLogger {
         val poErr = OpenTunePoTokenProvider.lastError
         val keyHint = app.opentune.utils.potoken.PoTokenWebView.lastRequestKeyHint
         sb.appendLine("PoToken: ${when (poErr) { null -> "OK"; "not_called" -> "not_called"; else -> "FAIL($poErr)" }} key=$keyHint")
+        sb.appendLine("nDecode: ${OpenTunePoTokenProvider.nDecodeStatus}")
         sb.appendLine()
 
         sb.appendLine("--- Stream Resolution (last ${streamEvents.size}) ---")
