@@ -294,6 +294,8 @@ class PoTokenWebView private constructor(private val context: Context) {
                     lastFailReason = "no_path"
                     continue
                 }
+                lastPlayerJsId = Regex("""/s/player/([0-9a-fA-F]{8})/""").find(scriptPath)?.groupValues?.get(1) ?: "?"
+                Log.d(TAG, "playerJs: $scriptPath (id=$lastPlayerJsId)")
 
                 val jsContent = httpClient.newCall(
                     Request.Builder().url("https://www.youtube.com$scriptPath")
@@ -538,6 +540,7 @@ class PoTokenWebView private constructor(private val context: Context) {
                 }
             }
             Log.w(TAG, "extractNDecodeFn[S1]: call site found (arr=$arrName) but declaration missing")
+            OpenTunePoTokenProvider.nDecodeStatus = "iife_null:s1_arr=${arrName}_no_decl"
         }
 
         // ── Strategy 2: dispatcher-based n-decode (2026+ players, e.g. 5cabb421) ──
@@ -548,7 +551,12 @@ class PoTokenWebView private constructor(private val context: Context) {
         val sigCallPat = Regex(
             """(\w+)\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\1\(\s*\d+\s*,\s*\d+\s*,\s*\w+\.s\s*\)\s*\)""")
         val sigCm = sigCallPat.find(js)
-            ?: run { Log.w(TAG, "extractNDecodeFn[S2]: sig call site not found"); return null }
+            ?: run {
+                val noCallSite = if (arrName == null) "s1_no_callsite+s2_no_sig" else "s2_no_sig"
+                Log.w(TAG, "extractNDecodeFn[S2]: sig call site not found")
+                OpenTunePoTokenProvider.nDecodeStatus = "iife_null:$noCallSite"
+                return null
+            }
         val dispName = sigCm.groupValues[1]
         val sigK = sigCm.groupValues[2].toIntOrNull() ?: return null
         val sigR = sigCm.groupValues[3].toIntOrNull() ?: return null
@@ -560,7 +568,9 @@ class PoTokenWebView private constructor(private val context: Context) {
             val r = m.groupValues[2].toIntOrNull() ?: 0
             !(k == sigK && r == sigR)
         } ?: run {
-            Log.w(TAG, "extractNDecodeFn[S2]: n-decode call not found for dispatcher=$dispName"); return null
+            Log.w(TAG, "extractNDecodeFn[S2]: n-decode call not found for dispatcher=$dispName")
+            OpenTunePoTokenProvider.nDecodeStatus = "iife_null:s2_no_n_call(disp=$dispName)"
+            return null
         }
         val outerK = nCm.groupValues[1]; val outerR = nCm.groupValues[2]
         val innerK = nCm.groupValues[3]; val innerR = nCm.groupValues[4]
@@ -679,6 +689,9 @@ class PoTokenWebView private constructor(private val context: Context) {
         private const val REQUEST_KEY = "O43z0dpjhgX20SCx4KAo"
         /** Diagnostic: "dynamic:XXXXXXXX" if key was extracted from player JS, "fallback:XXXXXXXX" otherwise. */
         @Volatile var lastRequestKeyHint: String = "unknown"
+            private set
+        /** Diagnostic: 8-char hex player JS ID (e.g. "5cabb421"), or "?" if not yet fetched. */
+        @Volatile var lastPlayerJsId: String = "?"
             private set
         const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
             "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"

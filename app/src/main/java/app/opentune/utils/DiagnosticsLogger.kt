@@ -61,7 +61,8 @@ object DiagnosticsLogger {
         sb.appendLine("Time   : ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())}")
         val poErr = OpenTunePoTokenProvider.lastError
         val keyHint = app.opentune.utils.potoken.PoTokenWebView.lastRequestKeyHint
-        sb.appendLine("PoToken: ${when (poErr) { null -> "OK"; "not_called" -> "not_called"; else -> "FAIL($poErr)" }} key=$keyHint")
+        val playerJsId = app.opentune.utils.potoken.PoTokenWebView.lastPlayerJsId
+        sb.appendLine("PoToken: ${when (poErr) { null -> "OK"; "not_called" -> "not_called"; else -> "FAIL($poErr)" }} key=$keyHint player=$playerJsId")
         sb.appendLine("nDecode: ${OpenTunePoTokenProvider.nDecodeStatus}")
         sb.appendLine()
 
