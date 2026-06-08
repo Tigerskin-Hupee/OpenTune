@@ -589,7 +589,7 @@ class PoTokenWebView private constructor(private val context: Context) {
                     val firstParam = paramM?.groupValues?.get(1)?.split(",")?.firstOrNull()?.trim() ?: ""
                     val fixedBody = if (firstParam.isNotBlank()) {
                         body.replace(
-                            Regex(""";\s*if\s*\(\s*typeof\s+[a-zA-Z0-9$_]+\s*===?\s*["']undefined["']\s*\)\s*return\s+${Regex.escape(firstParam)}\s*;"""),
+                            Regex(""";\s*if\s*\(\s*typeof\s+\w+\s*===?\s*["']undefined["']\s*\)\s*return\s+${Regex.escape(firstParam)}\s*;"""),
                             ";"
                         )
                     } else body
