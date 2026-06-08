@@ -26,6 +26,7 @@ import org.schabi.newpipe.extractor.playlist.PlaylistInfo
 import org.schabi.newpipe.extractor.playlist.PlaylistInfoItem
 import org.schabi.newpipe.extractor.search.SearchInfo
 import org.schabi.newpipe.extractor.Page
+import org.schabi.newpipe.extractor.services.youtube.YoutubeJavaScriptPlayerManager
 import org.schabi.newpipe.extractor.stream.StreamInfo
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
 import java.net.Inet4Address
@@ -1048,23 +1049,42 @@ class InnertubeApi @Inject constructor(
     }
 
     // Decode the n-parameter in a YouTube CDN URL using the player JS function.
-    // Returns Pair(finalUrl, nStatus) where nStatus is "dec", "raw", or "none".
-    private fun decodeNParamInUrl(url: String): Pair<String, String> {
+    // Returns Pair(finalUrl, nStatus) where nStatus is "dec", "dec_np", "raw", or "none".
+    // videoId is passed to NewPipe's fallback so it can locate the correct player JS.
+    private fun decodeNParamInUrl(url: String, videoId: String = ""): Pair<String, String> {
         val nMatch = Regex("""[?&]n=([^&]+)""").find(url) ?: return url to "none"
         val nRaw = nMatch.groupValues[1]
+
+        // Primary: WebView-based decode (uses IIFE extracted from player JS).
         val nDecoded = try {
             runBlocking { app.opentune.utils.potoken.OpenTunePoTokenProvider.decodeNParam(nRaw) }
         } catch (e: Exception) {
             Log.w(tag, "n-param decode exception: ${e.message}")
             null
         }
-        return if (nDecoded != null && nDecoded != nRaw) {
+        if (nDecoded != null && nDecoded != nRaw) {
             Log.d(tag, "n-param decoded: ${nRaw.take(8)}.. → ${nDecoded.take(8)}..")
-            url.replace("&n=$nRaw", "&n=$nDecoded").replace("?n=$nRaw", "?n=$nDecoded") to "dec"
-        } else {
-            if (nDecoded == null) Log.w(tag, "n-param decode returned null, using raw n")
-            url to "raw"
+            return url.replace("&n=$nRaw", "&n=$nDecoded").replace("?n=$nRaw", "?n=$nDecoded") to "dec"
         }
+        if (nDecoded == null) Log.w(tag, "n-param WebView decode returned null, trying NewPipe fallback")
+
+        // Fallback: NewPipe Extractor's built-in throttling-parameter deobfuscation.
+        // Handles ALL player versions NewPipe supports, including "nn"[+VAR] indirect-key players.
+        // Uses cached Rhino JS execution — fast on subsequent calls for the same n value.
+        try {
+            val vid = videoId.ifBlank { "jNQXAC9IVRw" }
+            val deobfUrl = YoutubeJavaScriptPlayerManager
+                .getUrlWithThrottlingParameterDeobfuscated(vid, url)
+            if (deobfUrl != url) {
+                Log.d(tag, "n-param decoded via NewPipe fallback: ${nRaw.take(8)}..")
+                app.opentune.utils.potoken.OpenTunePoTokenProvider.nDecodeStatus = "dec_np"
+                return deobfUrl to "dec_np"
+            }
+        } catch (e: Exception) {
+            Log.w(tag, "n-param NewPipe fallback failed: ${e.message}")
+        }
+
+        return url to "raw"
     }
 
     // Multi-client native player API cascade. Tries clients in order, returns first working URL.
@@ -1282,7 +1302,7 @@ class InnertubeApi @Inject constructor(
                         .replace("&alr=yes", "")
                         .replace("?alr=yes&", "?")
                         .replace("?alr=yes", "")
-                    val (finalUrl, nStatus) = decodeNParamInUrl(cleanUrl)
+                    val (finalUrl, nStatus) = decodeNParamInUrl(cleanUrl, videoId)
                     Log.d(tag, "fetchAudioStreamNative($videoId) ok via ${client.name} bitrate=$bestBitrate alr=${bestUrl.contains("alr=yes")} n=$nStatus")
                     return Triple(finalUrl, "${client.name}|n=$nStatus", errors.toList())
                 }
