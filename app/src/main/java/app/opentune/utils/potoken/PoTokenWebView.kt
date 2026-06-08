@@ -491,12 +491,15 @@ class PoTokenWebView private constructor(private val context: Context) {
     private fun extractNDecodeFn(js: String): String? {
         // ── Strategy 1: literal "n" call site — pre-2026 players ─────────────
         val arrName = listOf(
-            Regex("""\.get\("n"\)\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{2,})\[0\]\("""),
-            Regex("""\.get\("n"\)\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]{2,})\("""),
-            Regex("""\.set\("n",([a-zA-Z0-9$]{2,})\[0\]\("""),
-            Regex("""\.set\("n",([a-zA-Z0-9$]{2,})\("""),
+            Regex("""\.get\("n"\)\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]+)\[0\]\("""),
+            Regex("""\.get\("n"\)\)&&\([a-zA-Z0-9$._]+=([a-zA-Z0-9$]+)\("""),
+            Regex("""\.set\("n",([a-zA-Z0-9$]+)\[0\]\("""),
+            Regex("""\.set\("n",([a-zA-Z0-9$]+)\("""),
+            Regex("""\.set\s*\(\s*"n"\s*,\s*([a-zA-Z0-9$]+)\[0\]\("""),
+            Regex("""\.set\s*\(\s*"n"\s*,\s*([a-zA-Z0-9$]+)\("""),
         ).firstNotNullOfOrNull { it.find(js) }?.groupValues?.get(1)
 
+        Log.d(TAG, "extractNDecodeFn[S1]: arrName=${arrName ?: "null"} jsLen=${js.length}")
         if (arrName != null) {
             var bracketIdx = -1
             for (prefix in listOf("var $arrName=[", "const $arrName=[", "let $arrName=[")) {
@@ -512,8 +515,26 @@ class PoTokenWebView private constructor(private val context: Context) {
             if (bracketIdx >= 0) {
                 val fn = extractBalanced(js, bracketIdx)
                 if (fn != null) {
-                    Log.d(TAG, "extractNDecodeFn[S1]: arrName=$arrName (${fn.length}b)")
+                    Log.d(TAG, "extractNDecodeFn[S1-arr]: arrName=$arrName (${fn.length}b)")
                     return fn
+                }
+            }
+            // Array declaration not found — try direct function definition
+            var fnDefIdx = -1
+            for (prefix in listOf("var $arrName=function(", "const $arrName=function(", "let $arrName=function(", ";$arrName=function(", ",$arrName=function(")) {
+                val idx = js.indexOf(prefix)
+                if (idx >= 0) { fnDefIdx = idx + prefix.indexOf("function("); break }
+            }
+            if (fnDefIdx >= 0) {
+                val paramStart = fnDefIdx + "function(".length
+                val paramEnd = js.indexOf(")", paramStart).takeIf { it >= 0 }
+                val braceIdx = paramEnd?.let { js.indexOf("{", it) }?.takeIf { it >= 0 }
+                val body = braceIdx?.let { extractBalanced(js, it) }
+                if (body != null && paramEnd != null) {
+                    val params = js.substring(paramStart, paramEnd)
+                    val iife = "(function(){var $arrName=function($params)$body;return [$arrName]})()"
+                    Log.d(TAG, "extractNDecodeFn[S1-fn]: arrName=$arrName params=($params) (${iife.length}b)")
+                    return iife
                 }
             }
             Log.w(TAG, "extractNDecodeFn[S1]: call site found (arr=$arrName) but declaration missing")
