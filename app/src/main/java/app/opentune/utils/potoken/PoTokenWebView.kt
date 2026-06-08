@@ -596,15 +596,21 @@ class PoTokenWebView private constructor(private val context: Context) {
         val sigR = sigCm.sigR
         Log.d(TAG, "extractNDecodeFn[S2]: sig call found dispName=$dispName sigK=$sigK sigR=$sigR")
 
+        // Pattern: DISP(K1,R1, DISP(K2,R2 ...
+        // Deliberately stops after the 4 ints — avoids failing if outer/inner calls
+        // have extra arguments (e.g. iv(24,36,iv(49,3418,x),undefined,undefined)).
         val nCallPat = Regex(
-            """\b${Regex.escape(dispName)}\(\s*(\d+)\s*,\s*(\d+)\s*,\s*${Regex.escape(dispName)}\(\s*(\d+)\s*,\s*(\d+)\s*,\s*[\w$]+\s*\)\s*\)""")
-        val nCm = nCallPat.findAll(js).firstOrNull { m ->
+            """\b${Regex.escape(dispName)}\(\s*(\d+)\s*,\s*(\d+)\s*,\s*${Regex.escape(dispName)}\(\s*(\d+)\s*,\s*(\d+)\b""")
+        val allNCandidates = nCallPat.findAll(js).toList()
+        Log.d(TAG, "extractNDecodeFn[S2]: nested candidates for $dispName: ${allNCandidates.size}")
+        val nCm = allNCandidates.firstOrNull { m ->
             val k = m.groupValues[1].toIntOrNull() ?: 0
             val r = m.groupValues[2].toIntOrNull() ?: 0
             !(k == sigK && r == sigR)
         } ?: run {
-            Log.w(TAG, "extractNDecodeFn[S2]: n-decode call not found for dispatcher=$dispName")
-            OpenTunePoTokenProvider.nDecodeStatus = "iife_null:s2_no_n_call(disp=$dispName)"
+            val allStr = allNCandidates.joinToString { "(${it.groupValues[1]},${it.groupValues[2]})" }
+            Log.w(TAG, "extractNDecodeFn[S2]: no n-decode call; disp=$dispName cands=$allStr")
+            OpenTunePoTokenProvider.nDecodeStatus = "iife_null:s2_no_n(disp=$dispName,cands=${allNCandidates.size})"
             return null
         }
         val outerK = nCm.groupValues[1]; val outerR = nCm.groupValues[2]
