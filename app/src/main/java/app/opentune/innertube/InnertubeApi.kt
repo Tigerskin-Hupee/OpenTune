@@ -892,52 +892,64 @@ class InnertubeApi @Inject constructor(
         }
 
         // 2. Native player API cascade (WEB_EMBEDDED → WEB_REMIX+PoToken → WEB+PoToken → IOS → ANDROID_VR → …).
-        // NPE is tried AFTER native because it takes 10+ seconds on failure.
-        return try {
-            val (nativeUrl, nativeClientTag, fallbackErrs) = fetchAudioStreamNative(videoId)
+        var nativeUrl: String? = null
+        var nativeClientTag: String? = null
+        var nativeFallbackErrs: List<String> = emptyList()
+        try {
+            val result = fetchAudioStreamNative(videoId)
+            nativeUrl = result.first
+            nativeClientTag = result.second
+            nativeFallbackErrs = result.third
+        } catch (nativeEx: Exception) {
+            errors += "native: ${nativeEx.message?.take(800)}"
+        }
+
+        val nStatus = nativeClientTag?.substringAfter("|n=", "enc") ?: ""
+        if (nativeUrl != null && nStatus != "raw") {
             val elapsed = System.currentTimeMillis() - start
-            // nativeClientTag = "CLIENT_NAME|n=dec/raw" — split for clean display and urlHint
-            val nativeClient = nativeClientTag.substringBefore("|n=")
-            val nStatus = nativeClientTag.substringAfter("|n=", "enc")
+            val nativeClient = nativeClientTag!!.substringBefore("|n=")
             Log.d(tag, "getAudioStreamUrl($videoId) ok via $nativeClient ${elapsed}ms n=$nStatus")
-            // Include ALL fallback errors so diagnostic shows every client tried before the winner.
-            val fallbackNote = fallbackErrs.joinToString("; ").take(600).ifBlank { null }
+            val fallbackNote = nativeFallbackErrs.joinToString("; ").take(600).ifBlank { null }
             app.opentune.utils.DiagnosticsLogger.logStream(
                 videoId, true, elapsed, client = nativeClient, urlHint = urlHint(nativeUrl, nStatus), error = fallbackNote
             )
-            nativeUrl
-        } catch (nativeEx: Exception) {
-            errors += "native: ${nativeEx.message?.take(800)}"
-
-            // 3. NewPipeExtractor — last resort; slow (10+ s) but handles more edge cases.
-            try {
-                val info = StreamInfo.getInfo(ServiceList.YouTube, "https://www.youtube.com/watch?v=$videoId")
-                // Filter out IOS-client streams: NPE falls back to IOS when WEB fails, but IOS
-                // CDN URLs cause ExoPlayer to buffer indefinitely (no error, no audio). Prefer
-                // any non-IOS stream; only accept IOS as last resort if nothing else is available.
-                val allStreams = info.audioStreams.filter { it.content != null }
-                val nonIos = allStreams.filter { !it.content!!.contains("c=IOS", ignoreCase = true) }
-                val best = (nonIos.ifEmpty { allStreams }).maxByOrNull { it.averageBitrate }
-                if (best != null) {
-                    val elapsed = System.currentTimeMillis() - start
-                    val isIos = best.content!!.contains("c=IOS", ignoreCase = true)
-                    Log.d(tag, "getAudioStreamUrl($videoId) ok via NPE ${elapsed}ms ios=$isIos streams=${allStreams.size} nonIos=${nonIos.size}")
-                    app.opentune.utils.DiagnosticsLogger.logStream(videoId, true, elapsed, client = "NPE${if (isIos) "(ios)" else ""}", urlHint = urlHint(best.content!!))
-                    return best.content!!
-                }
-                val potErr = app.opentune.utils.potoken.OpenTunePoTokenProvider.lastError
-                errors += "NPE: ${info.audioStreams.size} streams, none with URL" +
-                    if (potErr != null) " [pot:$potErr]" else ""
-            } catch (e: Exception) {
-                errors += "NPE: ${e.message?.take(80)}"
-            }
-
-            val elapsed = System.currentTimeMillis() - start
-            val combined = errors.joinToString(" | ")
-            Log.w(tag, "getAudioStreamUrl($videoId) ALL FAILED ${elapsed}ms: $combined")
-            app.opentune.utils.DiagnosticsLogger.logStream(videoId, false, elapsed, combined.take(600))
-            throw Exception(combined)
+            return nativeUrl
         }
+        if (nativeUrl != null && nStatus == "raw") {
+            val nativeClient = nativeClientTag!!.substringBefore("|n=")
+            Log.w(tag, "getAudioStreamUrl($videoId) native ok ($nativeClient) but n=raw — escalating to NPE")
+            errors += "native($nativeClient): n=raw"
+        }
+
+        // 3. NewPipeExtractor — handles all player versions including es6 class-based n-decode.
+        // Also reached when native API fails entirely or when n-param decode failed (n=raw).
+        try {
+            val info = StreamInfo.getInfo(ServiceList.YouTube, "https://www.youtube.com/watch?v=$videoId")
+            // Filter out IOS-client streams: NPE falls back to IOS when WEB fails, but IOS
+            // CDN URLs cause ExoPlayer to buffer indefinitely (no error, no audio). Prefer
+            // any non-IOS stream; only accept IOS as last resort if nothing else is available.
+            val allStreams = info.audioStreams.filter { it.content != null }
+            val nonIos = allStreams.filter { !it.content!!.contains("c=IOS", ignoreCase = true) }
+            val best = (nonIos.ifEmpty { allStreams }).maxByOrNull { it.averageBitrate }
+            if (best != null) {
+                val elapsed = System.currentTimeMillis() - start
+                val isIos = best.content!!.contains("c=IOS", ignoreCase = true)
+                Log.d(tag, "getAudioStreamUrl($videoId) ok via NPE ${elapsed}ms ios=$isIos streams=${allStreams.size} nonIos=${nonIos.size}")
+                app.opentune.utils.DiagnosticsLogger.logStream(videoId, true, elapsed, client = "NPE${if (isIos) "(ios)" else ""}", urlHint = urlHint(best.content!!))
+                return best.content!!
+            }
+            val potErr = app.opentune.utils.potoken.OpenTunePoTokenProvider.lastError
+            errors += "NPE: ${info.audioStreams.size} streams, none with URL" +
+                if (potErr != null) " [pot:$potErr]" else ""
+        } catch (e: Exception) {
+            errors += "NPE: ${e.message?.take(80)}"
+        }
+
+        val elapsed = System.currentTimeMillis() - start
+        val combined = errors.joinToString(" | ")
+        Log.w(tag, "getAudioStreamUrl($videoId) ALL FAILED ${elapsed}ms: $combined")
+        app.opentune.utils.DiagnosticsLogger.logStream(videoId, false, elapsed, combined.take(600))
+        throw Exception(combined)
     }
 
     // Piped is a public YouTube proxy that resolves streams server-side — no user auth needed.
@@ -1050,38 +1062,37 @@ class InnertubeApi @Inject constructor(
 
     // Decode the n-parameter in a YouTube CDN URL using the player JS function.
     // Returns Pair(finalUrl, nStatus) where nStatus is "dec", "dec_np", "raw", or "none".
-    // videoId is passed to NewPipe's fallback so it can locate the correct player JS.
+    // videoId is passed to NewPipe so it can locate the correct player JS.
     private fun decodeNParamInUrl(url: String, videoId: String = ""): Pair<String, String> {
         val nMatch = Regex("""[?&]n=([^&]+)""").find(url) ?: return url to "none"
         val nRaw = nMatch.groupValues[1]
 
-        // Primary: WebView-based decode (uses IIFE extracted from player JS).
-        val nDecoded = try {
-            runBlocking { app.opentune.utils.potoken.OpenTunePoTokenProvider.decodeNParam(nRaw) }
-        } catch (e: Exception) {
-            Log.w(tag, "n-param decode exception: ${e.message}")
-            null
-        }
-        if (nDecoded != null && nDecoded != nRaw) {
-            Log.d(tag, "n-param decoded: ${nRaw.take(8)}.. → ${nDecoded.take(8)}..")
-            return url.replace("&n=$nRaw", "&n=$nDecoded").replace("?n=$nRaw", "?n=$nDecoded") to "dec"
-        }
-        if (nDecoded == null) Log.w(tag, "n-param WebView decode returned null, trying NewPipe fallback")
-
-        // Fallback: NewPipe Extractor's built-in throttling-parameter deobfuscation.
-        // Handles ALL player versions NewPipe supports, including "nn"[+VAR] indirect-key players.
-        // Uses cached Rhino JS execution — fast on subsequent calls for the same n value.
+        // Primary: NewPipe Extractor — handles all player versions including es6 class-based n-decode.
+        // Uses cached Rhino JS execution; fast on repeated calls for the same player.
         try {
             val vid = videoId.ifBlank { "jNQXAC9IVRw" }
             val deobfUrl = YoutubeJavaScriptPlayerManager
                 .getUrlWithThrottlingParameterDeobfuscated(vid, url)
             if (deobfUrl != url) {
-                Log.d(tag, "n-param decoded via NewPipe fallback: ${nRaw.take(8)}..")
+                Log.d(tag, "n-param decoded via NPE: ${nRaw.take(8)}..")
                 app.opentune.utils.potoken.OpenTunePoTokenProvider.nDecodeStatus = "dec_np"
                 return deobfUrl to "dec_np"
             }
+            Log.w(tag, "n-param NPE returned same URL — trying WebView fallback")
         } catch (e: Exception) {
-            Log.w(tag, "n-param NewPipe fallback failed: ${e.message}")
+            Log.w(tag, "n-param NPE failed: ${e.message} — trying WebView fallback")
+        }
+
+        // Fallback: WebView-based decode (IIFE extracted from player JS).
+        val nDecoded = try {
+            runBlocking { app.opentune.utils.potoken.OpenTunePoTokenProvider.decodeNParam(nRaw) }
+        } catch (e: Exception) {
+            Log.w(tag, "n-param WebView decode exception: ${e.message}")
+            null
+        }
+        if (nDecoded != null && nDecoded != nRaw) {
+            Log.d(tag, "n-param decoded via WebView: ${nRaw.take(8)}.. → ${nDecoded.take(8)}..")
+            return url.replace("&n=$nRaw", "&n=$nDecoded").replace("?n=$nRaw", "?n=$nDecoded") to "dec"
         }
 
         return url to "raw"
