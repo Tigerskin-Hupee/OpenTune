@@ -138,6 +138,14 @@ class InnertubeApi @Inject constructor(
                 extractSigOps(js)?.also { cachedSigOps = it; Log.d(tag, "sigOps: ${it.size} ops") }
                     ?: Log.w(tag, "sig decode ops not found in player JS (from $sourceUrl)")
 
+                // Expose player JS state to DiagnosticsLogger for in-app diagnostics
+                val playerId = Regex("""/s/player/([0-9a-fA-F]+)/""").find(scriptPath)?.groupValues?.get(1) ?: "?"
+                app.opentune.utils.DiagnosticsLogger.lastPlayerJsId = playerId
+                app.opentune.utils.DiagnosticsLogger.lastPlayerJsFetchedAgo = System.currentTimeMillis()
+                app.opentune.utils.DiagnosticsLogger.lastSigOpsStatus =
+                    if (cachedSigOps != null) "OK (${cachedSigOps!!.size} ops) [$sigOpsHint]"
+                    else "FAIL [$sigOpsHint]"
+
                 jsDataFetchedAt = System.currentTimeMillis()
                 return
             } catch (e: Exception) {

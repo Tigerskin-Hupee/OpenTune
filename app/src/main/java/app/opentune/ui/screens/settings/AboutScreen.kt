@@ -14,11 +14,14 @@ import android.os.Build
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.hilt.navigation.compose.hiltViewModel
+import app.opentune.viewmodels.DiagnosticsViewModel
 import androidx.compose.foundation.Image
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -93,6 +96,7 @@ fun AboutScreen(
     val context = LocalContext.current
     val clipboardManager = LocalClipboard.current
     val uriHandler = LocalUriHandler.current
+    val diagnosticsViewModel: DiagnosticsViewModel = hiltViewModel()
 
     val showDebugInfo = BuildConfig.DEBUG || BuildConfig.BUILD_TYPE == "userdebug"
 
@@ -328,10 +332,64 @@ fun AboutScreen(
                 }
 
                 SettingsClickToReveal("Playback Diagnostics") {
-                    val report = app.opentune.utils.DiagnosticsLogger.getReport(context)
-                    val clipboardManager = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                    val isTesting by diagnosticsViewModel.isTesting.collectAsState()
+                    val testResult by diagnosticsViewModel.testResult.collectAsState()
+                    val sysClipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
                             as android.content.ClipboardManager
+
+                    // Re-read report each time this block composes (auto-refreshes after test)
+                    val report = app.opentune.utils.DiagnosticsLogger.getReport()
+
                     Column(modifier = Modifier.padding(16.dp)) {
+                        // ── Active test ──────────────────────────────────────────────
+                        Text(
+                            text = "Live Stream Test",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Button(
+                                onClick = { diagnosticsViewModel.runStreamTest() },
+                                enabled = !isTesting,
+                            ) {
+                                Text(if (isTesting) "Testing…" else "Run Test")
+                            }
+                            if (testResult != null) {
+                                val ok = testResult!!.startsWith("✓")
+                                Text(
+                                    text = if (ok) "PASS" else "FAIL",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = if (ok) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.error,
+                                )
+                            }
+                        }
+                        if (testResult != null) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                text = testResult!!,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                color = if (testResult!!.startsWith("✓"))
+                                    MaterialTheme.colorScheme.onSurface
+                                else
+                                    MaterialTheme.colorScheme.error,
+                            )
+                        }
+
+                        Spacer(Modifier.height(16.dp))
+
+                        // ── Passive report ───────────────────────────────────────────
+                        Text(
+                            text = "Diagnostic Report",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Spacer(Modifier.height(6.dp))
                         Text(
                             text = report,
                             style = MaterialTheme.typography.bodySmall,
@@ -341,20 +399,26 @@ fun AboutScreen(
                         Spacer(Modifier.height(12.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(onClick = {
-                                clipboardManager.setPrimaryClip(
-                                    ClipData.newPlainText("OpenTune Diagnostics", report)
+                                val full = if (testResult != null)
+                                    "=== Live Test ===\n$testResult\n\n$report"
+                                else report
+                                sysClipboard.setPrimaryClip(
+                                    ClipData.newPlainText("OpenTune Diagnostics", full)
                                 )
                             }) {
                                 Text("Copy Report")
                             }
                             Button(
-                                onClick = { app.opentune.utils.DiagnosticsLogger.clear() },
+                                onClick = {
+                                    app.opentune.utils.DiagnosticsLogger.clear()
+                                    diagnosticsViewModel.runStreamTest()   // auto re-test after clear
+                                },
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = MaterialTheme.colorScheme.errorContainer,
                                     contentColor = MaterialTheme.colorScheme.onErrorContainer,
                                 )
                             ) {
-                                Text("Clear")
+                                Text("Clear & Retest")
                             }
                         }
                     }
