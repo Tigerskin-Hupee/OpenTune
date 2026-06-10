@@ -91,6 +91,13 @@ class InnertubeApi @Inject constructor(
         })
         .build()
 
+    // Short-timeout variant for Piped public instances — fail fast so NPE takes over quickly.
+    // 4s connect + 5s read per instance; 5 instances worst-case = ~45s total but typically <2s.
+    private val pipedHttpClient = httpClient.newBuilder()
+        .connectTimeout(4, TimeUnit.SECONDS)
+        .readTimeout(5, TimeUnit.SECONDS)
+        .build()
+
     // ── Player JS cache ─────────────────────────────────────────────────────────
     // Both signatureTimestamp and sig-decode operations come from the same player JS.
     // Fetch once per hour; sig ops are used to decode signatureCipher URL fields.
@@ -976,7 +983,7 @@ class InnertubeApi @Inject constructor(
         var lastError = "no instances tried"
         for (instance in pipedInstances) {
             try {
-                val response = httpClient.newCall(
+                val response = pipedHttpClient.newCall(
                     Request.Builder()
                         .url("$instance/streams/$videoId")
                         .addHeader("User-Agent", "OpenTune/1.2 Android")
