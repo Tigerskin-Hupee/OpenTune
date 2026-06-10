@@ -12,6 +12,11 @@ package app.opentune.innertube
 import android.content.Context
 import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -888,47 +893,56 @@ class InnertubeApi @Inject constructor(
         return a.joinToString("")
     }
 
+    /** NPE-only stream resolution — used in the parallel race with Piped. */
+    private fun fetchAudioStreamNpe(videoId: String): String {
+        val info = StreamInfo.getInfo(ServiceList.YouTube, "https://www.youtube.com/watch?v=$videoId")
+        val allStreams = info.audioStreams.filter { it.content != null }
+        val nonIos = allStreams.filter { !it.content!!.contains("c=IOS", ignoreCase = true) }
+        val best = (nonIos.ifEmpty { allStreams }).maxByOrNull { it.averageBitrate }
+            ?: run {
+                val potErr = app.opentune.utils.potoken.OpenTunePoTokenProvider.lastError
+                throw Exception("${info.audioStreams.size} streams, none with URL${if (potErr != null) " [pot:$potErr]" else ""}")
+            }
+        return best.content!!
+    }
+
     /** Resolve a video id to a direct audio CDN URL (highest-bitrate audio stream). */
     fun getAudioStreamUrl(videoId: String): String {
         val start = System.currentTimeMillis()
         val errors = mutableListOf<String>()
 
-        // 1. Piped public API — server-side YouTube proxy, no user login needed.
-        try {
-            val url = fetchAudioStreamPiped(videoId)
-            val elapsed = System.currentTimeMillis() - start
-            Log.d(tag, "getAudioStreamUrl($videoId) ok via Piped ${elapsed}ms")
-            app.opentune.utils.DiagnosticsLogger.logStream(videoId, true, elapsed, client = "Piped", urlHint = urlHint(url))
-            return url
-        } catch (e: Exception) {
-            val msg = "Piped: ${e.message?.take(80)}"
-            errors += msg
-            Log.w(tag, "getAudioStreamUrl($videoId) $msg")
+        // 1+2. Race Piped vs NPE simultaneously — both fire at t=0, first success wins.
+        // Eliminates sequential wait: if Piped is slow/down, NPE result arrives without delay.
+        data class RaceItem(val url: String?, val client: String, val err: String? = null)
+        val raceJob = SupervisorJob()
+        val raceScope = CoroutineScope(Dispatchers.IO + raceJob)
+        val ch = Channel<RaceItem>(2)
+        raceScope.launch {
+            try { ch.trySend(RaceItem(fetchAudioStreamPiped(videoId), "Piped")) }
+            catch (e: Exception) { ch.trySend(RaceItem(null, "Piped", e.message?.take(80))) }
         }
-
-        // 2. NewPipeExtractor — tried second: handles all player versions via Rhino JS execution.
-        // Placed before native cascade because sig decode (sigOps) may fail for new player builds,
-        // causing all browser-client cipher URLs to return null. NPE handles sig + n-param natively.
-        try {
-            val info = StreamInfo.getInfo(ServiceList.YouTube, "https://www.youtube.com/watch?v=$videoId")
-            // Filter out IOS-client streams: NPE falls back to IOS when WEB fails, but IOS
-            // CDN URLs cause ExoPlayer to buffer indefinitely (no error, no audio). Prefer
-            // any non-IOS stream; only accept IOS as last resort if nothing else is available.
-            val allStreams = info.audioStreams.filter { it.content != null }
-            val nonIos = allStreams.filter { !it.content!!.contains("c=IOS", ignoreCase = true) }
-            val best = (nonIos.ifEmpty { allStreams }).maxByOrNull { it.averageBitrate }
-            if (best != null) {
-                val elapsed = System.currentTimeMillis() - start
-                val isIos = best.content!!.contains("c=IOS", ignoreCase = true)
-                Log.d(tag, "getAudioStreamUrl($videoId) ok via NPE ${elapsed}ms ios=$isIos streams=${allStreams.size} nonIos=${nonIos.size}")
-                app.opentune.utils.DiagnosticsLogger.logStream(videoId, true, elapsed, client = "NPE${if (isIos) "(ios)" else ""}", urlHint = urlHint(best.content!!))
-                return best.content!!
+        raceScope.launch {
+            try { ch.trySend(RaceItem(fetchAudioStreamNpe(videoId), "NPE")) }
+            catch (e: Exception) { ch.trySend(RaceItem(null, "NPE", e.message?.take(80))) }
+        }
+        var raceWinner: RaceItem? = null
+        var raceFails = 0
+        runBlocking {
+            while (raceWinner == null && raceFails < 2) {
+                val r = ch.receive()
+                if (r.url != null) raceWinner = r else { errors += "${r.client}: ${r.err}"; raceFails++ }
             }
-            val potErr = app.opentune.utils.potoken.OpenTunePoTokenProvider.lastError
-            errors += "NPE: ${info.audioStreams.size} streams, none with URL" +
-                if (potErr != null) " [pot:$potErr]" else ""
-        } catch (e: Exception) {
-            errors += "NPE: ${e.message?.take(80)}"
+        }
+        raceJob.cancel()
+
+        if (raceWinner != null) {
+            val url = raceWinner.url!!
+            val client = raceWinner.client
+            val elapsed = System.currentTimeMillis() - start
+            val isIos = url.contains("c=IOS", ignoreCase = true)
+            Log.d(tag, "getAudioStreamUrl($videoId) ok via $client ${elapsed}ms${if (isIos) " ios=true" else ""}")
+            app.opentune.utils.DiagnosticsLogger.logStream(videoId, true, elapsed, client = "$client${if (isIos) "(ios)" else ""}", urlHint = urlHint(url))
+            return url
         }
 
         // 3. Native player API cascade (WEB_EMBEDDED → WEB_REMIX+PoToken → WEB+PoToken → ANDROID_VR → …).
