@@ -1,6 +1,5 @@
 package app.opentune.utils
 
-import android.content.Context
 import android.os.Build
 import app.opentune.BuildConfig
 import app.opentune.utils.potoken.OpenTunePoTokenProvider
@@ -31,6 +30,11 @@ object DiagnosticsLogger {
     private val playbackEvents = ArrayDeque<PlaybackEvent>()
     private const val MAX_EVENTS = 20
 
+    // Updated by InnertubeApi after each player JS fetch
+    @Volatile var lastSigOpsStatus: String = "?"
+    @Volatile var lastPlayerJsId: String = "?"
+    @Volatile var lastPlayerJsFetchedAgo: Long = -1L  // ms since fetch
+
     @Synchronized
     fun logStream(
         videoId: String,
@@ -51,7 +55,7 @@ object DiagnosticsLogger {
     }
 
     @Synchronized
-    fun getReport(context: Context): String {
+    fun getReport(): String {
         val sdf = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
         val sb = StringBuilder()
 
@@ -59,16 +63,23 @@ object DiagnosticsLogger {
         sb.appendLine("App    : ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) ${BuildConfig.BUILD_TYPE}")
         sb.appendLine("Device : ${Build.BRAND} ${Build.MODEL} (Android ${Build.VERSION.SDK_INT})")
         sb.appendLine("Time   : ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())}")
+
         val poErr = OpenTunePoTokenProvider.lastError
-        val keyHint = app.opentune.utils.potoken.PoTokenWebView.lastRequestKeyHint
-        val playerJsId = app.opentune.utils.potoken.PoTokenWebView.lastPlayerJsId
+        val keyHint = potoken.PoTokenWebView.lastRequestKeyHint
+        val playerJsId = potoken.PoTokenWebView.lastPlayerJsId
         sb.appendLine("PoToken: ${when (poErr) { null -> "OK"; "not_called" -> "not_called"; else -> "FAIL($poErr)" }} key=$keyHint player=$playerJsId")
         sb.appendLine("nDecode: ${OpenTunePoTokenProvider.nDecodeStatus}")
+
+        val jsAgo = if (lastPlayerJsFetchedAgo >= 0)
+            "${(System.currentTimeMillis() - lastPlayerJsFetchedAgo) / 1000}s ago" else "never"
+        sb.appendLine("PlayerJS: id=$lastPlayerJsId  fetched=$jsAgo")
+        sb.appendLine("SigOps : $lastSigOpsStatus")
+        sb.appendLine("NPE    : ${BuildConfig.NEWPIPE_EXTRACTOR_COMMIT}")
         sb.appendLine()
 
         sb.appendLine("--- Stream Resolution (last ${streamEvents.size}) ---")
         if (streamEvents.isEmpty()) {
-            sb.appendLine("(no events yet)")
+            sb.appendLine("(no events yet — play a song first)")
         } else {
             streamEvents.asReversed().forEach { e ->
                 val status = if (e.success) "OK  " else "FAIL"
@@ -102,5 +113,8 @@ object DiagnosticsLogger {
     fun clear() {
         streamEvents.clear()
         playbackEvents.clear()
+        lastSigOpsStatus = "?"
+        lastPlayerJsId = "?"
+        lastPlayerJsFetchedAgo = -1L
     }
 }
