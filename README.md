@@ -3,7 +3,7 @@
 <div align="center">
   <img src="./assets/ic_launcher_round.png" alt="OpenTune" width="100" />
 
-  **v2.0.0** · Material 3 · Android 7+
+  **v2.0.1** · Material 3 · Android 7+
 
   [![License](https://img.shields.io/github/license/OuterTune/OuterTune)](https://www.gnu.org/licenses/gpl-3.0)
   [![Release](https://img.shields.io/github/v/release/Tigerskin-Hupee/OpenTune)](https://github.com/Tigerskin-Hupee/OpenTune/releases/latest)
@@ -141,11 +141,11 @@ No API keys or accounts required.
 
 | Version | Highlights |
 |---|---|
+| **2.0.1** | Parallel Piped+NPE race: both fire at t=0, first success wins; target <2s stream resolution |
 | **2.0.0** | Fix CDN 403: NPE v0.26.3, waterfall reordered (NPE before native cascade); in-app live stream test with diagnostics report; player JS sig-decode status in report |
 | **1.2.83** | NPE moved as fallback for sigOps=null; TVHTML5_SEP replaced by WEB_EMBEDDED_PLAYER; IPv4-only DNS fix for CDN IP-binding |
 | **1.1.0** | Fix Library visibility: enable Songs tab by default; Albums/Artists default to Library filter; playlist bookmark toggle |
 | **1.0.9** | Fix favourites lag: DB indices on liked/likedDate/inLibrary |
-| **1.0.8** | Playlist bookmark toggle; Liked filter for playlists in Library |
 
 ---
 
