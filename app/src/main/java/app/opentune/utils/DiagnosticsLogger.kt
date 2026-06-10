@@ -3,6 +3,7 @@ package app.opentune.utils
 import android.os.Build
 import app.opentune.BuildConfig
 import app.opentune.utils.potoken.OpenTunePoTokenProvider
+import app.opentune.utils.potoken.PoTokenWebView
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -65,8 +66,8 @@ object DiagnosticsLogger {
         sb.appendLine("Time   : ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())}")
 
         val poErr = OpenTunePoTokenProvider.lastError
-        val keyHint = potoken.PoTokenWebView.lastRequestKeyHint
-        val playerJsId = potoken.PoTokenWebView.lastPlayerJsId
+        val keyHint = PoTokenWebView.lastRequestKeyHint
+        val playerJsId = PoTokenWebView.lastPlayerJsId
         sb.appendLine("PoToken: ${when (poErr) { null -> "OK"; "not_called" -> "not_called"; else -> "FAIL($poErr)" }} key=$keyHint player=$playerJsId")
         sb.appendLine("nDecode: ${OpenTunePoTokenProvider.nDecodeStatus}")
 
