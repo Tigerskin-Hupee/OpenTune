@@ -32,7 +32,7 @@ android {
         versionCode = 107
         versionName = "1.2.83"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        buildConfigField("String", "NEWPIPE_EXTRACTOR_COMMIT", "\"c0abfa985f\"")
+        buildConfigField("String", "NEWPIPE_EXTRACTOR_COMMIT", "\"v0.26.3\"")
     }
 
     signingConfigs {
