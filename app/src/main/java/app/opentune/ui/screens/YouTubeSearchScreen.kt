@@ -76,6 +76,7 @@ import androidx.compose.ui.platform.LocalContext
 import app.opentune.LocalPlayerConnection
 import app.opentune.LocalPlayerAwareWindowInsets
 import app.opentune.R
+import androidx.compose.foundation.layout.asPaddingValues
 import app.opentune.innertube.YtMusicAlbum
 import app.opentune.innertube.YtMusicArtist
 import app.opentune.innertube.YtMusicTrack
