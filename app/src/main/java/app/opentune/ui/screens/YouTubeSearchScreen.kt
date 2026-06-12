@@ -77,6 +77,7 @@ import app.opentune.LocalPlayerConnection
 import app.opentune.LocalPlayerAwareWindowInsets
 import app.opentune.R
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.only
 import app.opentune.innertube.YtMusicAlbum
 import app.opentune.innertube.YtMusicArtist
 import app.opentune.innertube.YtMusicTrack
@@ -194,7 +195,7 @@ fun YouTubeSearchScreen(
                         EmptyResults()
                     } else {
                         LazyColumn(state = listState, modifier = Modifier.fillMaxSize(),
-                            contentPadding = LocalPlayerAwareWindowInsets.current.asPaddingValues()) {
+                            contentPadding = LocalPlayerAwareWindowInsets.current.only(WindowInsetsSides.Bottom).asPaddingValues()) {
                             items(songResults) { track ->
                                 YouTubeTrackItem(
                                     track = track,
@@ -219,7 +220,7 @@ fun YouTubeSearchScreen(
                         EmptyResults()
                     } else {
                         LazyColumn(state = listState, modifier = Modifier.fillMaxSize(),
-                            contentPadding = LocalPlayerAwareWindowInsets.current.asPaddingValues()) {
+                            contentPadding = LocalPlayerAwareWindowInsets.current.only(WindowInsetsSides.Bottom).asPaddingValues()) {
                             items(artistResults) { artist ->
                                 YouTubeArtistItem(
                                     artist = artist,
@@ -240,7 +241,7 @@ fun YouTubeSearchScreen(
                         EmptyResults()
                     } else {
                         LazyColumn(state = listState, modifier = Modifier.fillMaxSize(),
-                            contentPadding = LocalPlayerAwareWindowInsets.current.asPaddingValues()) {
+                            contentPadding = LocalPlayerAwareWindowInsets.current.only(WindowInsetsSides.Bottom).asPaddingValues()) {
                             items(albumResults) { album ->
                                 YouTubeAlbumItem(
                                     album = album,
@@ -270,7 +271,7 @@ fun YouTubeSearchScreen(
                         EmptyResults()
                     } else {
                         LazyColumn(state = listState, modifier = Modifier.fillMaxSize(),
-                            contentPadding = LocalPlayerAwareWindowInsets.current.asPaddingValues()) {
+                            contentPadding = LocalPlayerAwareWindowInsets.current.only(WindowInsetsSides.Bottom).asPaddingValues()) {
                             items(playlistResults) { playlist ->
                                 YouTubeAlbumItem(
                                     album = playlist,
