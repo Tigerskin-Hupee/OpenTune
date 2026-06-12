@@ -1457,17 +1457,49 @@ class InnertubeApi @Inject constructor(
 
     fun getPlaylistSongs(playlistId: String, originalUrl: String = ""): List<YtMusicTrack> {
         if (playlistId.isBlank()) return emptyList()
-        // NewPipeExtractor v0.26.1 PlaylistInfo is broken with current YouTube
-        // (RuntimeException: Field browseId_ for ux3 not found).
-        // Use the Innertube browse API directly instead.
-        val result = fetchPlaylistViaInnertube(playlistId)
+        val start = System.currentTimeMillis()
+        var result = fetchPlaylistViaInnertube(playlistId)
         if (result.isEmpty()) {
             // YouTube occasionally returns an empty response on the first request;
             // a single retry after a short delay is enough to recover.
             Thread.sleep(800)
-            return fetchPlaylistViaInnertube(playlistId)
+            result = fetchPlaylistViaInnertube(playlistId)
+        }
+        if (result.isEmpty()) {
+            // Fallback: NPE PlaylistInfo. Was broken in v0.26.1
+            // (RuntimeException: Field browseId_ for ux3 not found) but works on v0.26.3.
+            result = fetchPlaylistViaNpe(playlistId, originalUrl)
+        }
+        val elapsed = System.currentTimeMillis() - start
+        if (result.isEmpty()) {
+            app.opentune.utils.DiagnosticsLogger.logStream(
+                "PL:${playlistId.take(13)}", false, elapsed, error = "playlist: 0 tracks (innertube+npe)"
+            )
         }
         return result
+    }
+
+    // NPE-based playlist fetch — fallback when the Innertube browse extraction returns nothing
+    // (e.g. YouTube rolled out a response format our renderer walker doesn't know yet).
+    private fun fetchPlaylistViaNpe(playlistId: String, originalUrl: String): List<YtMusicTrack> {
+        return try {
+            val url = originalUrl.ifBlank { "https://www.youtube.com/playlist?list=$playlistId" }
+            val info = PlaylistInfo.getInfo(ServiceList.YouTube, url)
+            val items = info.relatedItems.filterIsInstance<StreamInfoItem>().toMutableList()
+            var next = info.nextPage
+            var pages = 0
+            while (next != null && pages < 4 && items.size < 300) {
+                val more = PlaylistInfo.getMoreItems(ServiceList.YouTube, url, next)
+                items.addAll(more.items.filterIsInstance<StreamInfoItem>())
+                next = more.nextPage
+                pages++
+            }
+            Log.d(tag, "fetchPlaylistViaNpe('$playlistId'): ${items.size} tracks in ${pages + 1} pages")
+            items.mapNotNull { it.toTrack() }
+        } catch (e: Exception) {
+            Log.w(tag, "fetchPlaylistViaNpe('$playlistId') failed [${e.javaClass.simpleName}]: ${e.message}")
+            emptyList()
+        }
     }
 
     // Fetch playlist songs via YouTube's internal Innertube /browse API.
@@ -1479,10 +1511,13 @@ class InnertubeApi @Inject constructor(
         val json = "application/json; charset=utf-8".toMediaType()
 
         do {
+            // Client version must be reasonably current — YouTube serves the new
+            // lockupViewModel layout (or rejects the call) for very old versions.
+            val webVer = "2.20260101.00.00"
             val body = if (continuation == null) {
-                """{"browseId":"VL$playlistId","context":{"client":{"clientName":"WEB","clientVersion":"2.20230101.00.00"}}}"""
+                """{"browseId":"VL$playlistId","context":{"client":{"clientName":"WEB","clientVersion":"$webVer"}}}"""
             } else {
-                """{"continuation":"$continuation","context":{"client":{"clientName":"WEB","clientVersion":"2.20230101.00.00"}}}"""
+                """{"continuation":"$continuation","context":{"client":{"clientName":"WEB","clientVersion":"$webVer"}}}"""
             }
 
             val response = httpClient.newCall(
@@ -1491,7 +1526,7 @@ class InnertubeApi @Inject constructor(
                     .post(body.toRequestBody(json))
                     .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                     .addHeader("X-YouTube-Client-Name", "1")
-                    .addHeader("X-YouTube-Client-Version", "2.20230101.00.00")
+                    .addHeader("X-YouTube-Client-Version", webVer)
                     .addHeader("Origin", "https://www.youtube.com")
                     .addHeader("Referer", "https://www.youtube.com/playlist?list=$playlistId")
                     .build()
@@ -1514,13 +1549,18 @@ class InnertubeApi @Inject constructor(
         return tracks
     }
 
-    // Recursively find every playlistVideoRenderer in the Innertube response.
-    // This handles any nesting depth and is immune to YouTube layout changes.
+    // Recursively find every playlist item in the Innertube response.
+    // Handles classic renderers (playlistVideoRenderer & friends) plus the new
+    // lockupViewModel layout YouTube has been rolling out since 2025.
     private fun extractPlaylistVideoRenderers(node: Any?): List<YtMusicTrack> {
         val tracks = mutableListOf<YtMusicTrack>()
         when (node) {
             is JSONObject -> {
                 val renderer = node.optJSONObject("playlistVideoRenderer")
+                    ?: node.optJSONObject("playlistPanelVideoRenderer")
+                    ?: node.optJSONObject("videoRenderer")
+                    ?: node.optJSONObject("compactVideoRenderer")
+                val lockup = node.optJSONObject("lockupViewModel")
                 if (renderer != null) {
                     val videoId = renderer.optString("videoId").takeIf { it.isNotBlank() }
                     if (videoId != null) {
@@ -1538,6 +1578,25 @@ class InnertubeApi @Inject constructor(
                             artistName = artist,
                             thumbnailUrl = "https://i.ytimg.com/vi/$videoId/hqdefault.jpg",
                             durationText = duration,
+                        ))
+                    }
+                } else if (lockup != null && lockup.optString("contentType") == "LOCKUP_CONTENT_TYPE_VIDEO") {
+                    val videoId = lockup.optString("contentId").takeIf { it.isNotBlank() }
+                    if (videoId != null) {
+                        val meta = lockup.optJSONObject("metadata")?.optJSONObject("lockupMetadataViewModel")
+                        val title = meta?.optJSONObject("title")?.optString("content")
+                            ?.takeIf { it.isNotBlank() } ?: videoId
+                        val artist = meta?.optJSONObject("metadata")
+                            ?.optJSONObject("contentMetadataViewModel")
+                            ?.optJSONArray("metadataRows")?.optJSONObject(0)
+                            ?.optJSONArray("metadataParts")?.optJSONObject(0)
+                            ?.optJSONObject("text")?.optString("content") ?: ""
+                        tracks.add(YtMusicTrack(
+                            videoId = videoId,
+                            title = title,
+                            artistName = artist,
+                            thumbnailUrl = "https://i.ytimg.com/vi/$videoId/hqdefault.jpg",
+                            durationText = null,
                         ))
                     }
                 } else {
