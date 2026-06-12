@@ -699,11 +699,12 @@ fun BoxScope.QueueContent(
                     songHeader()
                 }
             }
-            if ((if (isSearching) filteredSongs else mutableSongs).isEmpty()) {
+            val activeSearching = isSearching && searchQuery.text.isNotEmpty()
+            if ((if (activeSearching) filteredSongs else mutableSongs).isEmpty()) {
                 item {
                     EmptyPlaceholder(
                         icon = Icons.Rounded.MusicNote,
-                        text = stringResource(if (isSearching) R.string.no_results_found else R.string.queues_empty),
+                        text = stringResource(if (activeSearching) R.string.no_results_found else R.string.queues_empty),
                         modifier = Modifier.animateItem()
                     )
                 }
