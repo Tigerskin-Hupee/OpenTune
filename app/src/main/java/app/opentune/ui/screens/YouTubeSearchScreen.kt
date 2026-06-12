@@ -74,6 +74,7 @@ import androidx.navigation.NavController
 import coil3.compose.AsyncImage
 import androidx.compose.ui.platform.LocalContext
 import app.opentune.LocalPlayerConnection
+import app.opentune.LocalPlayerAwareWindowInsets
 import app.opentune.R
 import app.opentune.innertube.YtMusicAlbum
 import app.opentune.innertube.YtMusicArtist
@@ -191,7 +192,8 @@ fun YouTubeSearchScreen(
                     if (songResults.isEmpty() && queryText.isNotBlank()) {
                         EmptyResults()
                     } else {
-                        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                        LazyColumn(state = listState, modifier = Modifier.fillMaxSize(),
+                            contentPadding = LocalPlayerAwareWindowInsets.current.asPaddingValues()) {
                             items(songResults) { track ->
                                 YouTubeTrackItem(
                                     track = track,
@@ -215,7 +217,8 @@ fun YouTubeSearchScreen(
                     if (artistResults.isEmpty() && queryText.isNotBlank()) {
                         EmptyResults()
                     } else {
-                        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                        LazyColumn(state = listState, modifier = Modifier.fillMaxSize(),
+                            contentPadding = LocalPlayerAwareWindowInsets.current.asPaddingValues()) {
                             items(artistResults) { artist ->
                                 YouTubeArtistItem(
                                     artist = artist,
@@ -235,7 +238,8 @@ fun YouTubeSearchScreen(
                     if (albumResults.isEmpty() && queryText.isNotBlank()) {
                         EmptyResults()
                     } else {
-                        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                        LazyColumn(state = listState, modifier = Modifier.fillMaxSize(),
+                            contentPadding = LocalPlayerAwareWindowInsets.current.asPaddingValues()) {
                             items(albumResults) { album ->
                                 YouTubeAlbumItem(
                                     album = album,
@@ -264,7 +268,8 @@ fun YouTubeSearchScreen(
                     if (playlistResults.isEmpty() && queryText.isNotBlank()) {
                         EmptyResults()
                     } else {
-                        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                        LazyColumn(state = listState, modifier = Modifier.fillMaxSize(),
+                            contentPadding = LocalPlayerAwareWindowInsets.current.asPaddingValues()) {
                             items(playlistResults) { playlist ->
                                 YouTubeAlbumItem(
                                     album = playlist,
