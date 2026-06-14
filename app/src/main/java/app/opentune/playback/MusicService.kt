@@ -913,6 +913,15 @@ class MusicService : MediaLibraryService(),
             }
         }
 
+        // Prefetch next song's stream URL while current song plays so transitions are near-instant.
+        val nextIdx = player.nextMediaItemIndex
+        if (nextIdx != C.INDEX_UNSET) {
+            val nextVideoId = player.getMediaItemAt(nextIdx).mediaId
+            scope.launch(SilentHandler) {
+                streamResolver.getStreamUrl(nextVideoId)
+            }
+        }
+
         updateNotification() // also updates when queue changes
     }
 
