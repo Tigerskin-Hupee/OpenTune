@@ -212,8 +212,11 @@ interface ArtistsDao {
     @Update
     fun update(artist: ArtistEntity)
 
+    // OR IGNORE: when a song already maps to newId, a plain UPDATE would violate
+    // the (songId, artistId) primary key and crash. Skipped rows still point at
+    // oldId and are removed by FK CASCADE when the old artist is deleted.
     @Transaction
-    @Query("UPDATE song_artist_map SET artistId = :newId WHERE artistId = :oldId")
+    @Query("UPDATE OR IGNORE song_artist_map SET artistId = :newId WHERE artistId = :oldId")
     fun updateSongArtistMap(oldId: String, newId: String)
     // endregion
 

@@ -3,7 +3,7 @@
 <div align="center">
   <img src="./assets/ic_launcher_round.png" alt="OpenTune" width="100" />
 
-  **v2.0.5** · Material 3 · Android 7+
+  **v2.0.6** · Material 3 · Android 7+
 
   [![License](https://img.shields.io/github/license/OuterTune/OuterTune)](https://www.gnu.org/licenses/gpl-3.0)
   [![Release](https://img.shields.io/github/v/release/Tigerskin-Hupee/OpenTune)](https://github.com/Tigerskin-Hupee/OpenTune/releases/latest)
@@ -141,6 +141,7 @@ No API keys or accounts required.
 
 | Version | Highlights |
 |---|---|
+| **2.0.6** | Fix crash on duplicate-artist merge (UNIQUE constraint in song_artist_map): merge UPDATEs now use OR IGNORE; async db.query/transaction blocks catch exceptions and log them as non-fatals instead of killing the app |
 | **2.0.5** | In-app update checker (GitHub Releases → download → installer prompt); crash logger with copyable report in Settings → About; prefetch next song's stream URL for near-instant track transitions |
 | **2.0.4** | Fix playlist songs not loading: modern WEB client version, support new lockupViewModel response layout, NPE PlaylistInfo fallback; playlist failures now visible in diagnostics report |
 | **2.0.3** | Fix queue showing "找不到結果" when empty-search mode active; fix search screen top gap (bottom-only inset padding); songs tab uses music_songs filter |

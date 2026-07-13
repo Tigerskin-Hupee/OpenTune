@@ -2,6 +2,7 @@ package app.opentune.db
 
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
+import android.util.Log
 import androidx.core.content.contentValuesOf
 import androidx.room.AutoMigration
 import androidx.room.Database
@@ -38,6 +39,7 @@ import app.opentune.db.entities.SongGenreMap
 import app.opentune.db.entities.SortedSongAlbumMap
 import app.opentune.db.entities.SortedSongArtistMap
 import app.opentune.extensions.toSQLiteQuery
+import app.opentune.utils.CrashLogger
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneOffset
@@ -49,16 +51,29 @@ class MusicDatabase(
     val openHelper: SupportSQLiteOpenHelper
         get() = delegate.openHelper
 
+    // Blocks run asynchronously on Room's executors: an uncaught exception here
+    // kills the whole app (callers' try/catch can't see it). Catch, log, and
+    // record it as a non-fatal so it shows up in Settings → About → Crash Log.
     fun query(block: MusicDatabase.() -> Unit) = with(delegate) {
         queryExecutor.execute {
-            block(this@MusicDatabase)
+            try {
+                block(this@MusicDatabase)
+            } catch (e: Exception) {
+                Log.e("MusicDatabase", "async query block failed", e)
+                CrashLogger.logCaught("db.query", e)
+            }
         }
     }
 
     fun transaction(block: MusicDatabase.() -> Unit) = with(delegate) {
         transactionExecutor.execute {
-            runInTransaction {
-                block(this@MusicDatabase)
+            try {
+                runInTransaction {
+                    block(this@MusicDatabase)
+                }
+            } catch (e: Exception) {
+                Log.e("MusicDatabase", "async transaction block failed", e)
+                CrashLogger.logCaught("db.transaction", e)
             }
         }
     }

@@ -74,8 +74,10 @@ interface AlbumsDao : ArtistsDao {
     LIMIT :previewSize""")
     fun allAlbumsByName(previewSize: Int = Int.MAX_VALUE): List<AlbumEntity>
 
+    // OR IGNORE: skip rows that would violate the (songId, albumId) primary key
+    // during album merges; leftovers are removed by FK CASCADE on album delete.
     @Transaction
-    @Query("UPDATE song_album_map SET albumId = :newId WHERE albumId = :oldId")
+    @Query("UPDATE OR IGNORE song_album_map SET albumId = :newId WHERE albumId = :oldId")
     fun updateSongAlbumMap(oldId: String, newId: String)
 
     @Query(
@@ -244,8 +246,10 @@ interface AlbumsDao : ArtistsDao {
     /**
      * Set artistId
      */
+    // OR IGNORE: skip rows that would violate the (albumId, artistId) primary key
+    // during artist merges; leftovers are removed by FK CASCADE on artist delete.
     @Transaction
-    @Query("UPDATE album_artist_map SET artistId = :newId WHERE artistId = :oldId")
+    @Query("UPDATE OR IGNORE album_artist_map SET artistId = :newId WHERE artistId = :oldId")
     fun updateAlbumArtistMap(oldId: String, newId: String)
 
     @Transaction
