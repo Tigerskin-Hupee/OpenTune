@@ -50,6 +50,18 @@ jobs:
       - name: Build release APK
         run: ./gradlew assembleCoreRelease --stacktrace -DskipFormatKtlint
 
+      # Per-release notes live in RELEASE_NOTES.md. If it contains [critical]
+      # or [重大], installed apps prompt users to update (see UpdateChecker).
+      - name: Read release notes
+        id: notes
+        run: |
+          {
+            echo 'notes<<NOTES_EOF'
+            if [ -f RELEASE_NOTES.md ]; then cat RELEASE_NOTES.md; fi
+            echo ''
+            echo 'NOTES_EOF'
+          } >> $GITHUB_OUTPUT
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -57,6 +69,8 @@ jobs:
           name: "OpenTune v${{ steps.version.outputs.version_name }}"
           body: |
             ## OpenTune v${{ steps.version.outputs.version_name }} (build ${{ steps.version.outputs.version_code }})
+
+            ${{ steps.notes.outputs.notes }}
 
             ### 安裝說明
             1. 下載 `OpenTune-${{ steps.version.outputs.version_name }}-release.apk`
