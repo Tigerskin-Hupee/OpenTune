@@ -57,6 +57,27 @@ object CrashLogger {
         file.writeText((entry + "\n" + existing).take(MAX_LOG_BYTES))
     }
 
+    /**
+     * Record a caught (non-fatal) exception to the same log, so background
+     * errors that no longer crash the app remain visible in Settings → About.
+     */
+    fun logCaught(tag: String, throwable: Throwable) {
+        try {
+            val file = logFile ?: return
+            val stackTrace = StringWriter().also { throwable.printStackTrace(PrintWriter(it)) }.toString()
+            val time = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
+            val entry = buildString {
+                appendLine("=== NON-FATAL $time ($tag) ===")
+                appendLine("App    : ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+                appendLine(stackTrace)
+            }
+            val existing = if (file.exists()) file.readText() else ""
+            file.writeText((entry + "\n" + existing).take(MAX_LOG_BYTES))
+        } catch (_: Throwable) {
+            // never let the logger itself cause problems
+        }
+    }
+
     /** Full crash log, or null if no crash has been recorded. */
     fun getReport(): String? =
         logFile?.takeIf { it.exists() }?.readText()?.takeIf { it.isNotBlank() }
