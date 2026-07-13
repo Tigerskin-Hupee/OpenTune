@@ -301,6 +301,7 @@ class MainActivity : ComponentActivity() {
                 pureBlack = pureBlack,
             ) {
                 Log.v(MAIN_TAG, "RC-2.1")
+                app.opentune.ui.component.UpdateNotifier()
                 val density = LocalDensity.current
                 val windowsInsets = WindowInsets.systemBars.union(WindowInsets.displayCutout)
                 val bottomInset = with(density) { windowsInsets.getBottom(density).toDp() }

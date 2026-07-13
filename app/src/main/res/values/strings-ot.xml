@@ -368,4 +368,10 @@ while also allowing users to translate our app as well. New, specific strings to
     <string name="speed_medium">Medium</string>
     <string name="speed_fast">Fast</string>
     <string name="speed_very_fast">Very fast</string>
+
+<!-- In-app update -->
+    <string name="update_available_title">New version v%1$s available</string>
+    <string name="update_available_message">This is an important update. You are on v%1$s — download and install v%2$s now? The download runs in the background and the installer opens when it finishes.</string>
+    <string name="update_now">Update</string>
+    <string name="update_later">Later</string>
 </resources>
