@@ -261,4 +261,8 @@
     <string name="oobe_welcome_tip">为了获得最佳体验，我们建议您立即完成快速设置，以便对主题、YouTube 帐户、本地媒体和下载等关键功能进行个性化配置。</string>
     <string name="oobe_cache_title">歌曲缓存</string>
     <string name="oobe_cache_subtitle">设置歌曲缓存容量。此操作有助于解决网络或 YouTube API 播放时出现的问题</string>
+    <string name="update_available_title">发现新版本 v%1$s</string>
+    <string name="update_available_message">这是一个重要更新。当前版本为 v%1$s，要现在下载并安装 v%2$s 吗？下载会在后台进行，完成后自动打开安装界面。</string>
+    <string name="update_now">更新</string>
+    <string name="update_later">稍后</string>
 </resources>

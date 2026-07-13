@@ -112,4 +112,8 @@
     <string name="grp_interface">介面</string>
     <string name="grp_layout">排版</string>
     <string name="grp_lyrics_format">格式</string>
+    <string name="update_available_title">發現新版本 v%1$s</string>
+    <string name="update_available_message">這是一個重要更新。目前版本為 v%1$s，要現在下載並安裝 v%2$s 嗎？下載會在背景進行，完成後自動開啟安裝畫面。</string>
+    <string name="update_now">更新</string>
+    <string name="update_later">稍後</string>
 </resources>

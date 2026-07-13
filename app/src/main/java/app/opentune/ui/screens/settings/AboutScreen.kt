@@ -423,6 +423,47 @@ fun AboutScreen(
                         }
                     }
                 }
+
+                SettingsClickToReveal("Crash Log") {
+                    var crashReport by remember {
+                        mutableStateOf(app.opentune.utils.CrashLogger.getReport())
+                    }
+                    val sysClipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                            as android.content.ClipboardManager
+
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = crashReport ?: "No crashes recorded.",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            modifier = Modifier.horizontalScroll(androidx.compose.foundation.rememberScrollState())
+                        )
+                        if (crashReport != null) {
+                            Spacer(Modifier.height(12.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(onClick = {
+                                    sysClipboard.setPrimaryClip(
+                                        ClipData.newPlainText("OpenTune Crash Log", crashReport)
+                                    )
+                                }) {
+                                    Text("Copy Crash Log")
+                                }
+                                Button(
+                                    onClick = {
+                                        app.opentune.utils.CrashLogger.clear()
+                                        crashReport = null
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                                        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                                    )
+                                ) {
+                                    Text("Clear")
+                                }
+                            }
+                        }
+                    }
+                }
             }
             Spacer(modifier = Modifier.height(16.dp))
 

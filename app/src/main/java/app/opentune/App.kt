@@ -50,6 +50,9 @@ class App : Application(), SingletonImageLoader.Factory, Configuration.Provider 
     override fun onCreate() {
         super.onCreate()
 
+        // Capture uncaught exceptions to a local file (Settings → About → Crash Log).
+        app.opentune.utils.CrashLogger.init(this)
+
         if (BuildConfig.DEBUG) {
             System.setProperty("kotlinx.coroutines.debug", "on")
         }
