@@ -102,7 +102,13 @@ class DownloadUtil @Inject constructor(
         if (uri.scheme == "youtube") {
             val videoId = uri.schemeSpecificPart
             val streamUrl = innertube.getAudioStreamUrl(videoId)
-            dataSpec.withUri(streamUrl.toUri())
+            // YouTube CDN throttles continuous downloads to ~playback speed.
+            // An explicit range parameter makes it a segment request, which
+            // bypasses the throttle (same trick as InnerTune / yt-dlp).
+            val dlUrl = if (streamUrl.contains("videoplayback") && !streamUrl.contains("&range="))
+                "$streamUrl&range=0-999999999"
+            else streamUrl
+            dataSpec.withUri(dlUrl.toUri())
         } else {
             dataSpec
         }
