@@ -3,7 +3,7 @@
 <div align="center">
   <img src="./assets/ic_launcher_round.png" alt="OpenTune" width="100" />
 
-  **v2.0.9** · Material 3 · Android 7+
+  **v2.0.10** · Material 3 · Android 7+
 
   [![License](https://img.shields.io/github/license/OuterTune/OuterTune)](https://www.gnu.org/licenses/gpl-3.0)
   [![Release](https://img.shields.io/github/v/release/Tigerskin-Hupee/OpenTune)](https://github.com/Tigerskin-Hupee/OpenTune/releases/latest)
@@ -141,11 +141,11 @@ No API keys or accounts required.
 
 | Version | Highlights |
 |---|---|
+| **2.0.10** | Download failures now record the exact reason (failure code + exception) to the Crash Log for diagnosis |
 | **2.0.9** | Fix all downloads failing: the download data source had no network upstream (only worked for already-cached songs); now reads through player cache → OkHttp (IPv4-pinned, same as playback) |
 | **2.0.8** | Search-result download icon now shows three states: not downloaded → downloading (spinner) → completed ✓ (previously showed ✓ while still downloading) |
 | **2.0.7** | Download everywhere: per-song download button on YouTube search results (auto-adds to library); download-all in the queue menu |
 | **2.0.6** | Fix crash on duplicate-artist merge (UNIQUE constraint in song_artist_map): merge UPDATEs now use OR IGNORE; async db.query/transaction blocks catch exceptions and log them as non-fatals instead of killing the app |
-| **2.0.5** | In-app update checker (GitHub Releases → download → installer prompt); crash logger with copyable report in Settings → About; prefetch next song's stream URL for near-instant track transitions |
 
 ---
 
