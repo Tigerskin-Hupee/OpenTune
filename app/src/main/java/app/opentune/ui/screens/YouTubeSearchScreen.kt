@@ -40,6 +40,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Album
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.OfflinePin
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.CircularProgressIndicator
@@ -73,6 +75,8 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.navigation.NavController
 import coil3.compose.AsyncImage
 import androidx.compose.ui.platform.LocalContext
+import app.opentune.LocalDatabase
+import app.opentune.LocalDownloadUtil
 import app.opentune.LocalPlayerConnection
 import app.opentune.LocalPlayerAwareWindowInsets
 import app.opentune.R
@@ -442,6 +446,10 @@ private fun EmptyResults() {
 
 @Composable
 private fun YouTubeTrackItem(track: YtMusicTrack, onClick: () -> Unit) {
+    val database = LocalDatabase.current
+    val downloadUtil = LocalDownloadUtil.current
+    val downloadedAt by downloadUtil.getDownload(track.videoId).collectAsState(initial = null)
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -466,12 +474,28 @@ private fun YouTubeTrackItem(track: YtMusicTrack, onClick: () -> Unit) {
                 )
             }
         }
-        Icon(
-            imageVector = Icons.Rounded.Search,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(20.dp),
-        )
+        if (downloadedAt != null) {
+            Icon(
+                imageVector = Icons.Rounded.OfflinePin,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp),
+            )
+        } else {
+            IconButton(onClick = {
+                val metadata = track.toMediaMetadata()
+                // song must exist in the db for the download to show in the library
+                database.query { insert(metadata) }
+                downloadUtil.download(metadata)
+            }) {
+                Icon(
+                    imageVector = Icons.Rounded.Download,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        }
     }
 }
 
