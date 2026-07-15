@@ -88,6 +88,8 @@ import app.opentune.innertube.YtMusicTrack
 import app.opentune.models.MediaMetadata
 import app.opentune.playback.queues.ListQueue
 import app.opentune.ui.utils.getNSongsString
+import app.opentune.utils.getDownloadState
+import androidx.media3.exoplayer.offline.Download
 import app.opentune.viewmodels.SearchTab
 import app.opentune.viewmodels.YouTubeSearchViewModel
 
@@ -449,6 +451,7 @@ private fun YouTubeTrackItem(track: YtMusicTrack, onClick: () -> Unit) {
     val database = LocalDatabase.current
     val downloadUtil = LocalDownloadUtil.current
     val downloadedAt by downloadUtil.getDownload(track.videoId).collectAsState(initial = null)
+    val downloadState = getDownloadState(downloadedAt)
 
     Row(
         modifier = Modifier
@@ -474,26 +477,35 @@ private fun YouTubeTrackItem(track: YtMusicTrack, onClick: () -> Unit) {
                 )
             }
         }
-        if (downloadedAt != null) {
-            Icon(
-                imageVector = Icons.Rounded.OfflinePin,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(20.dp),
-            )
-        } else {
-            IconButton(onClick = {
-                val metadata = track.toMediaMetadata()
-                // song must exist in the db for the download to show in the library
-                database.query { insert(metadata) }
-                downloadUtil.download(metadata)
-            }) {
+        when (downloadState) {
+            Download.STATE_COMPLETED -> {
                 Icon(
-                    imageVector = Icons.Rounded.Download,
+                    imageVector = Icons.Rounded.OfflinePin,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(20.dp),
                 )
+            }
+            Download.STATE_DOWNLOADING -> {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    strokeWidth = 2.dp,
+                )
+            }
+            else -> {
+                IconButton(onClick = {
+                    val metadata = track.toMediaMetadata()
+                    // song must exist in the db for the download to show in the library
+                    database.query { insert(metadata) }
+                    downloadUtil.download(metadata)
+                }) {
+                    Icon(
+                        imageVector = Icons.Rounded.Download,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
             }
         }
     }
