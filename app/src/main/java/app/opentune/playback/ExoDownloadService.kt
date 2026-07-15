@@ -89,6 +89,12 @@ class ExoDownloadService : DownloadService(
             finalException: Exception?,
         ) {
             if (download.state == Download.STATE_FAILED) {
+                // Record the exact failure reason so it can be copied from
+                // Settings → About → Crash Log.
+                app.opentune.utils.CrashLogger.logCaught(
+                    "download-failed id=${download.request.id} reason=${download.failureReason}",
+                    finalException ?: Exception("download failed without exception (reason=${download.failureReason})")
+                )
                 val notification = notificationHelper.buildDownloadFailedNotification(
                     context,
                     R.drawable.error,
