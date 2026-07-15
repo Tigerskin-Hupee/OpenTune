@@ -69,9 +69,34 @@ class DownloadUtil @Inject constructor(
 ) {
     val TAG = DownloadUtil::class.simpleName.toString()
 
+    // Same HTTP setup as the playback path (MusicService.streamHttpClient):
+    // YouTube CDN URLs are IP-bound (ip= param), so force IPv4 to match the IP
+    // used when the URL was resolved.
+    private val streamHttpClient = okhttp3.OkHttpClient.Builder()
+        .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+        .dns(object : okhttp3.Dns {
+            override fun lookup(hostname: String): List<java.net.InetAddress> {
+                val addrs = okhttp3.Dns.SYSTEM.lookup(hostname)
+                val v4 = addrs.filterIsInstance<java.net.Inet4Address>()
+                return if (v4.isNotEmpty()) v4 else addrs
+            }
+        })
+        .build()
+
+    // Read-through: serve from the player cache when the song was already
+    // streamed, otherwise fetch from the network. DownloadManager writes the
+    // result into downloadCache. (Without an upstream factory here, any song
+    // not already cached failed to download.)
     private val dataSourceFactory = ResolvingDataSource.Factory(
         CacheDataSource.Factory()
-            .setCache(downloadCache)
+            .setCache(playerCache)
+            .setUpstreamDataSourceFactory(
+                androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(streamHttpClient)
+                    .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0")
+            )
+            .setCacheWriteDataSinkFactory(null)
+            .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
     ) { dataSpec ->
         val uri = dataSpec.uri
         if (uri.scheme == "youtube") {
