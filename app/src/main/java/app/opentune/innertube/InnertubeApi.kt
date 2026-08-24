@@ -985,17 +985,63 @@ class InnertubeApi @Inject constructor(
 
     // Piped is a public YouTube proxy that resolves streams server-side — no user auth needed.
     // Tries multiple public instances in order; first successful response wins.
+    // Static fallback list — used when the live instance directory is unreachable.
     private val pipedInstances = listOf(
         "https://pipedapi.kavin.rocks",
         "https://pipedapi.adminforge.de",
-        "https://piped-api.garudalinux.org",
-        "https://api.piped.yt",
-        "https://pipedapi.in.projectsegfau.lt",
+        "https://api.piped.private.coffee",
+        "https://pipedapi.ducks.party",
+        "https://pipedapi.reallyaweso.me",
     )
+
+    // Live instance list from the official Piped directory, refreshed every 6h.
+    // Public instances die frequently; fetching the directory at runtime keeps
+    // the escape route working without app updates.
+    @Volatile
+    private var dynamicPipedInstances: List<String>? = null
+
+    @Volatile
+    private var pipedInstancesFetchedAt = 0L
+
+    private fun currentPipedInstances(): List<String> {
+        val now = System.currentTimeMillis()
+        if (now - pipedInstancesFetchedAt > 6 * 60 * 60 * 1000L) {
+            pipedInstancesFetchedAt = now  // throttle: one directory attempt per window
+            try {
+                val response = pipedHttpClient.newCall(
+                    Request.Builder()
+                        .url("https://piped-instances.kavin.rocks/")
+                        .addHeader("User-Agent", "OpenTune/2 Android")
+                        .get()
+                        .build()
+                ).execute()
+                val body = response.body?.string()
+                if (response.isSuccessful && !body.isNullOrBlank()) {
+                    val arr = JSONArray(body)
+                    val list = mutableListOf<String>()
+                    for (i in 0 until arr.length()) {
+                        val apiUrl = arr.getJSONObject(i).optString("api_url")
+                        if (apiUrl.startsWith("https://")) list.add(apiUrl.trimEnd('/'))
+                    }
+                    if (list.isNotEmpty()) {
+                        dynamicPipedInstances = list.take(6)
+                        Log.d(tag, "piped directory: ${list.size} instances, using ${dynamicPipedInstances!!.size}")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(tag, "piped directory fetch failed: ${e.message?.take(80)}")
+            }
+        }
+        // Merge: live list first, static fallbacks after (deduped).
+        val dynamic = dynamicPipedInstances ?: emptyList()
+        return (dynamic + pipedInstances).distinct()
+    }
 
     private fun fetchAudioStreamPiped(videoId: String): String {
         var lastError = "no instances tried"
-        for (instance in pipedInstances) {
+        // Cap attempts so a fully-dead list fails in bounded time (NPE usually
+        // wins the race long before this path exhausts anyway).
+        for (instance in currentPipedInstances().take(6)) {
             try {
                 val response = pipedHttpClient.newCall(
                     Request.Builder()
