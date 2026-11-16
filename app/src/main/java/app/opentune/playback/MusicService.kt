@@ -232,6 +232,17 @@ class MusicService : MediaLibraryService(),
     private var audioFocusBypassed = false
     private val FOCUS_DENIED_WINDOW_MS = 1500L
 
+    // While focus handling is bypassed ExoPlayer no longer pauses for calls, so
+    // watch the system audio mode ourselves and pause/resume around a call.
+    private var pausedForCall = false
+    private var audioModeListener: android.media.AudioManager.OnModeChangedListener? = null
+
+    private val mediaAudioAttributes: AudioAttributes
+        get() = AudioAttributes.Builder()
+            .setUsage(C.USAGE_MEDIA)
+            .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+            .build()
+
     override fun onCreate() {
         Log.i(TAG, "Starting MusicService")
         super.onCreate()
@@ -263,6 +274,8 @@ class MusicService : MediaLibraryService(),
                 // misc
                 setOffloadEnabled(dataStore.get(AudioOffloadKey, false))
             }
+
+        registerAudioModeListener()
 
         mediaLibrarySessionCallback.apply {
             service = this@MusicService
@@ -851,6 +864,25 @@ class MusicService : MediaLibraryService(),
         ).show()
     }
 
+    private fun registerAudioModeListener() {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) return
+        val audioManager = getSystemService<android.media.AudioManager>() ?: return
+        val listener = android.media.AudioManager.OnModeChangedListener { mode ->
+            val inCall = mode != android.media.AudioManager.MODE_NORMAL
+            if (inCall && audioFocusBypassed && player.playWhenReady) {
+                DiagnosticsLogger.logPlayer("call started (audioMode=$mode) while focus bypassed, pausing")
+                pausedForCall = true
+                player.pause()
+            } else if (!inCall && pausedForCall) {
+                DiagnosticsLogger.logPlayer("call ended, resuming")
+                pausedForCall = false
+                player.play()
+            }
+        }
+        audioManager.addOnModeChangedListener(mainExecutor, listener)
+        audioModeListener = listener
+    }
+
     private fun playerSnapshot(): String =
         "[state=${playbackStateName(player.playbackState)} pwr=${player.playWhenReady} " +
             "suppress=${player.playbackSuppressionReason} items=${player.mediaItemCount} " +
@@ -878,6 +910,18 @@ class MusicService : MediaLibraryService(),
             return
         }
 
+        // Playback stopped while bypassed: hand focus handling back to ExoPlayer
+        // so the next play asks the system again. If focus is still refused the
+        // bypass below simply triggers again.
+        if (!playWhenReady && audioFocusBypassed) {
+            audioFocusBypassed = false
+            scope.launch {
+                player.setAudioAttributes(mediaAudioAttributes, true)
+                DiagnosticsLogger.logPlayer("audio focus handling restored")
+            }
+            return
+        }
+
         // The system refused the audio focus request outright: ExoPlayer flips
         // playWhenReady back to false within milliseconds of the user's tap, with
         // no error, so play appears to do nothing. A real focus loss (another app
@@ -897,13 +941,7 @@ class MusicService : MediaLibraryService(),
 
             audioFocusBypassed = true
             scope.launch {
-                player.setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(C.USAGE_MEDIA)
-                        .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
-                        .build(),
-                    false
-                )
+                player.setAudioAttributes(mediaAudioAttributes, false)
                 DiagnosticsLogger.logPlayer("audio focus handling disabled, retrying play")
                 player.play()
             }
@@ -1080,6 +1118,9 @@ class MusicService : MediaLibraryService(),
 
     override fun onDestroy() {
         Log.i(TAG, "Terminating MusicService.")
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            audioModeListener?.let { getSystemService<android.media.AudioManager>()?.removeOnModeChangedListener(it) }
+        }
         deInitQueue()
 
         mediaSession.player.stop()

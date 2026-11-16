@@ -3,7 +3,7 @@
 <div align="center">
   <img src="./assets/ic_launcher_round.png" alt="OpenTune" width="100" />
 
-  **v2.0.14** · Material 3 · Android 7+
+  **v2.0.15** · Material 3 · Android 7+
 
   [![License](https://img.shields.io/github/license/OuterTune/OuterTune)](https://www.gnu.org/licenses/gpl-3.0)
   [![Release](https://img.shields.io/github/v/release/Tigerskin-Hupee/OpenTune)](https://github.com/Tigerskin-Hupee/OpenTune/releases/latest)
@@ -141,11 +141,11 @@ No API keys or accounts required.
 
 | Version | Highlights |
 |---|---|
+| **2.0.15** | Audio-focus bypass now pauses for calls and resumes afterwards (audio-mode listener), and hands focus handling back to the player once playback stops |
 | **2.0.14** | Fix play doing nothing when the system denies audio focus: detect the instant denial after a play tap and retry without focus handling (skipped while a call is active) |
 | **2.0.13** | Diagnostics report now records player state transitions (play/pause reasons, suppression, buffering) to trace silent "tap play, nothing happens" cases |
 | **2.0.12** | Upgrade NewPipeExtractor v0.26.3 → v0.27.1 (four upstream releases of YouTube fixes) |
 | **2.0.11** | Faster downloads: explicit range parameter bypasses YouTube CDN throttling (~playback-speed cap), cutting per-song download time from minutes to seconds |
-| **2.0.10** | Download failures now record the exact reason (failure code + exception) to the Crash Log for diagnosis |
 
 ---
 
