@@ -31,6 +31,17 @@ object DiagnosticsLogger {
     private val playbackEvents = ArrayDeque<PlaybackEvent>()
     private const val MAX_EVENTS = 20
 
+    // Player state transitions (play/pause reasons, suppression, buffering) so a
+    // "tapped play, nothing happened, no error" case is visible in the report.
+    private val playerEvents = ArrayDeque<Pair<Long, String>>()
+    private const val MAX_PLAYER_EVENTS = 40
+
+    @Synchronized
+    fun logPlayer(message: String) {
+        if (playerEvents.size >= MAX_PLAYER_EVENTS) playerEvents.removeFirst()
+        playerEvents.addLast(System.currentTimeMillis() to message)
+    }
+
     // Updated by InnertubeApi after each player JS fetch
     @Volatile var lastSigOpsStatus: String = "?"
     @Volatile var lastPlayerJsId: String = "?"
@@ -107,6 +118,16 @@ object DiagnosticsLogger {
             }
         }
 
+        sb.appendLine()
+        sb.appendLine("--- Player Events (last ${playerEvents.size}) ---")
+        if (playerEvents.isEmpty()) {
+            sb.appendLine("(no events yet — tap play on a song first)")
+        } else {
+            playerEvents.asReversed().forEach { (ts, msg) ->
+                sb.appendLine("[${sdf.format(Date(ts))}] ${msg.take(160)}")
+            }
+        }
+
         return sb.toString()
     }
 
@@ -114,6 +135,7 @@ object DiagnosticsLogger {
     fun clear() {
         streamEvents.clear()
         playbackEvents.clear()
+        playerEvents.clear()
         lastSigOpsStatus = "?"
         lastPlayerJsId = "?"
         lastPlayerJsFetchedAgo = -1L

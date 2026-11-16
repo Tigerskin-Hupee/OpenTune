@@ -409,6 +409,9 @@ class MusicService : MediaLibraryService(),
             }
         }
 
+        DiagnosticsLogger.logPlayer(
+            "playQueue called playWhenReady=$playWhenReady preload=${queue.preloadItem?.id} ${playerSnapshot()}"
+        )
         var queueTitle = title
         var q: MultiQueueObject? = null
         val preloadItem = queue.preloadItem
@@ -460,7 +463,9 @@ class MusicService : MediaLibraryService(),
 
                 player.prepare()
                 player.playWhenReady = playWhenReady
+                DiagnosticsLogger.logPlayer("playQueue prepared ${playerSnapshot()}")
             } catch (e: Exception) {
+                DiagnosticsLogger.logPlayer("playQueue EXCEPTION ${e.javaClass.simpleName}: ${e.message}")
                 reportException(e)
                 Toast.makeText(this@MusicService, "plr: ${e.message}", Toast.LENGTH_LONG)
                     .show()
@@ -842,7 +847,36 @@ class MusicService : MediaLibraryService(),
         ).show()
     }
 
+    private fun playerSnapshot(): String =
+        "[state=${playbackStateName(player.playbackState)} pwr=${player.playWhenReady} " +
+            "suppress=${player.playbackSuppressionReason} items=${player.mediaItemCount} " +
+            "idx=${player.currentMediaItemIndex} vol=${player.volume}]"
+
+    private fun playbackStateName(state: Int) = when (state) {
+        Player.STATE_IDLE -> "IDLE"
+        Player.STATE_BUFFERING -> "BUFFERING"
+        Player.STATE_READY -> "READY"
+        Player.STATE_ENDED -> "ENDED"
+        else -> state.toString()
+    }
+
+    override fun onPlaybackStateChanged(playbackState: Int) {
+        DiagnosticsLogger.logPlayer("state -> ${playbackStateName(playbackState)} ${playerSnapshot()}")
+    }
+
+    // reason: 1=user request, 2=audio focus loss, 3=audio becoming noisy,
+    // 4=remote, 5=end of media item, 6=suppressed too long
+    override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+        DiagnosticsLogger.logPlayer("playWhenReady -> $playWhenReady reason=$reason ${playerSnapshot()}")
+    }
+
+    // reason: 0=none, 1=transient audio focus loss, 2=unsuitable audio output
+    override fun onPlaybackSuppressionReasonChanged(playbackSuppressionReason: Int) {
+        DiagnosticsLogger.logPlayer("suppression -> $playbackSuppressionReason ${playerSnapshot()}")
+    }
+
     override fun onIsPlayingChanged(isPlaying: Boolean) {
+        DiagnosticsLogger.logPlayer("isPlaying -> $isPlaying")
         if (!isPlaying) {
             val pos = player.currentPosition
             val q = queueBoard.value.getCurrentQueue()
