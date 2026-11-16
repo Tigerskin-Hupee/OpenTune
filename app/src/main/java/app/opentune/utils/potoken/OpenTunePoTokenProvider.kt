@@ -112,12 +112,6 @@ object OpenTunePoTokenProvider : PoTokenProvider {
         Log.i(TAG, "forceRecreate: PoToken marked stale; WebView kept alive for n-decode")
     }
 
-    override fun getWebEmbedClientPoToken(videoId: String): PoTokenResult? = getWebClientPoToken(videoId)
-    // Android and iOS clients don't use WEB-type PoTokens; return null so NPE
-    // falls back to WEB client where our token is valid.
-    override fun getAndroidClientPoToken(videoId: String): PoTokenResult? = null
-    override fun getIosClientPoToken(videoId: String): PoTokenResult? = null
-
     /** Decode YouTube CDN n-parameter using the player JS function loaded in the WebView. */
     suspend fun decodeNParam(nEncoded: String): String? {
         val result = try {
