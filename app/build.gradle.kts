@@ -29,10 +29,10 @@ android {
         applicationId = "app.opentune"
         minSdk = 24
         targetSdk = 36
-        versionCode = 211
-        versionName = "2.0.11"
+        versionCode = 212
+        versionName = "2.0.12"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        buildConfigField("String", "NEWPIPE_EXTRACTOR_COMMIT", "\"v0.26.3\"")
+        buildConfigField("String", "NEWPIPE_EXTRACTOR_COMMIT", "\"v0.27.1\"")
     }
 
     signingConfigs {
