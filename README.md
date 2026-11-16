@@ -3,7 +3,7 @@
 <div align="center">
   <img src="./assets/ic_launcher_round.png" alt="OpenTune" width="100" />
 
-  **v2.0.12** · Material 3 · Android 7+
+  **v2.0.13** · Material 3 · Android 7+
 
   [![License](https://img.shields.io/github/license/OuterTune/OuterTune)](https://www.gnu.org/licenses/gpl-3.0)
   [![Release](https://img.shields.io/github/v/release/Tigerskin-Hupee/OpenTune)](https://github.com/Tigerskin-Hupee/OpenTune/releases/latest)
@@ -141,11 +141,11 @@ No API keys or accounts required.
 
 | Version | Highlights |
 |---|---|
+| **2.0.13** | Diagnostics report now records player state transitions (play/pause reasons, suppression, buffering) to trace silent "tap play, nothing happens" cases |
 | **2.0.12** | Upgrade NewPipeExtractor v0.26.3 → v0.27.1 (four upstream releases of YouTube fixes) |
 | **2.0.11** | Faster downloads: explicit range parameter bypasses YouTube CDN throttling (~playback-speed cap), cutting per-song download time from minutes to seconds |
 | **2.0.10** | Download failures now record the exact reason (failure code + exception) to the Crash Log for diagnosis |
 | **2.0.9** | Fix all downloads failing: the download data source had no network upstream (only worked for already-cached songs); now reads through player cache → OkHttp (IPv4-pinned, same as playback) |
-| **2.0.8** | Search-result download icon now shows three states: not downloaded → downloading (spinner) → completed ✓ (previously showed ✓ while still downloading) |
 
 ---
 
