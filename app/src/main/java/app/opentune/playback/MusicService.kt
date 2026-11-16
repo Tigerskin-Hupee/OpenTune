@@ -228,6 +228,10 @@ class MusicService : MediaLibraryService(),
 
     var consecutivePlaybackErr = 0
 
+    private var lastUserPlayRequestMs = 0L
+    private var audioFocusBypassed = false
+    private val FOCUS_DENIED_WINDOW_MS = 1500L
+
     override fun onCreate() {
         Log.i(TAG, "Starting MusicService")
         super.onCreate()
@@ -868,6 +872,42 @@ class MusicService : MediaLibraryService(),
     // 4=remote, 5=end of media item, 6=suppressed too long
     override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
         DiagnosticsLogger.logPlayer("playWhenReady -> $playWhenReady reason=$reason ${playerSnapshot()}")
+
+        if (playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST) {
+            lastUserPlayRequestMs = android.os.SystemClock.elapsedRealtime()
+            return
+        }
+
+        // The system refused the audio focus request outright: ExoPlayer flips
+        // playWhenReady back to false within milliseconds of the user's tap, with
+        // no error, so play appears to do nothing. A real focus loss (another app
+        // starts playing, a call comes in) arrives long after the tap, so the
+        // short window tells the two apart. Play without focus handling instead,
+        // unless a call is actually in progress.
+        val sinceRequest = android.os.SystemClock.elapsedRealtime() - lastUserPlayRequestMs
+        if (!playWhenReady &&
+            reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS &&
+            sinceRequest < FOCUS_DENIED_WINDOW_MS &&
+            !audioFocusBypassed
+        ) {
+            val audioMode = getSystemService<android.media.AudioManager>()?.mode
+                ?: android.media.AudioManager.MODE_NORMAL
+            DiagnosticsLogger.logPlayer("audio focus DENIED ${sinceRequest}ms after play request, audioMode=$audioMode")
+            if (audioMode != android.media.AudioManager.MODE_NORMAL) return
+
+            audioFocusBypassed = true
+            scope.launch {
+                player.setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(C.USAGE_MEDIA)
+                        .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                        .build(),
+                    false
+                )
+                DiagnosticsLogger.logPlayer("audio focus handling disabled, retrying play")
+                player.play()
+            }
+        }
     }
 
     // reason: 0=none, 1=transient audio focus loss, 2=unsuitable audio output
